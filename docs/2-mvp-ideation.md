@@ -4,19 +4,22 @@ For busy, fast-casual restaurants overwhelmed by disjointed QR orders, our platf
 
 ----
 
-To build a working prototype in 4 days using a simple tech stack (Next.js and Supabase/Firebase), the features are split into immediate implementation and future scope.
+To build a working prototype in 4 days using a simple tech stack (Next.js and Supabase), the features are split into immediate implementation and future scope.
 
 ## Core Features (To Be Implemented Now)
 
-* QR-Table Link: Simple links like /table/[id] open the menu and assign the table number instantly without a login.
-* Shared Table Cart: One shared digital cart for the entire table so individual orders stay grouped together.
-* "Review & Fire" Button: A final button to submit the entire table's order to the kitchen at one time.
-* Kitchen Kanban Board: A real-time screen for cooks that displays new orders instantly as columns.
-* One-Tap Status Updates: Kitchen staff tap a single button to change order tags from Pending ➔ Preparing ➔ Ready.
+## Core Features (To Be Implemented Now)
+
+* QR-Table Link: Each table's QR code opens a random link like /table/k7x2p (not /table/5, which anyone could guess). It opens the menu and assigns the table instantly without a login.
+* Shared Table Cart: One shared digital cart for the entire table so individual orders stay grouped together. Every phone at the table sees changes live through Supabase Realtime.
+* "Review & Fire" Button: A final button to submit the entire table's order to the kitchen at one time. Before sending, it checks that no item has sold out. After sending, the cart empties, so a second tap shows "Order already sent" and the table can start a new round.
+* Kitchen Kanban Board: A real-time screen for cooks with Pending, Preparing and Ready columns. Each order appears as a card in its column.
+* One-Tap Status Updates: Kitchen staff tap a single button to change order tags from Pending ➔ Preparing ➔ Ready ➔ Served. Served removes the order from the board.
 * Live Guest Tracker: A simple, self-updating screen for diners showing the current state of their food.
-* Red Allergy Text: Custom order notes render in bold red font on the kitchen screen so they are never missed.
-* Screen Flash & Sounds: The diner's screen flashes green when food is ready, and the kitchen tablet pings when new orders arrive.
+* Red Allergy Text: Allergies go in a separate "Allergy" box (saved as allergy_note). Only these render in bold red on the kitchen screen; normal requests like "extra sauce" stay in normal text.
+* Screen Flash & Sounds: The diner's screen flashes green when food is ready, and the kitchen tablet pings when new orders arrive. Browsers block sound until the page is tapped, so the kitchen taps "Start shift" once when opening the board.
 * Quick Item Hide (86ing): A fast button for the chef to mark a dish out-of-stock and grey it out on the guest menu.
+* Staff PIN: The kitchen board opens only after entering a shared staff PIN (stored as the STAFF_PIN environment variable), so diners cannot open it.
 
 ## Future Scope (Post-MVP)
 
@@ -53,7 +56,7 @@ graph TD
     D["1 Clean Table Ticket<br>(No Ghost Orders)"]:::kitchen
 
     A1 & A2 -->|Live Updates| B
-    B -->|Requires Consent| C
+    B -->|Anyone Taps Fire| C
     C -->|Sends Unified Group| D
 ```
 ### 2. Guardrailed Allergy Alerts
@@ -76,7 +79,7 @@ graph LR
 ```
 ### 3. Two-Way Micro-Status Communication
 
-* The Innovation: Your KDS transitions away from a static "Done/Not Done" checkbox. It broadcasts exact preparation milestones (Pending ➔ Preparing ➔ Ready) across WebSockets back to the guest's mobile browser and the waitstaff's devices.
+* The Innovation: Your KDS transitions away from a static "Done/Not Done" checkbox. It broadcasts exact preparation milestones (Pending ➔ Preparing ➔ Ready) through Supabase Realtime to the guest's mobile browser and the waitstaff's devices.
 * The Impact: It bridges the communication gap between the floor and the kitchen. Guests lose their waiting anxiety, and servers never have to run back to the kitchen window to check on an order.
   
 ```mermaid
@@ -88,7 +91,7 @@ graph TD
     classDef green fill:#2ECC71,stroke:#333,stroke-width:2px,color:#fff;
 
     A["Cook Updates KDS Status Tag"]:::kds
-    B["WebSocket Event Broadcast"]:::sync
+    B["Supabase Realtime Update"]:::sync
     
     C1["'Pending'<br>(Grey Screen)"]:::grey
     C2["'Preparing'<br>(Amber Cooking Screen)"]:::amber
@@ -107,4 +110,16 @@ graph TD
 
 ----------------------
 
+
+## Database Tables (Supabase)
+
+| Table | Fields |
+|---|---|
+| restaurant_tables | id, code (random, used in the QR link), name |
+| menu_items | id, name, price, category, is_available |
+| cart_items | id, table_id, menu_item_id, quantity, request_note, allergy_note |
+| orders | id, table_id, status (pending, preparing, ready, served), created_at |
+| order_items | id, order_id, menu_item_id, quantity, request_note, allergy_note |
+
+For the MVP, menu items and tables are added directly in the Supabase dashboard.
 
