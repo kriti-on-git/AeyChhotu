@@ -69,7 +69,7 @@ graph LR
 
     %% Nodes
     A["Diner Web App<br>(QR Scan / Menu)"]:::webApp
-    B[("Supabase/Firebase DB<br>(Real-Time Engine)")]:::database
+    B[("Supabase DB<br>(Realtime)")]:::database
     C["Kitchen Dashboard<br>(Kanban/Prep Tags)"]:::kitchen
 
     %% Connections
@@ -84,7 +84,7 @@ graph LR
 
    1. Eliminate Ticket Fragmentation: Force individual smartphone carts at the same physical table to merge into one cohesive order before hitting the kitchen line.
    2. Highlight Food Safety: Make custom modifications and allergy alerts visually unavoidable on the kitchen display screen.
-   3. Bridge the Communication Gap: Use live WebSockets to stream real-time preparation updates (Pending → Preparing → Ready) straight to the diner's mobile browser.
+   3. Bridge the Communication Gap: Use Supabase Realtime to stream live preparation updates (Pending → Preparing → Ready) straight to the diner's mobile browser.
 
 ------------------------------
 ## 👥 Persona Matrix
