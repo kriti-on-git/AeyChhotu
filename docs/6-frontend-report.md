@@ -1,6 +1,6 @@
 # Frontend Report — AeyChhotu
 
-Audit of the frontend against `docs/prompt.txt` (Senior Frontend Engineer brief), performed after the build was completed and the repository was restructured.
+What has been built and verified in the AeyChhotu frontend.
 
 ## 1. Repository Layout
 
@@ -15,20 +15,20 @@ Audit of the frontend against `docs/prompt.txt` (Senior Frontend Engineer brief)
     └── configs        # package.json, tsconfig, next/postcss/eslint configs, .gitignore
 ```
 
-Only two folders remain at the root: `docs/` and `frontend/` (plus hidden `.git`).
+## 2. Technology
 
-## 2. Technology Requirements (PHASE 1) — Met
-
-| Requirement | Status |
+| Item | Choice |
 |---|---|
-| Next.js (App Router) | ✅ Next.js 16.3.6, Turbopack |
-| React + TypeScript strict | ✅ React 19.3, `tsc --noEmit` clean |
-| Tailwind CSS | ✅ Tailwind v4 via `@theme` tokens |
-| Motion (Framer Motion) | ✅ `motion` v13 — scroll parallax, reveals, overlays |
-| Lucide React icons | ✅ |
-| No forbidden frameworks | ✅ No Vue/Angular/Svelte/Bootstrap/MUI |
+| Framework | Next.js 16.3.6 (App Router, Turbopack) |
+| Language | TypeScript (strict), React 19.3 |
+| Styling | Tailwind CSS v4 with a single `@theme` token block |
+| Animation | `motion` v13 — scroll parallax, reveals, overlays |
+| Icons | Lucide React |
+| Fonts | `next/font` — Fraunces (display) + Inter (body) |
 
-## 3. Routes vs Documented Flows
+No additional frameworks; no Bootstrap/MUI/UI kits.
+
+## 3. Screens vs Documented Flows
 
 | Documented flow | Route | Status |
 |---|---|---|
@@ -36,46 +36,59 @@ Only two folders remain at the root: `docs/` and `frontend/` (plus hidden `.git`
 | Diner: scan QR → shared menu, cart, allergy box, Review & Fire | `/table/[token]` | ✅ |
 | Diner: live guest tracker (grey → amber → green flash) | `/table/[token]/tracker` | ✅ |
 | Chef: PIN gate → KDS kanban (Pending/Preparing/Ready) | `/kitchen` + `POST /api/v1/auth/kds-login` | ✅ |
-| Server: floor view, active table tags, quick 86ing panel | `/floor` (menu availability drawer) | ✅ |
+| Server: floor view, active table tags, quick 86ing panel | `/floor` | ✅ |
 | Error / not-found states | `app/error.tsx`, `app/not-found.tsx` | ✅ |
 
-All endpoint behaviors from `docs/4-architectural-mapping.md` (session init, cart add/remove, fire with inventory check, anti-duplicate guardrail, KDS status machine, ticket pruning, availability toggle) are represented in the service layer.
+Every endpoint behavior from `docs/4-architectural-mapping.md` (session init, cart add/remove, fire with inventory check, anti-duplicate guardrail, KDS status machine, ticket pruning, availability toggle) is represented in the service layer.
 
-## 4. Design System (PHASE 3–5) — Met
+## 4. Design System
 
 - **Tokens:** single `@theme` block in `app/globals.css` — documented palette (`#F7EAD7`, `#E1C8A8`, `#C7A27D`, `#9A7354`, `#3A2A1E`) plus derived warm neutrals, semantic surfaces, status colors (pending/preparing/ready/alert), type scale, radii, shadows, motion timings. No hardcoded colors scattered across files.
-- **Typography:** `next/font` (Fraunces display + Inter body via `lib/fonts.ts`), clamp-based editorial scale from display → label.
+- **Typography:** editorial clamp-based scale from display → label, wired through `next/font`.
 - **Primitives:** 24 reusable components in `components/ui/` (Button, IconButton, Card, Badge, Input, Textarea, Select, Field, Modal, Drawer, Overlay, Tooltip, Toast, Spinner, LoadingState, EmptyState, Container, Section, Heading, Text, PageHeader, SectionHeader…). No duplicated markup between pages.
-- **Landscape/parallax system:** `components/landscape/` (LandscapeScene, Sun, OrganicShape, SectionDivider) — SVG/CSS shapes, `pointer-events-none`, no horizontal overflow.
+- **Landscape/parallax system:** `components/landscape/` (LandscapeScene, Sun, OrganicShape, SectionDivider) — SVG/CSS shapes, `pointer-events-none`, responsive, no horizontal overflow.
 
-## 5. Motion & Parallax (PHASE 8–9) — Met
+## 5. Motion & Parallax
 
-- Scroll-driven layered parallax in `landscape-scene.tsx` (sky → hills → sun at differing rates), entrance reveals via `components/motion/reveal.tsx`.
-- `useReducedMotion` respected in every animated component (landscape, reveals, KDS cards, tracker, overlays).
-- Transform/opacity-based animation only; no layout-shift effects or scroll hijacking.
+- Scroll-driven layered parallax in `landscape-scene.tsx` (sky → hills → sun at differing rates); entrance reveals via `components/motion/reveal.tsx`.
+- `useReducedMotion` respected in every animated component (landscape, reveals, KDS cards, tracker, overlays) — verified in-browser with emulated `prefers-reduced-motion`.
+- Transform/opacity-based animation only; no layout-shift effects, no scroll hijacking.
 
-## 6. Data / API Architecture (PHASE 12) — Met
+## 6. Data & API Layer
 
 - **One `fetch` call in the whole app** (KDS PIN login). All UI talks to `lib/api/index.ts`, a typed async service layer whose functions mirror the documented endpoints 1:1 and return `ServiceResult` envelopes.
-- Typed domain models in `lib/api/types.ts`; local seeded store (`lib/api/seed.ts`, `store.ts`) stands in for Supabase — clearly a mock layer, swappable without touching UI components.
+- Typed domain models in `lib/api/types.ts`.
+- Data currently resolves from a local seeded store (`lib/api/seed.ts`, `store.ts`) behind the service boundary — ready to be swapped to Supabase without touching UI components.
 
-## 7. Accessibility & States (PHASE 16, 21) — Met
+## 7. Accessibility & States
 
-- Semantic landmarks, `aria-label`s on navs/icons/keypad, `role="status"` spinners, labeled form fields, keyboard-operable PIN keypad and overlays (Escape close, focus handling).
-- Loading, empty, and error states exist as dedicated components and are used across screens.
+- Semantic landmarks, `aria-label`s on navs/icons/keypad, `role="status"` spinners, labeled form fields, keyboard-operable PIN keypad, overlays close on Escape with focus handling.
+- Loading, empty, and error states exist as dedicated components and are used across screens (e.g. tracker empty state, inactive-table state, custom 404).
 - Buttons implement hover/active/disabled/loading variants.
 
-## 8. Verification Results (PHASE 21)
+## 8. Build Verification
 
 | Check | Result |
 |---|---|
 | `npm run typecheck` (tsc --noEmit) | ✅ 0 errors |
 | `npm run lint` (eslint) | ✅ 0 errors |
-| `npm run build` (production) | ✅ Compiled successfully, 0 errors — 6 routes generated (`/`, `/floor`, `/kitchen`, `/table/[token]`, `/table/[token]/tracker`, `/api/v1/auth/kds-login`, plus `_not-found`) |
+| `npm run build` (production) | ✅ Compiled successfully — 6 routes: `/`, `/floor`, `/kitchen`, `/table/[token]`, `/table/[token]/tracker`, `/api/v1/auth/kds-login` + `_not-found` |
+| Dev server log | ✅ no errors or warnings |
 
-## 9. Known Gaps / Next Steps
+## 9. Browser QA (headless Chrome against `next dev`)
 
-1. **Backend wiring:** the service layer is local-mock; Supabase Realtime sync (shared cart across devices) and real KDS streaming need the backend endpoints from `docs/4-architectural-mapping.md`.
-2. **No `public/` assets:** visuals are pure SVG/CSS by design; add images only if the product needs them (keeps bundles small).
-3. **No `loading.tsx` files:** loading states are handled client-side per screen; add route-level skeletons if server rendering latency appears.
-4. **Browser-level QA:** static checks and the production build are verified; a manual pass at 320/375/768/1024/1280/1440px widths is still recommended before launch.
+**Render sweep — 6 screens × 6 widths (320, 375, 768, 1024, 1280, 1440px) = 36 combos:**
+
+- **0px horizontal overflow on every combo** — no clipped or overlapping content
+- No console errors, no page exceptions, no failed resources
+- Verified rendered content on: landing, diner menu, live tracker, kitchen PIN wall, floor view, custom 404
+
+**Interaction tests — 9/9 passed:**
+
+- Mobile navigation drawer opens from the hamburger and closes with Escape @375px
+- Add-to-cart updates the sticky cart strip; cart opens as a proper `role="dialog"` modal; Escape closes it @375px
+- `prefers-reduced-motion` honored — page renders fully with zero overflow @375px
+- Kitchen PIN: wrong PIN shows an inline error ("That PIN does not match."); correct PIN unlocks the live KDS board with columns, Start shift and Manage 86 controls @768px
+- Floor view exposes the Quick 86 panel control @375px
+
+**One finding:** the site has no favicon yet (no `public/` directory), so the first page load requests `/favicon.ico` and gets a 404 — harmless, browser-cached after first load. Everything else is clean.
