@@ -1,0 +1,122 @@
+import type { MenuItem, RestaurantTable } from "@/lib/api/types";
+
+/* Menu and tables are seeded here because the MVP spec keeps them
+   out of the product UI (docs/2-mvp-ideation.md → "menu items and tables
+   are added directly in the Supabase dashboard"). */
+
+export const seedTables: RestaurantTable[] = [
+  { id: "tbl_k7x2p", code: "k7x2p", name: "Window four-top" },
+  { id: "tbl_m3q8z", code: "m3q8z", name: "Corner booth" },
+  { id: "tbl_v9w1s", code: "v9w1s", name: "Communal table" },
+];
+
+export const seedMenu: MenuItem[] = [
+  {
+    id: "itm_dosa",
+    name: "Masala Dosa",
+    price: 180,
+    category: "Main Course",
+    is_available: true,
+    description: "Crisp rice crepe, potato masala, coconut chutney.",
+    vegetarian: true,
+  },
+  {
+    id: "itm_paneer",
+    name: "Paneer Butter Masala",
+    price: 320,
+    category: "Main Course",
+    is_available: true,
+    description: "Paneer in a slow-cooked tomato and cashew gravy.",
+    vegetarian: true,
+  },
+  {
+    id: "itm_noodles",
+    name: "Veg Noodles",
+    price: 240,
+    category: "Main Course",
+    is_available: true,
+    description: "Wok-tossed noodles with seasonal vegetables.",
+    vegetarian: true,
+  },
+  {
+    id: "itm_biryani",
+    name: "Hyderabadi Biryani",
+    price: 380,
+    category: "Main Course",
+    is_available: true,
+    description: "Dum-cooked basmati, saffron, fried onions, raita.",
+    vegetarian: false,
+  },
+  {
+    id: "itm_tacos",
+    name: "Masala Tacos",
+    price: 260,
+    category: "Starters",
+    is_available: true,
+    description: "Three soft tacos, cumin slaw, smoked chilli.",
+    vegetarian: true,
+  },
+  {
+    id: "itm_burger",
+    name: "Chhotu Burger",
+    price: 290,
+    category: "Starters",
+    is_available: true,
+    description: "House patty, pickled onion, warm brioche bun.",
+    vegetarian: false,
+  },
+  {
+    id: "itm_pakora",
+    name: "Onion Pakora",
+    price: 160,
+    category: "Starters",
+    is_available: true,
+    description: "Crisp gram-flour fritters with mint chutney.",
+    vegetarian: true,
+  },
+  {
+    id: "itm_naan",
+    name: "Garlic Naan",
+    price: 90,
+    category: "Breads",
+    is_available: true,
+    description: "Tandoor naan brushed with garlic butter.",
+    vegetarian: true,
+  },
+  {
+    id: "itm_roti",
+    name: "Tandoori Roti",
+    price: 60,
+    category: "Breads",
+    is_available: true,
+    description: "Whole wheat roti straight off the tandoor.",
+    vegetarian: true,
+  },
+  {
+    id: "itm_lassi",
+    name: "Sweet Lassi",
+    price: 120,
+    category: "Drinks",
+    is_available: true,
+    description: "Chilled hand-churned yogurt, rose, pistachio.",
+    vegetarian: true,
+  },
+  {
+    id: "itm_chai",
+    name: "Masala Chai",
+    price: 70,
+    category: "Drinks",
+    is_available: true,
+    description: "Assam leaf tea, ginger, cardamom.",
+    vegetarian: true,
+  },
+  {
+    id: "itm_kulfi",
+    name: "Malai Kulfi",
+    price: 140,
+    category: "Desserts",
+    is_available: true,
+    description: "Slow-reduced milk kulfi, saffron, almond.",
+    vegetarian: true,
+  },
+];

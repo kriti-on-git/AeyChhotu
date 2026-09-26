@@ -1,0 +1,85 @@
+/* Domain contracts. Field names mirror the documented Supabase tables
+   (docs/2-mvp-ideation.md → Database Tables) so the mock service layer can be
+   replaced by the real backend without touching UI code. */
+
+export type OrderStatus = "pending" | "preparing" | "ready" | "served";
+
+export interface RestaurantTable {
+  id: string;
+  /** Random, unguessable code used in the QR link: /table/{code} */
+  code: string;
+  name: string;
+}
+
+export interface MenuItem {
+  id: string;
+  name: string;
+  price: number;
+  category: string;
+  is_available: boolean;
+  description: string;
+  vegetarian: boolean;
+}
+
+export interface CartLine {
+  id: string;
+  table_id: string;
+  menu_item_id: string;
+  quantity: number;
+  /** Normal kitchen instructions: "extra sauce, etc." */
+  request_note: string;
+  /** Medical allergies only — rendered in bold red on the KDS */
+  allergy_note: string;
+  added_by: string;
+}
+
+export interface OrderItem {
+  id: string;
+  order_id: string;
+  menu_item_id: string;
+  name: string;
+  price: number;
+  quantity: number;
+  request_note: string;
+  allergy_note: string;
+  added_by: string;
+}
+
+export interface Order {
+  id: string;
+  table_id: string;
+  table_code: string;
+  status: OrderStatus;
+  created_at: string;
+  updated_at: string;
+  items: OrderItem[];
+}
+
+export interface TableSession {
+  table_token: string;
+  table: RestaurantTable;
+  device_id: string;
+  display_name: string;
+}
+
+export interface ServiceFailure {
+  ok: false;
+  code:
+    | "table_not_found"
+    | "inventory_conflict"
+    | "duplicate_order"
+    | "empty_cart"
+    | "invalid_pin"
+    | "unauthorized";
+  message: string;
+  /** Menu item names that sold out between adding and firing. */
+  sold_out?: string[];
+}
+
+export type ServiceResult<T> = { ok: true; data: T } | ServiceFailure;
+
+export interface FloorTableSummary {
+  table: RestaurantTable;
+  active_order: Order | null;
+  cart_line_count: number;
+}

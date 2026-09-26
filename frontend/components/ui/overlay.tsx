@@ -1,0 +1,211 @@
+"use client";
+
+import { AnimatePresence, motion } from "motion/react";
+import { X } from "lucide-react";
+import {
+  useEffect,
+  useRef,
+  type HTMLAttributes,
+  type KeyboardEvent,
+  type ReactNode,
+} from "react";
+import { IconButton } from "@/components/ui/icon-button";
+import { useBodyScrollLock } from "@/hooks/use-body-scroll-lock";
+import { easeGentle, transitionBase } from "@/lib/motion";
+import { cn } from "@/lib/utils";
+
+export type OverlayPosition = "center" | "right";
+
+const FOCUSABLE_SELECTOR = [
+  "a[href]",
+  "button:not([disabled])",
+  "input:not([disabled])",
+  "select:not([disabled])",
+  "textarea:not([disabled])",
+  '[tabindex]:not([tabindex="-1"])',
+].join(",");
+
+const positions: Record<OverlayPosition, string> = {
+  center: "items-end justify-center sm:items-center",
+  right: "items-stretch justify-end",
+};
+
+export interface OverlayProps {
+  open: boolean;
+  onClose: () => void;
+  position?: OverlayPosition;
+  labelledBy?: string;
+  describedBy?: string;
+  closeOnBackdrop?: boolean;
+  className?: string;
+  children: ReactNode;
+}
+
+export function Overlay({
+  open,
+  onClose,
+  position = "center",
+  labelledBy,
+  describedBy,
+  closeOnBackdrop = true,
+  className,
+  children,
+}: OverlayProps) {
+  const panelRef = useRef<HTMLDivElement>(null);
+  const restoreFocusRef = useRef<HTMLElement | null>(null);
+
+  useBodyScrollLock(open);
+
+  useEffect(() => {
+    if (!open) return;
+
+    restoreFocusRef.current = document.activeElement as HTMLElement | null;
+    panelRef.current?.focus();
+
+    const onKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      restoreFocusRef.current?.focus();
+    };
+  }, [open, onClose]);
+
+  function handleTab(event: KeyboardEvent<HTMLDivElement>) {
+    if (event.key !== "Tab") return;
+
+    const panel = panelRef.current;
+    if (!panel) return;
+
+    const focusable = Array.from(panel.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR));
+    const first = focusable.at(0);
+    const last = focusable.at(-1);
+
+    if (!first || !last) {
+      event.preventDefault();
+      return;
+    }
+
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  }
+
+  return (
+    <AnimatePresence>
+      {open ? (
+        <div key="overlay" className="fixed inset-0 z-50 flex overflow-hidden">
+          <motion.button
+            type="button"
+            tabIndex={-1}
+            aria-label="Close overlay"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.2, ease: easeGentle }}
+            onClick={closeOnBackdrop ? onClose : undefined}
+            className={cn(
+              "absolute inset-0 h-full w-full cursor-default bg-scrim",
+              !closeOnBackdrop && "cursor-default",
+            )}
+          />
+
+          <div
+            className={cn(
+              "pointer-events-none absolute inset-0 flex p-0 sm:p-6",
+              positions[position],
+            )}
+          >
+            <motion.div
+              ref={panelRef}
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby={labelledBy}
+              aria-describedby={describedBy}
+              tabIndex={-1}
+              onKeyDown={handleTab}
+              initial={
+                position === "center"
+                  ? { opacity: 0, scale: 0.97, y: 16 }
+                  : { opacity: 0, x: 40 }
+              }
+              animate={position === "center" ? { opacity: 1, scale: 1, y: 0 } : { opacity: 1, x: 0 }}
+              exit={
+                position === "center"
+                  ? { opacity: 0, scale: 0.98, y: 12 }
+                  : { opacity: 0, x: 40 }
+              }
+              transition={transitionBase}
+              className={cn(
+                "pointer-events-auto relative flex max-h-full w-full flex-col overflow-hidden border border-line bg-surface shadow-lg outline-none",
+                position === "center" ? "rounded-t-2xl sm:rounded-2xl" : "h-full rounded-none",
+                className,
+              )}
+            >
+              {children}
+            </motion.div>
+          </div>
+        </div>
+      ) : null}
+    </AnimatePresence>
+  );
+}
+
+export interface OverlayHeaderProps {
+  title: string;
+  description?: string;
+  titleId: string;
+  descriptionId?: string;
+  onClose: () => void;
+  className?: string;
+}
+
+export function OverlayHeader({
+  title,
+  description,
+  titleId,
+  descriptionId,
+  onClose,
+  className,
+}: OverlayHeaderProps) {
+  return (
+    <header
+      className={cn(
+        "flex items-start justify-between gap-4 border-b border-line px-6 py-5",
+        className,
+      )}
+    >
+      <div className="flex flex-col gap-1">
+        <h2 id={titleId} className="font-display text-subheading text-ink">
+          {title}
+        </h2>
+        {description ? (
+          <p id={descriptionId} className="text-sm text-ink-muted">
+            {description}
+          </p>
+        ) : null}
+      </div>
+      <IconButton label="Close" size="sm" tone="ghost" onClick={onClose}>
+        <X className="size-4" aria-hidden />
+      </IconButton>
+    </header>
+  );
+}
+
+export function OverlayFooter({ className, ...props }: HTMLAttributes<HTMLDivElement>) {
+  return (
+    <div
+      className={cn(
+        "flex flex-col gap-3 border-t border-line px-6 py-5 [&>*]:w-full sm:flex-row sm:justify-end sm:[&>*]:w-auto",
+        className,
+      )}
+      {...props}
+    />
+  );
+}
