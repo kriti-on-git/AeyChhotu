@@ -1,4 +1,4 @@
-# Frontend Report — AeyChHotu
+# Frontend Report — AeyChhotu
 
 Audit of the frontend against `docs/prompt.txt` (Senior Frontend Engineer brief), performed after the build was completed and the repository was restructured.
 
