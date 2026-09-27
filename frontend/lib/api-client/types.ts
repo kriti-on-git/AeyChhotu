@@ -1,0 +1,228 @@
+/* Contract typings — docs/7-api-contract.md (v2).
+   Field names are verbatim DB-blueprint names; nothing is renamed client-side.
+   Envelope: success { success: true, data, meta? }
+             error   { success: false, error: { code, message, ...details } } */
+
+export type OrderStatus = "pending" | "preparing" | "ready" | "served";
+export type ActiveOrderStatus = Exclude<OrderStatus, "served">;
+export type TableStatus = "active" | "empty";
+/** Only sequential forward steps are accepted by the KDS status mutator. */
+export type KdsStatusInput = "preparing" | "ready";
+
+/** docs/7 §1.5 — present on every paginated list response. */
+export interface PageMeta {
+  page: number;
+  limit: number;
+  total: number;
+  total_pages: number;
+}
+
+export interface ApiEnvelope<T> {
+  success: boolean;
+  data: T;
+  meta?: PageMeta;
+}
+
+/** Result of every paginated wrapper: payload + its meta. */
+export interface Paged<T> {
+  data: T[];
+  meta: PageMeta;
+}
+
+// ---- Resources -------------------------------------------------------
+
+/** E3 menu row. */
+export interface MenuItem {
+  menu_item_id: string;
+  name: string;
+  price: number;
+  category: string;
+  is_available: boolean;
+  description: string;
+  vegetarian: boolean;
+}
+
+/** E4 cart row. */
+export interface CartLine {
+  id: string;
+  table_id: string;
+  menu_item_id: string;
+  quantity: number;
+  request_note: string;
+  allergy_note: string;
+  added_by: string;
+}
+
+/** E5/E6 — cart row plus the table-wide quantity aggregate. */
+export interface CartLineWithTotal extends CartLine {
+  total_table_quantity: number;
+}
+
+/** E1 session. */
+export interface TableSession {
+  table_id: string;
+  code: string;
+  name: string;
+  status: TableStatus;
+}
+
+/** E9 anti-duplicate guardrail (discriminated union). */
+export interface ActiveOrderBlocked {
+  has_active_order: true;
+  order_id: string;
+  status: OrderStatus;
+  message: string;
+}
+export interface ActiveOrderClear {
+  has_active_order: false;
+  message: string;
+}
+export type ActiveCheck = ActiveOrderBlocked | ActiveOrderClear;
+
+/** E2 shift login. */
+export interface ShiftLogin {
+  token: string;
+  token_type: "Bearer";
+  expires_in: number;
+  role: string;
+  terminal_id: string | null;
+  message: string;
+}
+
+/** E2b — decoded terminal session identity. */
+export interface SessionIdentity {
+  authenticated: true;
+  role: string;
+  terminal_id: string | null;
+  issued_at: string;
+  expires_at: string;
+  source: "header" | "cookie";
+}
+
+/** Order line as embedded in E10 tickets / E16 history (name joined live). */
+export interface OrderItemLine {
+  menu_item_id: string;
+  name: string;
+  quantity: number;
+  request_note: string;
+  allergy_note: string;
+}
+
+/** E8 — fired order (201). */
+export interface FiredOrder {
+  order_id: string;
+  table_id: string;
+  status: OrderStatus;
+  created_at: string;
+  message: string;
+}
+
+/** E15 — polling fallback payload. */
+export interface LiveOrderStatus {
+  order_id: string;
+  table_id: string;
+  status: OrderStatus;
+  created_at: string;
+}
+
+/** E16 — table order history row. */
+export interface OrderHistoryItem {
+  order_id: string;
+  table_id: string;
+  status: OrderStatus;
+  created_at: string;
+  items: OrderItemLine[];
+}
+
+/** E10 — KDS ticket. */
+export interface KdsTicket {
+  order_id: string;
+  table: { id: string; code: string; name: string };
+  status: ActiveOrderStatus;
+  created_at: string;
+  items: OrderItemLine[];
+}
+
+/** E11 response. */
+export interface KdsStatusUpdate {
+  order_id: string;
+  status: OrderStatus;
+}
+
+/** E12 response. */
+export interface KdsPruneResult {
+  order_id: string;
+  status: "served";
+  table_cleared: boolean;
+}
+
+/** E13 response. */
+export interface ShiftActivation {
+  device_id: string;
+  audio_armed: true;
+  message: string;
+}
+
+/** E14 response. */
+export interface AvailabilityResult {
+  menu_item_id: string;
+  is_available: boolean;
+}
+
+/** E7 response. */
+export interface CartRemovalResult {
+  id: string;
+  message: string;
+}
+
+/** E17 — floor row. */
+export interface FloorTable {
+  table_id: string;
+  code: string;
+  name: string;
+  status: TableStatus;
+  active_order: { order_id: string; status: OrderStatus; created_at: string } | null;
+  cart_line_count: number;
+}
+
+// ---- Request payloads ------------------------------------------------
+
+/** E5 POST /api/v1/cart/items */
+export interface UpsertCartItemPayload {
+  table_token: string;
+  menu_item_id: string;
+  quantity?: number;
+  allergy_note?: string;
+  request_note?: string;
+  added_by?: string;
+}
+
+/** E6 PATCH /api/v1/cart/items/:cart_item_id */
+export interface UpdateCartItemPayload {
+  table_token: string;
+  quantity?: number;
+  request_note?: string;
+  allergy_note?: string;
+}
+
+/** E7 DELETE /api/v1/cart/items */
+export interface RemoveCartItemPayload {
+  table_token: string;
+  cart_item_id: string;
+}
+
+// ---- List queries ----------------------------------------------------
+
+export interface ListQuery {
+  page?: number;
+  limit?: number;
+}
+
+export interface MenuQuery extends ListQuery {
+  category?: string;
+  q?: string;
+}
+
+export interface KdsTicketsQuery extends ListQuery {
+  status?: ActiveOrderStatus;
+}
