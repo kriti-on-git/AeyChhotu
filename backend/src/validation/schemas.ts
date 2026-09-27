@@ -1,0 +1,129 @@
+import { z } from "zod";
+import { AppError } from "../errors/app-error.js";
+
+/* Zod schemas for every endpoint (docs/7 §1.7 validation rules).
+   Unknown keys are stripped (never rejected) per §1.7. */
+
+const TABLE_TOKEN_RE = /^[a-z0-9]{4,16}$/;
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+const tableToken = z.string().regex(TABLE_TOKEN_RE, "Must be a 4-16 character lowercase table token.");
+const uuid = (label: string) => z.string().regex(UUID_RE, `Must be a valid ${label} UUID.`);
+
+/** §1.5 pagination — shared by every list endpoint. */
+const pagination = {
+  page: z.coerce.number().int().min(1, "page must be an integer >= 1.").default(1),
+  limit: z.coerce.number().int().min(1, "limit must be between 1 and 100.").max(100, "limit must be between 1 and 100.").default(20),
+};
+
+const note = z.string().max(500, "Notes must be 500 characters or fewer.");
+
+// ---- Module 1: Session & Access -------------------------------------
+
+/** E1 POST /api/v1/sessions/initialize */
+export const initializeSchema = z.object({ table_token: tableToken });
+
+/** E2 POST /api/v1/auth/kds-login */
+export const kdsLoginSchema = z.object({
+  pin: z.string().regex(/^\d{4,6}$/, "PIN must be 4 to 6 digits."),
+});
+
+/** E9 GET /api/v1/sessions/:table_token/active-check */
+export const activeCheckParamsSchema = z.object({ table_token: tableToken });
+
+// ---- Module 2: Menu & Cart ------------------------------------------
+
+/** E3 GET /api/v1/menu */
+export const menuQuerySchema = z.object({
+  table_token: tableToken,
+  category: z.string().max(80, "Category filter must be 80 characters or fewer.").optional(),
+  q: z.string().max(50, "Search query must be 50 characters or fewer.").optional(),
+  ...pagination,
+});
+
+/** E4 GET /api/v1/cart/items */
+export const cartListQuerySchema = z.object({ table_token: tableToken, ...pagination });
+
+/** E5 POST /api/v1/cart/items */
+export const cartAddSchema = z.object({
+  table_token: tableToken,
+  menu_item_id: uuid("menu_item_id"),
+  quantity: z.coerce.number().int("quantity must be an integer between 1 and 99.").min(1, "quantity must be an integer between 1 and 99.").max(99, "quantity must be an integer between 1 and 99.").default(1),
+  allergy_note: note.optional(),
+  request_note: note.optional(),
+  added_by: z.string().max(40, "added_by must be 40 characters or fewer.").optional(),
+});
+
+/** E6 PATCH /api/v1/cart/items/:cart_item_id */
+export const cartUpdateSchema = z
+  .object({
+    table_token: tableToken,
+    quantity: z.coerce.number().int("quantity must be an integer between 1 and 99.").min(1, "quantity must be an integer between 1 and 99; use DELETE to remove a line.").max(99, "quantity must be an integer between 1 and 99.").optional(),
+    request_note: note.optional(),
+    allergy_note: note.optional(),
+  })
+  .refine(
+    (body) => body.quantity !== undefined || body.request_note !== undefined || body.allergy_note !== undefined,
+    { message: "Provide at least one of quantity, request_note, allergy_note." },
+  );
+
+/** E6 path params */
+export const cartItemParamsSchema = z.object({ cart_item_id: uuid("cart_item_id") });
+
+/** E7 DELETE /api/v1/cart/items */
+export const cartDeleteSchema = z.object({
+  table_token: tableToken,
+  cart_item_id: uuid("cart_item_id"),
+});
+
+/** E8 POST /api/v1/orders/fire */
+export const fireSchema = z.object({ table_token: tableToken });
+
+/** E16 GET /api/v1/orders */
+export const ordersListQuerySchema = z.object({ table_token: tableToken, ...pagination });
+
+// ---- Module 3: KDS ---------------------------------------------------
+
+/** E10 GET /api/v1/kds/tickets */
+export const kdsTicketsQuerySchema = z.object({
+  status: z.enum(["pending", "preparing", "ready"]).optional(),
+  ...pagination,
+});
+
+/** E11 / E12 path params */
+export const orderParamsSchema = z.object({ order_id: uuid("order_id") });
+
+/** E11 PATCH /api/v1/kds/tickets/:order_id/status */
+export const orderStatusSchema = z.object({
+  status: z.enum(["preparing", "ready"]),
+});
+
+/** E13 POST /api/v1/kds/shift/activate */
+export const shiftActivateSchema = z.object({
+  device_id: z.string().min(1, "device_id is required.").max(64, "device_id must be 64 characters or fewer."),
+});
+
+// ---- Module 4: Floor & availability ----------------------------------
+
+/** E14 PATCH /api/v1/menu/items/:menu_item_id/availability */
+export const menuItemParamsSchema = z.object({ menu_item_id: uuid("menu_item_id") });
+export const availabilitySchema = z.object({ is_available: z.boolean() });
+
+/** E15 GET /api/v1/orders/:order_id/status */
+export const orderStatusParamsSchema = z.object({ order_id: uuid("order_id") });
+
+/** E17 GET /api/v1/floor/tables */
+export const floorQuerySchema = z.object({ ...pagination });
+
+/* Validates a request slice and converts failures into the contract's
+   400 VALIDATION_ERROR envelope with per-field messages (docs/7 §1.1). */
+export function parseOrThrow<T>(schema: z.ZodType<T>, value: unknown): T {
+  const result = schema.safeParse(value);
+  if (result.success) return result.data;
+
+  const fields: Record<string, string> = {};
+  for (const issue of result.error.issues) {
+    fields[issue.path.length > 0 ? issue.path.join(".") : "body"] = issue.message;
+  }
+  throw new AppError(400, "VALIDATION_ERROR", "Request payload failed validation.", { fields });
+}
