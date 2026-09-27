@@ -8,8 +8,6 @@ To build a working prototype in 4 days using a simple tech stack (Next.js and Su
 
 ## Core Features (To Be Implemented Now)
 
-## Core Features (To Be Implemented Now)
-
 * QR-Table Link: Each table's QR code opens a random link like /table/k7x2p (not /table/5, which anyone could guess). It opens the menu and assigns the table instantly without a login.
 * Shared Table Cart: One shared digital cart for the entire table so individual orders stay grouped together. Every phone at the table sees changes live through Supabase Realtime.
 * "Review & Fire" Button: A final button to submit the entire table's order to the kitchen at one time. Before sending, it checks that no item has sold out. After sending, the cart empties, so a second tap shows "Order already sent" and the table can start a new round.
