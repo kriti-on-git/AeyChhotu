@@ -14,17 +14,18 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { ActiveDinersBadge } from "@/components/diner/active-diners-badge";
 import { InactiveTableState } from "@/components/diner/inactive-table-state";
 import { Badge, type BadgeTone } from "@/components/ui/badge";
-import { buttonStyles } from "@/components/ui/button";
+import { Button, buttonStyles } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Container } from "@/components/ui/container";
-import { EmptyState } from "@/components/ui/empty-state";
+import { EmptyState, ErrorState } from "@/components/ui/empty-state";
 import { Heading } from "@/components/ui/heading";
+import { Skeleton } from "@/components/ui/loading-state";
 import { Text } from "@/components/ui/text";
 import { useNow } from "@/hooks/use-now";
 import { usePresence } from "@/hooks/use-presence";
-import { useTableData } from "@/hooks/use-table-data";
+import { useLiveTable } from "@/hooks/use-live-table";
 import type { Order, OrderStatus } from "@/lib/api/types";
-import { formatElapsed, formatTableLabel } from "@/lib/format";
+import { formatElapsed, formatIstTime, formatTableLabel } from "@/lib/format";
 import { transitionBase } from "@/lib/motion";
 import { cn } from "@/lib/utils";
 
@@ -90,7 +91,8 @@ export interface LiveTrackerProps {
 }
 
 export function LiveTracker({ tableToken }: LiveTrackerProps) {
-  const { table, cart, orders, totals } = useTableData(tableToken);
+  const live = useLiveTable(tableToken);
+  const { table, cart, orders, totals } = live;
   const now = useNow(1000);
 
   usePresence(tableToken);
@@ -115,6 +117,29 @@ export function LiveTracker({ tableToken }: LiveTrackerProps) {
     const timer = window.setTimeout(() => setFlashing(false), 4400);
     return () => window.clearTimeout(timer);
   }, [order?.status]);
+
+  // ---- State matrix: loading (stable skeleton, no layout jump) ----------
+  if (live.phase === "loading") return <TrackerSkeleton />;
+
+  // ---- State matrix: error (specific API message + Retry Connection) -----
+  if (live.phase === "error") {
+    return (
+      <main id="main" className="min-h-dvh">
+        <Container size="narrow" className="py-16">
+          <ErrorState
+            titleAs="h1"
+            title="The tracker lost its connection"
+            description={live.error?.message ?? "Please try again in a moment."}
+            action={
+              <Button size="md" onClick={live.retry}>
+                Retry Connection
+              </Button>
+            }
+          />
+        </Container>
+      </main>
+    );
+  }
 
   if (!table) return <InactiveTableState />;
 
@@ -168,7 +193,8 @@ export function LiveTracker({ tableToken }: LiveTrackerProps) {
 
   const meta = statusMeta[order.status];
   const firedLabel =
-    now === null ? "Fired just now" : `Fired ${formatElapsed(order.created_at, now)} ago`;
+    (now === null ? "Fired just now" : `Fired ${formatElapsed(order.created_at, now)} ago`) +
+    ` · ${formatIstTime(order.created_at)}`;
 
   return (
     <main
@@ -337,5 +363,32 @@ function ProgressSteps({ status }: { status: OrderStatus }) {
         );
       })}
     </ol>
+  );
+}
+
+/* Loading state: mirrors the circle + steps + ticket card structure so the
+   layout shift stays stable until the first snapshot streams in. */
+function TrackerSkeleton() {
+  return (
+    <main id="main" className="min-h-dvh bg-canvas">
+      <Container size="narrow" className="flex flex-col items-center gap-8 py-16">
+        <Skeleton className="h-6 w-48 rounded-pill" />
+        <Skeleton className="size-40 rounded-pill sm:size-48" />
+        <Skeleton className="h-8 w-40" />
+        <Skeleton className="h-4 w-72 max-w-full" />
+
+        <div className="flex w-full items-start gap-2 sm:gap-4" aria-hidden>
+          <Skeleton className="h-1.5 flex-1" />
+          <Skeleton className="h-1.5 flex-1" />
+          <Skeleton className="h-1.5 flex-1" />
+        </div>
+
+        <div className="w-full rounded-xl border border-line bg-surface p-5">
+          <Skeleton className="h-5 w-52" />
+          <Skeleton className="mt-4 h-4 w-full" />
+          <Skeleton className="mt-2 h-4 w-3/4" />
+        </div>
+      </Container>
+    </main>
   );
 }

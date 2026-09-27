@@ -12,12 +12,13 @@ import { LandscapeScene } from "@/components/landscape/landscape-scene";
 import { Button, buttonStyles } from "@/components/ui/button";
 import { Card, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Container } from "@/components/ui/container";
+import { EmptyState } from "@/components/ui/empty-state";
 import { Heading } from "@/components/ui/heading";
+import { Skeleton } from "@/components/ui/loading-state";
 import { Text } from "@/components/ui/text";
 import { useToast } from "@/components/ui/toast";
 import { usePresence } from "@/hooks/use-presence";
-import { useTableData } from "@/hooks/use-table-data";
-import { addCartLine } from "@/lib/api";
+import { useLiveTable } from "@/hooks/use-live-table";
 import { getStoredDisplayName, storeDisplayName, storeTableToken } from "@/lib/api/session";
 import type { MenuItem } from "@/lib/api/types";
 import { formatPrice } from "@/lib/format";
@@ -29,8 +30,8 @@ export interface DinerTableScreenProps {
 export function DinerTableScreen({ tableToken }: DinerTableScreenProps) {
   const router = useRouter();
   const { toast } = useToast();
-  const { table, menu, cart, quantities, totals, activeOrder, soldOutInCart } =
-    useTableData(tableToken);
+  const live = useLiveTable(tableToken);
+  const { table, menu, cart, quantities, totals, activeOrder, soldOutInCart, itemErrors } = live;
 
   const [cartOpen, setCartOpen] = useState(false);
   const [pendingItemId, setPendingItemId] = useState<string | null>(null);
@@ -52,20 +53,45 @@ export function DinerTableScreen({ tableToken }: DinerTableScreenProps) {
   async function handleAdd(item: MenuItem) {
     setPendingItemId(item.id);
 
-    const result = await addCartLine({
-      table_token: tableToken,
-      menu_item_id: item.id,
-      added_by: displayName,
-    });
+    const result = await live.addToCart(item, displayName);
 
     setPendingItemId(null);
 
     if (!result.ok) {
-      toast({ title: result.message, tone: "error" });
+      toast({
+        title: result.message ?? `${item.name} could not be added.`,
+        tone: "error",
+      });
       return;
     }
 
     toast({ title: `${item.name} added`, description: "Everyone at the table can see it now." });
+  }
+
+  // ---- State matrix: loading ---------------------------------------------
+  if (live.phase === "loading") return <DinerSkeleton />;
+
+  // ---- State matrix: error (specific message + Retry Connection) ---------
+  if (live.phase === "error") {
+    if (live.error?.error === "TABLE_NOT_FOUND") return <InactiveTableState />;
+
+    return (
+      <main id="main" className="min-h-dvh">
+        <Container size="narrow" className="py-16">
+          <EmptyState
+            tone="alert"
+            titleAs="h1"
+            title="We lost the connection to the kitchen"
+            description={live.error?.message ?? "Please try again in a moment."}
+            action={
+              <Button size="md" onClick={live.retry}>
+                Retry Connection
+              </Button>
+            }
+          />
+        </Container>
+      </main>
+    );
   }
 
   if (!table) return <InactiveTableState />;
@@ -91,12 +117,27 @@ export function DinerTableScreen({ tableToken }: DinerTableScreenProps) {
       </div>
 
       <Container className="grid gap-12 py-12 lg:grid-cols-[1.7fr_1fr] lg:items-start">
-        <MenuList
-          menu={menu}
-          quantities={quantities}
-          pendingItemId={pendingItemId}
-          onAdd={(item) => void handleAdd(item)}
-        />
+        {menu.length === 0 ? (
+          // ---- State matrix: empty catalog ------------------------------
+          <EmptyState
+            titleAs="h2"
+            title="The menu is being stocked"
+            description="No dishes are showing right now. Refresh and the kitchen's list appears the moment it lands."
+            action={
+              <Button size="md" onClick={() => void live.refresh()}>
+                Refresh menu
+              </Button>
+            }
+          />
+        ) : (
+          <MenuList
+            menu={menu}
+            quantities={quantities}
+            pendingItemId={pendingItemId}
+            itemErrors={itemErrors}
+            onAdd={(item) => void handleAdd(item)}
+          />
+        )}
 
         <aside className="flex flex-col gap-5 lg:sticky lg:top-24" aria-label="Live table cart">
           <Card tone="canvas">
@@ -162,6 +203,7 @@ export function DinerTableScreen({ tableToken }: DinerTableScreenProps) {
         open={cartOpen}
         onClose={() => setCartOpen(false)}
         tableToken={tableToken}
+        live={live}
         displayName={displayName}
         onDisplayNameChange={handleDisplayNameChange}
         onFired={() => {
@@ -174,6 +216,54 @@ export function DinerTableScreen({ tableToken }: DinerTableScreenProps) {
           router.push(`/table/${tableToken}/tracker`);
         }}
       />
+    </main>
+  );
+}
+
+/* Loading state: same page shell and grid columns as the real screen so the
+   layout shift stays stable while the first snapshot streams in. */
+function DinerSkeleton() {
+  return (
+    <main id="main" className="min-h-dvh pb-32">
+      <div className="border-b border-line bg-cream/85">
+        <Container className="flex items-center justify-between gap-4 py-4">
+          <Skeleton className="h-7 w-44 rounded-pill" />
+          <Skeleton className="h-7 w-28 rounded-pill" />
+        </Container>
+      </div>
+
+      <div className="border-b border-line">
+        <Container className="py-12">
+          <Skeleton className="h-3 w-44" />
+          <Skeleton className="mt-4 h-9 w-64 max-w-full" />
+          <Skeleton className="mt-5 h-4 w-80 max-w-full" />
+          <Skeleton className="mt-2 h-4 w-64 max-w-full" />
+        </Container>
+      </div>
+
+      <Container className="grid gap-12 py-12 lg:grid-cols-[1.7fr_1fr] lg:items-start">
+        <div className="flex flex-col">
+          {Array.from({ length: 6 }).map((_, index) => (
+            <div
+              key={index}
+              className="flex items-start justify-between gap-5 border-b border-line py-5 last:border-b-0"
+            >
+              <div className="flex flex-1 flex-col gap-2">
+                <Skeleton className="h-5 w-44" />
+                <Skeleton className="h-4 w-full max-w-md" />
+                <Skeleton className="h-4 w-20" />
+              </div>
+              <Skeleton className="h-9 w-24 rounded-pill" />
+            </div>
+          ))}
+        </div>
+
+        <div className="rounded-xl border border-line bg-surface p-6">
+          <Skeleton className="h-5 w-40" />
+          <Skeleton className="mt-3 h-4 w-56" />
+          <Skeleton className="mt-6 h-11 w-full" />
+        </div>
+      </Container>
     </main>
   );
 }

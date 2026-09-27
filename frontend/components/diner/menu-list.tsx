@@ -12,10 +12,12 @@ export interface MenuListProps {
   menu: MenuItem[];
   quantities: Record<string, number>;
   pendingItemId: string | null;
+  /** Per-item API validation messages rendered inline under the row. */
+  itemErrors?: Record<string, string>;
   onAdd: (item: MenuItem) => void;
 }
 
-export function MenuList({ menu, quantities, pendingItemId, onAdd }: MenuListProps) {
+export function MenuList({ menu, quantities, pendingItemId, itemErrors, onAdd }: MenuListProps) {
   const [query, setQuery] = useState("");
 
   const groups = useMemo(() => {
@@ -71,6 +73,7 @@ export function MenuList({ menu, quantities, pendingItemId, onAdd }: MenuListPro
                   item={item}
                   quantityInCart={quantities[item.id] ?? 0}
                   pending={pendingItemId === item.id}
+                  error={itemErrors?.[item.id]}
                   onAdd={onAdd}
                 />
               ))}

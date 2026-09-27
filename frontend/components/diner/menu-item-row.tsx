@@ -10,10 +10,18 @@ export interface MenuItemRowProps {
   item: MenuItem;
   quantityInCart: number;
   pending?: boolean;
+  /** API validation / inventory message rendered under the row (spec §4). */
+  error?: string;
   onAdd: (item: MenuItem) => void;
 }
 
-export function MenuItemRow({ item, quantityInCart, pending = false, onAdd }: MenuItemRowProps) {
+export function MenuItemRow({
+  item,
+  quantityInCart,
+  pending = false,
+  error,
+  onAdd,
+}: MenuItemRowProps) {
   const unavailable = !item.is_available;
 
   return (
@@ -44,6 +52,12 @@ export function MenuItemRow({ item, quantityInCart, pending = false, onAdd }: Me
 
         <p className="max-w-prose text-sm leading-relaxed text-ink-muted">{item.description}</p>
         <p className="text-sm font-medium text-ink">{formatPrice(item.price)}</p>
+
+        {error ? (
+          <p role="alert" className="text-xs font-medium text-alert">
+            {error}
+          </p>
+        ) : null}
       </div>
 
       <div className="flex shrink-0 flex-col items-end gap-2">

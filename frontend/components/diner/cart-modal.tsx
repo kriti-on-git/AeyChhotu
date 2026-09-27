@@ -8,15 +8,15 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { Input } from "@/components/ui/input";
 import { Modal } from "@/components/ui/modal";
 import { Text } from "@/components/ui/text";
-import { useTableData } from "@/hooks/use-table-data";
-import { fireOrder, removeCartLine, updateCartLine } from "@/lib/api";
-import type { ServiceFailure } from "@/lib/api/types";
+import type { FireFailure, LiveTableValue } from "@/hooks/use-live-table";
 import { formatPrice, formatTableLabel } from "@/lib/format";
 
 export interface CartModalProps {
   open: boolean;
   onClose: () => void;
   tableToken: string;
+  /** Shared live snapshot from useLiveTable — one source for every view. */
+  live: LiveTableValue;
   displayName: string;
   onDisplayNameChange: (name: string) => void;
   onFired: () => void;
@@ -26,24 +26,31 @@ export function CartModal({
   open,
   onClose,
   tableToken,
+  live,
   displayName,
   onDisplayNameChange,
   onFired,
 }: CartModalProps) {
-  const { table, cart, menuIndex, totals } = useTableData(tableToken);
+  const { table, cart, menuIndex, totals, updateLine, removeLine, fire } = live;
   const [busyLineId, setBusyLineId] = useState<string | null>(null);
   const [firing, setFiring] = useState(false);
-  const [failure, setFailure] = useState<ServiceFailure | null>(null);
+  const [failure, setFailure] = useState<FireFailure | null>(null);
 
   async function handleFire() {
+    // Frontend double-submission block: the button is already `loading`,
+    // this guard stops Enter-key re-entrant calls while a fire is in flight.
+    if (firing) return;
     setFiring(true);
     setFailure(null);
 
-    const result = await fireOrder(tableToken);
+    // live.fire() resets the table room cart state and pulls a clean
+    // refreshed snapshot from the server on success (spec §3).
+    const result = await live.fire();
+
     setFiring(false);
 
     if (!result.ok) {
-      setFailure(result);
+      setFailure(result.failure);
       return;
     }
 
@@ -54,13 +61,18 @@ export function CartModal({
     setBusyLineId(cartItemId);
 
     if (quantity < 1) {
-      await removeCartLine({ cart_item_id: cartItemId });
+      await removeLine(cartItemId);
     } else {
-      await updateCartLine({ cart_item_id: cartItemId, quantity });
+      await updateLine(cartItemId, { quantity });
     }
 
     setBusyLineId(null);
   }
+
+  const isDuplicate =
+    failure?.code === "DUPLICATE_ORDER" || failure?.code === "duplicate_order";
+  const isInventory =
+    failure?.code === "INVENTORY_FAILURE" || failure?.code === "inventory_conflict";
 
   return (
     <Modal
@@ -80,10 +92,11 @@ export function CartModal({
               variant="ember"
               size="xl"
               loading={firing}
-              onClick={handleFire}
+              disabled={firing}
+              onClick={() => void handleFire()}
               leftIcon={<Flame className="size-5" aria-hidden />}
             >
-              Fire order for the table
+              {firing ? "Firing order…" : "Fire order for the table"}
             </Button>
             <Button variant="ghost" size="lg" onClick={onClose} disabled={firing}>
               Keep editing
@@ -106,20 +119,29 @@ export function CartModal({
         />
 
         {failure ? (
-          <div className="flex items-start gap-3 rounded-md border-2 border-alert/35 bg-alert-surface p-4">
+          <div
+            role="alert"
+            className="flex items-start gap-3 rounded-md border-2 border-alert/35 bg-alert-surface p-4"
+          >
             <TriangleAlert className="mt-0.5 size-4 shrink-0 text-alert" aria-hidden />
             <div className="flex flex-col gap-1">
               <p className="text-sm font-medium text-alert">{failure.message}</p>
-              {failure.sold_out?.length ? (
+              {isInventory && failure.soldOut.length > 0 ? (
                 <Text variant="small" className="text-alert">
-                  Sold out: {failure.sold_out.join(", ")}. The menu is now updated.
+                  Sold out: {failure.soldOut.join(", ")}. The menu is now updated.
                 </Text>
               ) : null}
-              {failure.code === "duplicate_order" ? (
+              {isDuplicate ? (
                 <Text variant="small" className="text-alert">
                   Open the live tracker to follow the order already in the kitchen.
                 </Text>
               ) : null}
+              {/* Inline validation vectors piped from the API error envelope. */}
+              {Object.entries(failure.fields).map(([field, message]) => (
+                <p key={field} className="text-xs text-alert">
+                  <span className="font-medium">{field}</span>: {message}
+                </p>
+              ))}
             </div>
           </div>
         ) : null}
@@ -128,6 +150,11 @@ export function CartModal({
           <EmptyState
             title="The table cart is empty"
             description="Add a dish from the menu and it appears here instantly for everyone at the table."
+            action={
+              <Button variant="outline" size="sm" onClick={onClose}>
+                Browse the menu
+              </Button>
+            }
           />
         ) : (
           <ul className="flex flex-col gap-3">
@@ -138,7 +165,7 @@ export function CartModal({
                 item={menuIndex.get(line.menu_item_id)}
                 busy={busyLineId === line.id}
                 onQuantityChange={(quantity) => void handleQuantity(line.id, quantity)}
-                onNotesChange={(notes) => void updateCartLine({ cart_item_id: line.id, ...notes })}
+                onNotesChange={(notes) => void updateLine(line.id, notes)}
                 onRemove={() => void handleQuantity(line.id, 0)}
               />
             ))}
