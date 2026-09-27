@@ -1,0 +1,501 @@
+"use client";
+
+/* useLiveTable — the Diner side data runtime.
+
+   Strategy: LIVE WITH MOCK FALLBACK (product decision, this turn).
+   1. Every read/write goes through the api-client to the Express backend
+      first (20 s timeout, ApiError envelope parsing).
+   2. When a request never reaches the backend (status 0: down / timeout /
+      unconfigured), the hook transparently falls back to the seeded offline
+      demo store (lib/api) so the prototype still runs without a server.
+   3. Realtime: `table_carts` channel streams cart mutations, and
+      `order_tracker` (via watchOrderStatus) streams status flips — with
+      REST polling underneath as the WebSocket safety net.
+
+   One instance powers the menu screen, the cart modal and the tracker, so
+   every view at a table observes exactly the same snapshot. */
+
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  ApiError,
+  fireTableOrder as apiFire,
+  getCartItems as apiGetCartItems,
+  getMenu as apiGetMenu,
+  getOrders as apiGetOrders,
+  initializeSession as apiInitializeSession,
+  isOfflineError,
+  removeCartItem as apiRemoveCartItem,
+  subscribeTableCart,
+  toCartLine,
+  toMenuItem,
+  toOrder,
+  toTable,
+  updateCartItem as apiUpdateCartItem,
+  upsertCartItem as apiUpsertCartItem,
+  watchOrderStatus,
+} from "@/lib/api-client";
+import type { CartLine, MenuItem, Order, RestaurantTable } from "@/lib/api/types";
+import * as mock from "@/lib/api";
+import { getSnapshot, subscribe as subscribeMockStore } from "@/lib/api/store";
+
+export type LivePhase = "loading" | "error" | "success";
+export type LiveSource = "live" | "demo";
+
+/** Normalized failure the cart modal renders (contract envelope aware). */
+export interface FireFailure {
+  code: string;
+  message: string;
+  soldOut: string[];
+  fields: Record<string, string>;
+}
+
+interface Snapshot {
+  table: RestaurantTable;
+  menu: MenuItem[];
+  cart: CartLine[];
+  orders: Order[];
+}
+
+const LIST_LIMIT = 100;
+
+export interface LiveTableValue {
+  phase: LivePhase;
+  /** Non-null only in the error phase (real backend/contract failure). */
+  error: ApiError | null;
+  source: LiveSource;
+  retry: () => void;
+  refresh: () => Promise<void>;
+
+  table: RestaurantTable | null;
+  menu: MenuItem[];
+  cart: CartLine[];
+  orders: Order[];
+  menuIndex: Map<string, MenuItem>;
+  quantities: Record<string, number>;
+  totals: { lineCount: number; itemCount: number; total: number };
+  activeOrder: Order | null;
+  soldOutInCart: MenuItem[];
+
+  /** Per-item add failures keyed by menu item id → inline row messages. */
+  itemErrors: Record<string, string>;
+
+  addToCart: (item: MenuItem, addedBy: string) => Promise<{ ok: boolean; message?: string }>;
+  updateLine: (
+    cartItemId: string,
+    patch: { quantity?: number; request_note?: string; allergy_note?: string },
+  ) => Promise<void>;
+  removeLine: (cartItemId: string) => Promise<void>;
+  fire: () => Promise<{ ok: true } | { ok: false; failure: FireFailure }>;
+}
+
+export function useLiveTable(tableToken: string): LiveTableValue {
+  const [phase, setPhase] = useState<LivePhase>("loading");
+  const [error, setError] = useState<ApiError | null>(null);
+  const [source, setSource] = useState<LiveSource>("live");
+  const [table, setTable] = useState<RestaurantTable | null>(null);
+  const [menu, setMenu] = useState<MenuItem[]>([]);
+  const [cart, setCart] = useState<CartLine[]>([]);
+  const [orders, setOrders] = useState<Order[]>([]);
+  const [itemErrors, setItemErrors] = useState<Record<string, string>>({});
+  const [reloadKey, setReloadKey] = useState(0);
+
+  const sourceRef = useRef<LiveSource>("live");
+  const tableIdRef = useRef<string | null>(null);
+  const tableCodeRef = useRef<string | null>(null);
+  const mountedRef = useRef(true);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
+  const applySnapshot = useCallback((snapshot: Snapshot) => {
+    if (!mountedRef.current) return;
+    setTable(snapshot.table);
+    setMenu(snapshot.menu);
+    setCart(snapshot.cart);
+    setOrders(snapshot.orders);
+    tableIdRef.current = snapshot.table.id;
+  }, []);
+
+  async function loadLive(): Promise<Snapshot> {
+    const session = await apiInitializeSession(tableToken);
+    const [menuPage, cartPage, orderPage] = await Promise.all([
+      apiGetMenu(tableToken, { limit: LIST_LIMIT }),
+      apiGetCartItems(tableToken, { limit: LIST_LIMIT }),
+      apiGetOrders(tableToken, { limit: LIST_LIMIT }),
+    ]);
+    return {
+      table: toTable(session),
+      menu: menuPage.data.map(toMenuItem),
+      cart: cartPage.data.map(toCartLine),
+      orders: orderPage.data.map((row) => toOrder(row, session.code)),
+    };
+  }
+
+  async function loadDemo(): Promise<Snapshot> {
+    const session = await mock.initializeSession(tableToken);
+    if (!session.ok) {
+      throw new ApiError(404, "TABLE_NOT_FOUND", session.message);
+    }
+    const menu = await mock.fetchMenu(tableToken);
+    if (!menu.ok) {
+      throw new ApiError(404, "TABLE_NOT_FOUND", menu.message);
+    }
+    return {
+      table: session.data,
+      menu: menu.data,
+      cart: mock.getCart(tableToken),
+      orders: mock.getOrdersForTable(tableToken),
+    };
+  }
+
+  const reloadCart = useCallback(async () => {
+    if (sourceRef.current === "demo") {
+      if (mountedRef.current) setCart(mock.getCart(tableToken));
+      return;
+    }
+    try {
+      const page = await apiGetCartItems(tableToken, { limit: LIST_LIMIT });
+      if (mountedRef.current) setCart(page.data.map(toCartLine));
+    } catch (err) {
+      if (err instanceof ApiError && isOfflineError(err)) {
+        sourceRef.current = "demo";
+        setSource("demo");
+        if (mountedRef.current) setCart(mock.getCart(tableToken));
+      }
+    }
+  }, [tableToken]);
+
+  const reloadOrders = useCallback(async () => {
+    if (sourceRef.current === "demo") {
+      if (mountedRef.current) setOrders(mock.getOrdersForTable(tableToken));
+      return;
+    }
+    try {
+      const page = await apiGetOrders(tableToken, { limit: LIST_LIMIT });
+      if (mountedRef.current) {
+        setOrders(page.data.map((row) => toOrder(row, tableCodeRef.current ?? tableToken)));
+      }
+    } catch (err) {
+      if (err instanceof ApiError && isOfflineError(err)) {
+        sourceRef.current = "demo";
+        setSource("demo");
+        if (mountedRef.current) setOrders(mock.getOrdersForTable(tableToken));
+      }
+    }
+  }, [tableToken]);
+
+  // ---- Initial load + every retry --------------------------------------
+  useEffect(() => {
+    let cancelled = false;
+
+    (async () => {
+      setPhase("loading");
+      setError(null);
+      setItemErrors({});
+
+      try {
+        let snapshot: Snapshot;
+        try {
+          snapshot = await loadLive();
+          sourceRef.current = "live";
+          setSource("live");
+        } catch (err) {
+          if (err instanceof ApiError && isOfflineError(err)) {
+            snapshot = await loadDemo();
+            sourceRef.current = "demo";
+            setSource("demo");
+          } else {
+            throw err;
+          }
+        }
+        if (cancelled) return;
+        tableCodeRef.current = snapshot.table.code;
+        applySnapshot(snapshot);
+        setPhase("success");
+      } catch (err) {
+        if (cancelled) return;
+        if (err instanceof ApiError) {
+          setError(err);
+        } else {
+          setError(new ApiError(0, "INTERNAL_ERROR", "Something went wrong loading this table."));
+          console.error(err);
+        }
+        setPhase("error");
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tableToken, reloadKey]);
+
+  // ---- Realtime A: table_carts (live) / mock store (demo) --------------
+  useEffect(() => {
+    if (phase !== "success" || !table) return;
+
+    if (sourceRef.current === "live") {
+      return subscribeTableCart(table.id, tableToken, () => {
+        void reloadCart();
+      });
+    }
+
+    return subscribeMockStore(() => {
+      if (!mountedRef.current) return;
+      setCart(mock.getCart(tableToken));
+      setOrders(mock.getOrdersForTable(tableToken));
+      setMenu(getSnapshot().menu);
+    });
+  }, [phase, table, tableToken, reloadCart]);
+
+  // ---- Realtime C: order_tracker for the active order (live only) ------
+  const activeOrder = useMemo(() => {
+    return (
+      [...orders]
+        .filter((order) => order.status !== "served")
+        .sort((a, b) => b.created_at.localeCompare(a.created_at))
+        .at(0) ?? null
+    );
+  }, [orders]);
+
+  const activeOrderId = activeOrder?.id ?? null;
+  const activeOrderStatus = activeOrder?.status ?? null;
+
+  useEffect(() => {
+    if (phase !== "success" || sourceRef.current !== "live" || !activeOrderId) return;
+
+    return watchOrderStatus(activeOrderId, (statusUpdate) => {
+      if (!mountedRef.current) return;
+      setOrders((current) =>
+        current.map((order) =>
+          order.id === statusUpdate.order_id ? { ...order, status: statusUpdate.status } : order,
+        ),
+      );
+    });
+  }, [phase, activeOrderId, activeOrderStatus]);
+
+  // ---- Derived matrix (identical math to the old useTableData) ----------
+  const menuIndex = useMemo(() => new Map(menu.map((item) => [item.id, item])), [menu]);
+
+  const quantities = useMemo(() => {
+    const map: Record<string, number> = {};
+    for (const line of cart) {
+      map[line.menu_item_id] = (map[line.menu_item_id] ?? 0) + line.quantity;
+    }
+    return map;
+  }, [cart]);
+
+  const totals = useMemo(() => {
+    return cart.reduce(
+      (accumulator, line) => ({
+        lineCount: accumulator.lineCount + 1,
+        itemCount: accumulator.itemCount + line.quantity,
+        total: accumulator.total + (menuIndex.get(line.menu_item_id)?.price ?? 0) * line.quantity,
+      }),
+      { lineCount: 0, itemCount: 0, total: 0 },
+    );
+  }, [cart, menuIndex]);
+
+  const soldOutInCart = useMemo(
+    () =>
+      cart
+        .map((line) => menuIndex.get(line.menu_item_id))
+        .filter((item): item is MenuItem => item !== undefined && !item.is_available),
+    [cart, menuIndex],
+  );
+
+  const retry = useCallback(() => setReloadKey((key) => key + 1), []);
+  const refresh = useCallback(async () => {
+    setReloadKey((key) => key + 1);
+  }, []);
+
+  const syncFromMock = useCallback(() => {
+    if (!mountedRef.current) return;
+    setCart(mock.getCart(tableToken));
+    setOrders(mock.getOrdersForTable(tableToken));
+    setMenu(getSnapshot().menu);
+  }, [tableToken]);
+
+  // ---- Mutations --------------------------------------------------------
+
+  const addToCart = useCallback(
+    async (item: MenuItem, addedBy: string): Promise<{ ok: boolean; message?: string }> => {
+      setItemErrors((current) => {
+        if (!(item.id in current)) return current;
+        const next = { ...current };
+        delete next[item.id];
+        return next;
+      });
+
+      try {
+        await apiUpsertCartItem({
+          table_token: tableToken,
+          menu_item_id: item.id,
+          quantity: 1,
+          added_by: addedBy,
+        });
+        await reloadCart();
+        return { ok: true };
+      } catch (err) {
+        if (err instanceof ApiError && isOfflineError(err)) {
+          const result = await mock.addCartLine({
+            table_token: tableToken,
+            menu_item_id: item.id,
+            added_by: addedBy,
+          });
+          sourceRef.current = "demo";
+          setSource("demo");
+          syncFromMock();
+          if (!result.ok) {
+            setItemErrors((current) => ({ ...current, [item.id]: result.message }));
+            return { ok: false, message: result.message };
+          }
+          return { ok: true };
+        }
+
+        if (err instanceof ApiError) {
+          setItemErrors((current) => ({ ...current, [item.id]: err.message }));
+          if (err.error === "ITEM_UNAVAILABLE" || err.error === "MENU_ITEM_NOT_FOUND") {
+            // Server-side truth changed — refresh the menu so the row greys out.
+            try {
+              const page = await apiGetMenu(tableToken, { limit: LIST_LIMIT });
+              if (mountedRef.current) setMenu(page.data.map(toMenuItem));
+            } catch {
+              /* keep the inline message even if the refresh fails */
+            }
+          }
+          return { ok: false, message: err.message };
+        }
+        throw err;
+      }
+    },
+    [tableToken, reloadCart, syncFromMock],
+  );
+
+  const updateLine = useCallback(
+    async (
+      cartItemId: string,
+      patch: { quantity?: number; request_note?: string; allergy_note?: string },
+    ) => {
+      try {
+        await apiUpdateCartItem(cartItemId, { table_token: tableToken, ...patch });
+        await reloadCart();
+      } catch (err) {
+        if (err instanceof ApiError && isOfflineError(err)) {
+          sourceRef.current = "demo";
+          setSource("demo");
+          await mock.updateCartLine({ cart_item_id: cartItemId, ...patch });
+          syncFromMock();
+          return;
+        }
+        if (err instanceof ApiError) {
+          // Inline validation vector: surface under the cart line via toast layer.
+          console.warn("updateLine failed:", err.error, err.message);
+          return;
+        }
+        throw err;
+      }
+    },
+    [tableToken, reloadCart, syncFromMock],
+  );
+
+  const removeLine = useCallback(
+    async (cartItemId: string) => {
+      try {
+        await apiRemoveCartItem({ table_token: tableToken, cart_item_id: cartItemId });
+        await reloadCart();
+      } catch (err) {
+        if (err instanceof ApiError && isOfflineError(err)) {
+          sourceRef.current = "demo";
+          setSource("demo");
+          await mock.removeCartLine({ cart_item_id: cartItemId });
+          syncFromMock();
+          return;
+        }
+        if (err instanceof ApiError) return;
+        throw err;
+      }
+    },
+    [tableToken, reloadCart, syncFromMock],
+  );
+
+  const fire = useCallback(async (): Promise<{ ok: true } | { ok: false; failure: FireFailure }> => {
+    try {
+      await apiFire(tableToken);
+      // Success path: reset the table room cart state + pull a clean snapshot.
+      await Promise.all([reloadCart(), reloadOrders()]);
+      return { ok: true };
+    } catch (err) {
+      if (err instanceof ApiError && isOfflineError(err)) {
+        sourceRef.current = "demo";
+        setSource("demo");
+        const result = await mock.fireOrder(tableToken);
+        syncFromMock();
+        if (result.ok) return { ok: true };
+        return {
+          ok: false,
+          failure: {
+            code: result.code,
+            message: result.message,
+            soldOut: result.sold_out ?? [],
+            fields: {},
+          },
+        };
+      }
+
+      if (err instanceof ApiError) {
+        // Server truth: sold-out lines were purged inside the fire RPC —
+        // refresh cart + menu so the UI matches what the diner is told.
+        if (err.error === "INVENTORY_FAILURE" || err.error === "EMPTY_CART") {
+          await Promise.all([
+            reloadCart(),
+            apiGetMenu(tableToken, { limit: LIST_LIMIT })
+              .then((page) => {
+                if (mountedRef.current) setMenu(page.data.map(toMenuItem));
+              })
+              .catch(() => undefined),
+          ]);
+        }
+        if (err.error === "DUPLICATE_ORDER") {
+          await reloadOrders();
+        }
+        return {
+          ok: false,
+          failure: {
+            code: err.error,
+            message: err.message,
+            soldOut: err.soldOut,
+            fields: err.fields,
+          },
+        };
+      }
+      throw err;
+    }
+  }, [tableToken, reloadCart, reloadOrders, syncFromMock]);
+
+  return {
+    phase,
+    error,
+    source,
+    retry,
+    refresh,
+    table,
+    menu,
+    cart,
+    orders,
+    menuIndex,
+    quantities,
+    totals,
+    activeOrder,
+    soldOutInCart,
+    itemErrors,
+    addToCart,
+    updateLine,
+    removeLine,
+    fire,
+  };
+}
