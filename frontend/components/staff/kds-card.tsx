@@ -24,10 +24,13 @@ const actions: Record<Exclude<OrderStatus, "served">, AdvanceAction> = {
 export interface KdsCardProps {
   order: Order;
   now: number | null;
+  /** True while this card's one-tap advance is in flight — locks the
+      button so a double-tap can't fire a duplicate status mutation. */
+  busy?: boolean;
   onAdvance: (order: Order, next: OrderStatus) => void;
 }
 
-export function KdsCard({ order, now, onAdvance }: KdsCardProps) {
+export function KdsCard({ order, now, busy = false, onAdvance }: KdsCardProps) {
   const reduceMotion = useReducedMotion();
   const action = order.status === "served" ? null : actions[order.status];
 
@@ -86,10 +89,15 @@ export function KdsCard({ order, now, onAdvance }: KdsCardProps) {
       <Button
         variant={action.variant}
         fullWidth
-        onClick={() => onAdvance(order, action.next)}
-        rightIcon={<ArrowRight className="size-4" aria-hidden />}
+        disabled={busy}
+        loading={busy}
+        onClick={() => {
+          if (busy) return;
+          onAdvance(order, action.next);
+        }}
+        rightIcon={busy ? undefined : <ArrowRight className="size-4" aria-hidden />}
       >
-        {action.label}
+        {busy ? "Working…" : action.label}
       </Button>
     </motion.li>
   );

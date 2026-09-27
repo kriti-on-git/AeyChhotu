@@ -8,6 +8,7 @@ import { Container } from "@/components/ui/container";
 import { FieldShell, controlStyles, useFieldControl } from "@/components/ui/field";
 import { Spinner } from "@/components/ui/spinner";
 import { checkKdsLogin } from "@/lib/api";
+import { ApiError, isOfflineError, loginKDS } from "@/lib/api-client";
 import { cn } from "@/lib/utils";
 
 const keys = ["1", "2", "3", "4", "5", "6", "7", "8", "9"];
@@ -33,16 +34,29 @@ export function KitchenPinWall({ onSuccess }: KitchenPinWallProps) {
     setBusy(true);
     setError(null);
 
-    const result = await checkKdsLogin(value);
-
-    if (!result.ok) {
-      setBusy(false);
-      setError(result.message ?? "That PIN does not match.");
-      setPin("");
+    // Live first: E2 issues the shift JWT and stores it for every
+    // authenticated KDS call (and the 401 redirect guard).
+    try {
+      await loginKDS(value);
+      onSuccess();
       return;
+    } catch (err) {
+      if (isOfflineError(err)) {
+        // API unreachable / not configured — fall back to the demo guard.
+        const result = await checkKdsLogin(value);
+        if (result.ok) {
+          onSuccess();
+          return;
+        }
+        setError(result.message ?? "That PIN does not match.");
+      } else if (err instanceof ApiError) {
+        setError(err.message || "That PIN does not match.");
+      } else {
+        setError("Could not reach the kitchen service. Try again.");
+      }
+      setBusy(false);
+      setPin("");
     }
-
-    onSuccess();
   }
 
   function handleSubmit(event: FormEvent) {

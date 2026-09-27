@@ -5,6 +5,7 @@ import { Drawer } from "@/components/ui/drawer";
 import { useToast } from "@/components/ui/toast";
 import { useDb } from "@/hooks/use-db";
 import { setMenuItemAvailability } from "@/lib/api";
+import { ApiError, isOfflineError, toggleItemAvailability } from "@/lib/api-client";
 import type { MenuItem } from "@/lib/api/types";
 import { formatPrice } from "@/lib/format";
 import { cn } from "@/lib/utils";
@@ -35,11 +36,29 @@ export function MenuAvailabilityDrawer({ open, onClose }: MenuAvailabilityDrawer
 
   async function toggle(item: MenuItem) {
     setBusyId(item.id);
-    const result = await setMenuItemAvailability(item.id, !item.is_available);
+    const next = !item.is_available;
+
+    let result: { ok: boolean; message?: string; data?: MenuItem };
+
+    try {
+      // Live first: E14 persists the 86 flag for every connected menu.
+      await toggleItemAvailability(item.id, next);
+      result = { ok: true, data: { ...item, is_available: next } };
+    } catch (err) {
+      if (isOfflineError(err)) {
+        // API unreachable — mirror the change on the local store instead.
+        result = await setMenuItemAvailability(item.id, next);
+      } else if (err instanceof ApiError) {
+        result = { ok: false, message: err.message };
+      } else {
+        result = { ok: false, message: "Could not update availability. Try again." };
+      }
+    }
+
     setBusyId(null);
 
-    if (!result.ok) {
-      toast({ title: result.message, tone: "error" });
+    if (!result.ok || !result.data) {
+      toast({ title: result.message ?? "Could not update availability.", tone: "error" });
       return;
     }
 
