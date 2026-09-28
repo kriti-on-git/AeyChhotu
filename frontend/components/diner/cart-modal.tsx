@@ -10,6 +10,7 @@ import { Modal } from "@/components/ui/modal";
 import { Text } from "@/components/ui/text";
 import type { FireFailure, LiveTableValue } from "@/hooks/use-live-table";
 import { formatPrice, formatTableLabel } from "@/lib/format";
+import type { CartLine } from "@/lib/api/types";
 
 export interface CartModalProps {
   open: boolean;
@@ -57,13 +58,20 @@ export function CartModal({
     onFired();
   }
 
-  async function handleQuantity(cartItemId: string, quantity: number) {
-    setBusyLineId(cartItemId);
+  async function handleQuantity(line: CartLine, quantity: number) {
+    setBusyLineId(line.id);
 
     if (quantity < 1) {
-      await removeLine(cartItemId);
+      await removeLine(line.id);
     } else {
-      await updateLine(cartItemId, { quantity });
+      // The steppers send INTENT (+1 / -1), not an absolute copy of local
+      // state. The server applies the delta atomically
+      // (quantity = quantity + delta), so a second phone tapping at the
+      // same moment can no longer overwrite this one — no lost updates.
+      const delta = quantity - line.quantity;
+      if (delta !== 0) {
+        await updateLine(line.id, { quantity_delta: delta });
+      }
     }
 
     setBusyLineId(null);
@@ -164,9 +172,9 @@ export function CartModal({
                 line={line}
                 item={menuIndex.get(line.menu_item_id)}
                 busy={busyLineId === line.id}
-                onQuantityChange={(quantity) => void handleQuantity(line.id, quantity)}
+                onQuantityChange={(quantity) => void handleQuantity(line, quantity)}
                 onNotesChange={(notes) => void updateLine(line.id, notes)}
-                onRemove={() => void handleQuantity(line.id, 0)}
+                onRemove={() => void handleQuantity(line, 0)}
               />
             ))}
           </ul>

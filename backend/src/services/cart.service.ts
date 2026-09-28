@@ -114,17 +114,55 @@ export async function addCartItem(input: CartAddInput): Promise<CartLineWithTota
 export interface CartUpdateInput {
   table_token: string;
   quantity?: number;
+  /** +/- stepper intent: applied atomically as quantity = quantity + delta. */
+  quantity_delta?: number;
   request_note?: string;
   allergy_note?: string;
 }
 
 /* E6 — PATCH /api/v1/cart/items/:cart_item_id.
    Ownership enforced twice: the helper resolves table_token and rejects
-   foreign lines, and the UPDATE still re-asserts table_id in SQL. */
+   foreign lines, and the UPDATE still re-asserts table_id in SQL.
+
+   TWO write modes:
+   * quantity_delta (what the +/- steppers send) — ONE atomic statement
+     does the arithmetic (`quantity = quantity + $3`) inside the WHERE
+     range guard, so two phones tapping at the same time serialize in the
+     database and neither tap is lost. No read-modify-write, no lock needed.
+   * quantity (contract's absolute "set to N") — single UPDATE, last write
+     wins by definition; note edits behave the same way. */
 export async function updateCartItem(
   cartItemId: string,
   input: CartUpdateInput,
 ): Promise<CartLineWithTotal> {
+  if (input.quantity_delta !== undefined) {
+    const table = await requireTable(input.table_token);
+
+    const deltaRes = await pool.query<CartRow>(
+      `UPDATE cart_items
+          SET quantity = quantity + $3
+        WHERE id = $1 AND table_id = $2
+          AND quantity + $3 BETWEEN 1 AND 99
+        RETURNING id, table_id, menu_item_id, quantity, request_note, allergy_note, added_by`,
+      [cartItemId, table.id, input.quantity_delta],
+    );
+
+    const deltaRow = deltaRes.rows[0];
+    if (deltaRow) {
+      return {
+        ...deltaRow,
+        total_table_quantity: await totalForTableItem(table.id, deltaRow.menu_item_id),
+      };
+    }
+
+    // 0 rows updated: the line is gone/foreign (404) or the result would
+    // leave 1..99 (400). Classify — this path never writes anything.
+    await ownedCartLine(cartItemId, input.table_token);
+    throw new AppError(400, "VALIDATION_ERROR", "Quantity must stay between 1 and 99.", {
+      fields: { quantity_delta: "Resulting quantity must be between 1 and 99." },
+    });
+  }
+
   const { table, line } = await ownedCartLine(cartItemId, input.table_token);
 
   const res = await pool.query<CartRow>(

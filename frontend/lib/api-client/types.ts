@@ -64,6 +64,9 @@ export interface TableSession {
   code: string;
   name: string;
   status: TableStatus;
+  /** E1 Supabase-scoped read token (RLS scope). Absent/null without
+      SUPABASE_JWT_SECRET — the app then runs REST-only. */
+  realtime_token?: string | null;
 }
 
 /** E9 anti-duplicate guardrail (discriminated union). */
@@ -86,6 +89,8 @@ export interface ShiftLogin {
   expires_in: number;
   role: string;
   terminal_id: string | null;
+  /** E2 Supabase-scoped read token for the KDS realtime channels. */
+  realtime_token?: string | null;
   message: string;
 }
 
@@ -200,7 +205,10 @@ export interface UpsertCartItemPayload {
 /** E6 PATCH /api/v1/cart/items/:cart_item_id */
 export interface UpdateCartItemPayload {
   table_token: string;
+  /** Absolute "set to N" (last write wins). */
   quantity?: number;
+  /** +/- stepper intent — applied atomically server-side (no lost updates). */
+  quantity_delta?: number;
   request_note?: string;
   allergy_note?: string;
 }

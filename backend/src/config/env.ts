@@ -52,4 +52,9 @@ export const env = {
   staffPin: requireStaffPin(),
   /** HMAC secret used to sign/verify the KDS bearer tokens issued by E2. */
   kdsTokenSecret: requireEnv("KDS_TOKEN_SECRET"),
+  /** Supabase JWT secret (Project Settings → API). Optional: when set, E1/E2
+      also issue a Supabase-scoped read token whose claims the RLS policies
+      in sql/001_init.sql scope per table (diner: table_token, staff: staff).
+      Without it no realtime token is issued and Realtime runs REST-only. */
+  supabaseJwtSecret: process.env.SUPABASE_JWT_SECRET?.trim() || null,
 } as const;

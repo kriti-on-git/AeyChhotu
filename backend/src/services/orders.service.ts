@@ -1,6 +1,7 @@
 import { pool } from "../db/pool.js";
 import { AppError } from "../errors/app-error.js";
 import { buildMeta, iso, type PageMeta } from "../lib/util.js";
+import { requireTable } from "./sessions.service.js";
 
 /* Module 2 — Review & Fire (E8, atomic via fire_order RPC) +
    Module 4 — status polling (E15) and order history (E16). */
@@ -74,11 +75,17 @@ export async function fireOrder(tableToken: string): Promise<FiredOrder> {
   }
 }
 
-/* E15 — GET /api/v1/orders/:order_id/status (diner polling fallback). */
-export async function getOrderStatus(orderId: string) {
+/* E15 — GET /api/v1/orders/:order_id/status?table_token=… (diner polling).
+   Scoped to the caller's table: an order id on its own must not be a
+   universal reader (docs/7 §1.4 capability model + the ownership rule).
+   Unknown id and foreign id both surface as the same 404 — existence of
+   another table's order is never leaked. */
+export async function getOrderStatus(orderId: string, tableToken: string) {
+  const table = await requireTable(tableToken);
+
   const res = await pool.query<{ order_id: string; table_id: string; status: string; created_at: Date }>(
-    "SELECT id AS order_id, table_id, status, created_at FROM orders WHERE id = $1",
-    [orderId],
+    "SELECT id AS order_id, table_id, status, created_at FROM orders WHERE id = $1 AND table_id = $2",
+    [orderId, table.id],
   );
 
   const row = res.rows[0];

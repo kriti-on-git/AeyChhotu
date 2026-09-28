@@ -13,11 +13,17 @@
      channel, and only keeps polling while the channel is not live —
      so a dead socket degrades to polite 5s polling instead of silence.
 
-   SECURITY: browser holds only the public anon key (RLS-filtered events).
+   SECURITY: the browser holds only the public anon key PLUS the
+   read-scoped `realtime_token` minted by E1/E2 (see realtime-auth.ts).
+   Its claims are what the RLS policies in backend/sql/001_init.sql match
+   on, so events are filtered to this diner's table (or the whole floor
+   for a staff token). Without that token the policies match no rows:
+   the client degrades to REST instead of leaking other tables' data.
    The service_role key must never appear here. */
 
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { getLiveOrderStatus } from "./endpoints";
+import { getRealtimeAuth, onRealtimeAuthChange } from "./realtime-auth";
 import type { CartLine, LiveOrderStatus, OrderStatus } from "./types";
 
 let supabaseInstance: SupabaseClient | null = null;
@@ -33,7 +39,19 @@ export function getSupabase(): SupabaseClient | null {
   const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
   if (!url || !anonKey) return null;
 
-  supabaseInstance = createClient(url, anonKey);
+  supabaseInstance = createClient(url, anonKey, {
+    // Read the RLS-scoped token live: called on connect and on every
+    // realtime heartbeat, so a token stored after the client was created
+    // (E1 resolves first, subscriptions arm after) is picked up too.
+    accessToken: async () => getRealtimeAuth(),
+  });
+
+  // A token arriving on an already-open socket is pushed straight in.
+  const instance = supabaseInstance;
+  onRealtimeAuthChange((token) => {
+    void instance.realtime.setAuth(token ?? undefined);
+  });
+
   return supabaseInstance;
 }
 
@@ -189,6 +207,7 @@ export interface WatchOptions {
  */
 export function watchOrderStatus(
   orderId: string,
+  tableToken: string,
   onStatus: (status: LiveOrderStatus) => void,
   options: WatchOptions = {},
 ): Detach {
@@ -217,7 +236,7 @@ export function watchOrderStatus(
 
   async function tick(): Promise<void> {
     try {
-      const status = await getLiveOrderStatus(orderId);
+      const status = await getLiveOrderStatus(orderId, tableToken);
       if (!stopped) onStatus(status);
     } catch {
       // Transient failure — the next tick retries; callers keep last state.

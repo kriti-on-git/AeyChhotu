@@ -11,7 +11,11 @@
     "dev": "tsx watch src/index.ts",
     "build": "tsc -p tsconfig.json",
     "start": "node dist/index.js",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "db:setup": "node scripts/db-setup.mjs",
+    "db:setup:noseed": "node scripts/db-setup.mjs --no-seed",
+    "db:verify": "node scripts/db-verify.mjs",
+    "smoke": "node scripts/smoke.mjs"
   },
   "dependencies": {
     "cors": "2.8.6",

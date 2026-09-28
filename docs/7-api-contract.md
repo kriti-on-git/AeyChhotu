@@ -191,10 +191,16 @@ Endpoints by tier: staff = E10, E11, E12, E13, E14, E17. Everything else = none.
     "table_id": "8c3b9b4f-8012-4f35-90d1-0f796d11f181",
     "code": "k7x2p",
     "name": "Window four-top",
-    "status": "active"
+    "status": "active",
+    "realtime_token": "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiI4YzNiOWI0Zi0uLi4iLCJyb2xlIjoiYXV0aGVudGljYXRlZCIsInRhYmxlX3Rva2VuIjoiazd4MnAiLCJpYXQiOjE3OTA1NjgsImV4cCI6MTc5MDYxMX0.signature"
   }
 }
 ```
+`realtime_token` is the Supabase-scoped READ token whose `table_token`
+claim the RLS policies in `sql/001_init.sql` match on — the browser sends
+it as the JWT for Realtime so its channels only receive **this** table's
+rows. It is `null` when `SUPABASE_JWT_SECRET` is not configured (the app
+then runs REST-only). Read scope only: every write still requires this API.
 
 **Errors**
 
@@ -223,9 +229,15 @@ Endpoints by tier: staff = E10, E11, E12, E13, E14, E17. Everything else = none.
     "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzY29wZSI6ImrkcyIsImV4cCI6MTc2MDMxODh9.signature",
     "token_type": "Bearer",
     "expires_in": 28800,
+    "realtime_token": "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiI3ZThmOWEwYi0uLi4iLCJyb2xlIjoiYXV0aGVudGljYXRlZCIsInN0YWZmIjoia2l0Y2hlbiIsImlhdCI6MTc5MDU2OCwiZXhwIjoxNzkwNTk2fQ.signature",
     "message": "Shift successfully armed. Tap screen to authorize chimes."
   }
 }
+```
+`realtime_token` is the Supabase-scoped staff read token (claim
+`staff: "kitchen"`) used for channel B — it lets the board's Realtime
+subscription read every order, and is `null` without `SUPABASE_JWT_SECRET`.
+It is never the `service_role` key.
 ```
 `token` is signed server-side (HMAC-SHA256) with claims `{ role: "kitchen", terminal_id, iat, exp }`, 8h TTL. It is **not** the `service_role` key and is only accepted by the staff endpoints (E10–E14, E17) plus E2b. The response also sets an `httpOnly; SameSite=Strict` `kds_token` cookie for same-origin browser terminals. The raw `STAFF_PIN` never appears in any payload or log.
 
@@ -411,9 +423,13 @@ Claims only — no PIN, no secret, no internal configuration is ever echoed.
 | Field | Type | Required | Rules |
 |---|---|---|---|
 | `table_token` | string | yes | Ownership check: row must belong to this table |
-| `quantity` | integer | no | `1 – 99`. `0` is invalid — use E7 to remove |
+| `quantity` | integer | no | Absolute "set to N", `1 – 99`. `0` is invalid — use E7 to remove. Last write wins |
+| `quantity_delta` | integer | no | Relative step, `-99…99`, never `0`. **What the +/- steppers send**: applied atomically as `quantity = quantity + delta`, so two phones tapping at once cannot overwrite each other (no lost updates). Result must stay `1 – 99`, else `400 VALIDATION_ERROR` with `error.fields.quantity_delta` |
 | `request_note` | string | no | `≤ 500` chars |
 | `allergy_note` | string | no | `≤ 500` chars |
+
+At least one of `quantity` / `quantity_delta` / `request_note` /
+`allergy_note` is required.
 
 **Success — `200 OK`** (full updated row + aggregate, same shape as E5)
 ```json
@@ -709,9 +725,16 @@ Immediate effect: E3 greys the row on every open S1, and E5/E8 reject or 409 the
 ---
 
 #### E15. `GET /api/v1/orders/:order_id/status`
-**Auth:** none (the unguessable `order_id` is the capability) · **Screen:** S3 (REST polling fallback before Realtime channel C locks) · **Feature:** 12 — Fallback Live Guest Progress Status Checker
+**Auth:** none (`order_id` **+** `table_token` together form the capability; the id alone is not a universal reader) · **Screen:** S3 (REST polling fallback before Realtime channel C locks) · **Feature:** 12 — Fallback Live Guest Progress Status Checker
 
 **Path:** `order_id` — UUID v4.
+
+**Query params**
+
+| Param | Type | Required | Rules |
+|---|---|---|---|
+| `table_token` | string | yes | §1.7 — the scope check: the row is only returned when the order belongs to this table |
+
 
 **Success — `200 OK`**
 ```json
@@ -727,7 +750,7 @@ Immediate effect: E3 greys the row on every open S1, and E5/E8 reject or 409 the
 ```
 Clients map `pending` → grey, `preparing` → amber, `ready` → full-screen green flash, `served` → completed.
 
-**Errors:** `400 VALIDATION_ERROR` (not a UUID) · `404 ORDER_NOT_FOUND` · `500 INTERNAL_ERROR`
+**Errors:** `400 VALIDATION_ERROR` (id not a UUID, or missing/malformed `table_token`) · `404 TABLE_NOT_FOUND` (unknown token) · `404 ORDER_NOT_FOUND` (unknown id **or** an id belonging to another table — identical answer, existence is never leaked) · `500 INTERNAL_ERROR`
 
 ---
 

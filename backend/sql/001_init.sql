@@ -63,7 +63,7 @@ CREATE TABLE IF NOT EXISTS cart_items (
 -- Blueprint: orders(id, table_id, status, created_at) + contract §6: updated_at.
 CREATE TABLE IF NOT EXISTS orders (
   id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  table_id    uuid NOT NULL REFERENCES restaurant_tables(id) ON DELETE CASCADE,
+  table_id    uuid NOT NULL REFERENCES restaurant_tables(id) ON DELETE RESTRICT,
   status      text NOT NULL DEFAULT 'pending'
               CHECK (status IN ('pending', 'preparing', 'ready', 'served')),
   created_at  timestamptz NOT NULL DEFAULT now(),
@@ -105,6 +105,13 @@ CREATE INDEX IF NOT EXISTS cart_items_table_created_idx ON cart_items (table_id,
 CREATE INDEX IF NOT EXISTS orders_table_status_idx      ON orders (table_id, status);
 CREATE INDEX IF NOT EXISTS orders_active_idx            ON orders (status) WHERE status <> 'served';
 CREATE INDEX IF NOT EXISTS orders_created_idx           ON orders (created_at DESC, id DESC);
+
+-- "One active order per table" (the DB half of the duplicate-fire guard).
+-- PARTIAL on purpose: only pending/preparing/ready rows are keyed, so a
+-- served (closed) round falls out of the index and never blocks the next
+-- fire — the same reason fire_order() guards on status IN (...).
+CREATE UNIQUE INDEX IF NOT EXISTS orders_one_active_uq
+  ON orders (table_id) WHERE status IN ('pending', 'preparing', 'ready');
 CREATE INDEX IF NOT EXISTS order_items_order_idx        ON order_items (order_id);
 CREATE INDEX IF NOT EXISTS menu_items_category_idx      ON menu_items (category);
 
@@ -113,10 +120,16 @@ CREATE INDEX IF NOT EXISTS menu_items_category_idx      ON menu_items (category)
 -- permanent policies for SELECT, INSERT, UPDATE and DELETE.
 --
 -- Design (matches docs/7 §1.4 auth tiers):
---   * SELECT → anon + authenticated. The diner API is capability-based
---     ("auth: none" — knowing the table_token / order_id grants the read),
---     and the browser needs anon SELECTs for Supabase Realtime.
---     This is what prevents the silent "[] with no error" RLS bug.
+--   * SELECT → anon + authenticated, but ALWAYS claim-scoped (this is the
+--     "WHERE user_id = the logged-in user" rule of this app):
+--       - diner token carries claim table_token = <code> and may read only
+--         that table's rows (cart, orders, order_items, table row);
+--       - staff token carries claim staff = 'kitchen'|'floor' and may read
+--         every row (the KDS board sees the whole floor);
+--       - no token ⇒ no rows at all. The old USING (true) let anyone holding
+--         the public anon key read every table's cart and allergy notes.
+--     The browser needs these SELECTs for Supabase Realtime, and a missing
+--     policy still fails as "[] with no error", never as a crash.
 --   * INSERT/UPDATE/DELETE → service_role only. All writes go through the
 --     backend (which connects as the table-owning role and therefore
 --     bypasses RLS) or through server-side service_role usage; clients
@@ -141,7 +154,12 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO service_role;
 -- restaurant_tables ----------------------------------------------------
 DROP POLICY IF EXISTS restaurant_tables_select_public ON restaurant_tables;
 CREATE POLICY restaurant_tables_select_public ON restaurant_tables
-  FOR SELECT TO anon, authenticated USING (true);
+  FOR SELECT TO anon, authenticated
+  USING (
+    code = (nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'table_token')
+    OR (nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'staff')
+       IN ('kitchen', 'floor')
+  );
 DROP POLICY IF EXISTS restaurant_tables_insert_service ON restaurant_tables;
 CREATE POLICY restaurant_tables_insert_service ON restaurant_tables
   FOR INSERT TO service_role WITH CHECK (true);
@@ -153,6 +171,8 @@ CREATE POLICY restaurant_tables_delete_service ON restaurant_tables
   FOR DELETE TO service_role USING (true);
 
 -- menu_items -----------------------------------------------------------
+-- Menu stays world-readable: it is a public catalog (no diner data in it),
+-- so the QR menu still renders when no token is presented.
 DROP POLICY IF EXISTS menu_items_select_public ON menu_items;
 CREATE POLICY menu_items_select_public ON menu_items
   FOR SELECT TO anon, authenticated USING (true);
@@ -169,7 +189,13 @@ CREATE POLICY menu_items_delete_service ON menu_items
 -- cart_items -----------------------------------------------------------
 DROP POLICY IF EXISTS cart_items_select_public ON cart_items;
 CREATE POLICY cart_items_select_public ON cart_items
-  FOR SELECT TO anon, authenticated USING (true);
+  FOR SELECT TO anon, authenticated
+  USING (
+    (SELECT rt.code FROM restaurant_tables rt WHERE rt.id = table_id)
+      = (nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'table_token')
+    OR (nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'staff')
+       IN ('kitchen', 'floor')
+  );
 DROP POLICY IF EXISTS cart_items_insert_service ON cart_items;
 CREATE POLICY cart_items_insert_service ON cart_items
   FOR INSERT TO service_role WITH CHECK (true);
@@ -183,7 +209,13 @@ CREATE POLICY cart_items_delete_service ON cart_items
 -- orders ---------------------------------------------------------------
 DROP POLICY IF EXISTS orders_select_public ON orders;
 CREATE POLICY orders_select_public ON orders
-  FOR SELECT TO anon, authenticated USING (true);
+  FOR SELECT TO anon, authenticated
+  USING (
+    (SELECT rt.code FROM restaurant_tables rt WHERE rt.id = table_id)
+      = (nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'table_token')
+    OR (nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'staff')
+       IN ('kitchen', 'floor')
+  );
 DROP POLICY IF EXISTS orders_insert_service ON orders;
 CREATE POLICY orders_insert_service ON orders
   FOR INSERT TO service_role WITH CHECK (true);
@@ -197,7 +229,14 @@ CREATE POLICY orders_delete_service ON orders
 -- order_items ----------------------------------------------------------
 DROP POLICY IF EXISTS order_items_select_public ON order_items;
 CREATE POLICY order_items_select_public ON order_items
-  FOR SELECT TO anon, authenticated USING (true);
+  FOR SELECT TO anon, authenticated
+  USING (
+    (SELECT rt.code FROM restaurant_tables rt
+      WHERE rt.id = (SELECT o.table_id FROM orders o WHERE o.id = order_items.order_id))
+      = (nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'table_token')
+    OR (nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'staff')
+       IN ('kitchen', 'floor')
+  );
 DROP POLICY IF EXISTS order_items_insert_service ON order_items;
 CREATE POLICY order_items_insert_service ON order_items
   FOR INSERT TO service_role WITH CHECK (true);

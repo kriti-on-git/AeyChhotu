@@ -1,0 +1,43 @@
+# =====================================================================
+# AeyChhotu! — repository-wide ignores.
+# Each app also ships its own .gitignore; this file is the backstop that
+# also covers repo-root artefacts (logs, the local Postgres rehearsal
+# cluster, editor/agent noise). Keep the secret rules here in sync with
+# backend/.gitignore and frontend/.gitignore.
+# =====================================================================
+
+# ---- Dependencies ----------------------------------------------------
+node_modules/
+
+# ---- Build output ----------------------------------------------------
+dist/
+build/
+.next/
+out/
+*.tsbuildinfo
+next-env.d.ts
+
+# ---- Secrets — never commit ------------------------------------------
+# Defence in depth: the per-app .gitignore files already cover these, but
+# a stray `git add -A` from the repo root must never sweep up a real file.
+.env
+.env.*
+!.env.example
+
+# ---- Logs ------------------------------------------------------------
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# ---- Local throwaway Postgres cluster used for E2E verification ------
+.pgdata/
+
+# ---- Editor / OS / agent noise ---------------------------------------
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+.freebuff/
+*.pem

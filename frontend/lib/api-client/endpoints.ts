@@ -7,6 +7,7 @@
    `Authorization: Bearer <shift token>` header automatically. */
 
 import { apiRequest } from "./apiClient";
+import { setRealtimeAuth } from "./realtime-auth";
 import { storeKdsToken } from "./token";
 import type {
   ActiveCheck,
@@ -39,12 +40,16 @@ const BASE = "/api/v1";
 
 // ---- Module 1: Session & Access --------------------------------------
 
-/** E1 — POST /api/v1/sessions/initialize */
+/** E1 — POST /api/v1/sessions/initialize.
+    Also arms the realtime RLS scope: the returned `realtime_token` is what
+    Supabase sees as the JWT for this browser, so its channels only receive
+    this table's rows. Null/absent ⇒ REST-only (policies match no rows). */
 export async function initializeSession(tableToken: string): Promise<TableSession> {
   const { data } = await apiRequest<TableSession>(`${BASE}/sessions/initialize`, {
     method: "POST",
     body: { table_token: tableToken },
   });
+  setRealtimeAuth(data.realtime_token ?? null);
   return data;
 }
 
@@ -55,6 +60,8 @@ export async function loginKDS(pin: string): Promise<ShiftLogin> {
     body: { pin },
   });
   storeKdsToken(data.token);
+  // Staff-scoped read token: channel B (kds_orders) may read every order.
+  setRealtimeAuth(data.realtime_token ?? null);
   return data;
 }
 
@@ -190,9 +197,16 @@ export async function toggleItemAvailability(
 }
 
 /** E15 — GET /api/v1/orders/:order_id/status (diner polling fallback) */
-export async function getLiveOrderStatus(orderId: string): Promise<LiveOrderStatus> {
+/** E15 — GET /api/v1/orders/:order_id/status?table_token=…
+    The table_token is mandatory: the backend scopes the read to that
+    table (an order id alone is not a universal reader). */
+export async function getLiveOrderStatus(
+  orderId: string,
+  tableToken: string,
+): Promise<LiveOrderStatus> {
   const { data } = await apiRequest<LiveOrderStatus>(
     `${BASE}/orders/${encodeURIComponent(orderId)}/status`,
+    { query: { table_token: tableToken } },
   );
   return data;
 }

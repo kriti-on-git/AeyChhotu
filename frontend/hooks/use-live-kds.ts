@@ -13,6 +13,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ApiError,
+  fetchAllPages,
   getKdsTickets as apiGetKdsTickets,
   isOfflineError,
   pruneKdsTicket as apiPruneKdsTicket,
@@ -67,8 +68,11 @@ export function useLiveKds(): LiveKdsValue {
 
   const loadTickets = useCallback(async (): Promise<{ list: Order[]; source: KdsSource }> => {
     try {
-      const page = await apiGetKdsTickets({ limit: LIST_LIMIT });
-      return { list: page.data.map(toKdsOrder), source: "live" };
+      // The board must show EVERY active ticket: walk all pages so ticket
+      // 101 can never be invisible to the kitchen (server caps limit at
+      // 100 per request — page 1 alone was a silent truncation).
+      const rows = await fetchAllPages((page) => apiGetKdsTickets({ page, limit: LIST_LIMIT }));
+      return { list: rows.map(toKdsOrder), source: "live" };
     } catch (err) {
       if (err instanceof ApiError && isOfflineError(err)) {
         // Backend unreachable → offline demo board from the seeded store.

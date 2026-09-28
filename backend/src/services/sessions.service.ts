@@ -1,5 +1,7 @@
 import { pool } from "../db/pool.js";
+import { env } from "../config/env.js";
 import { AppError } from "../errors/app-error.js";
+import { signReadToken } from "../lib/jwt.js";
 
 /* Module 1 — Session & Access Control. */
 
@@ -24,9 +26,35 @@ export async function requireTable(tableToken: string): Promise<TableRecord> {
 }
 
 /* E1 — POST /api/v1/sessions/initialize.
-   Verifies the scanned token and flips the table to 'active' on first scan. */
+   Verifies the scanned token and flips the table to 'active' on first scan.
+
+   The response also carries `realtime_token` — a Supabase-scoped READ
+   token whose `table_token` claim is what the RLS policies in
+   sql/001_init.sql match on (diner scope). It is issued only when
+   SUPABASE_JWT_SECRET is configured; without it the client runs REST-only
+   and the field is null. The token grants READ scope and no authority:
+   writes still go through this backend only. */
+
+const READ_TOKEN_TTL_SECONDS = 12 * 60 * 60; // one long dining session
+
+function issueTableReadToken(table: TableRecord): string | null {
+  if (!env.supabaseJwtSecret) return null;
+  const now = Math.floor(Date.now() / 1000);
+  return signReadToken(
+    {
+      sub: table.id,
+      role: "authenticated",
+      table_token: table.code,
+      iat: now,
+      exp: now + READ_TOKEN_TTL_SECONDS,
+    },
+    env.supabaseJwtSecret,
+  );
+}
+
 export async function initializeSession(tableToken: string) {
   const table = await requireTable(tableToken);
+  const realtimeToken = issueTableReadToken(table);
 
   if (table.status !== "active") {
     const updated = await pool.query<TableRecord>(
@@ -34,10 +62,22 @@ export async function initializeSession(tableToken: string) {
       [table.id],
     );
     const row = updated.rows[0] ?? table;
-    return { table_id: row.id, code: row.code, name: row.name, status: row.status };
+    return {
+      table_id: row.id,
+      code: row.code,
+      name: row.name,
+      status: row.status,
+      realtime_token: realtimeToken,
+    };
   }
 
-  return { table_id: table.id, code: table.code, name: table.name, status: table.status };
+  return {
+    table_id: table.id,
+    code: table.code,
+    name: table.name,
+    status: table.status,
+    realtime_token: realtimeToken,
+  };
 }
 
 export type ActiveCheckResult =

@@ -18,6 +18,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ApiError,
+  fetchAllPages,
   fireTableOrder as apiFire,
   getCartItems as apiGetCartItems,
   getMenu as apiGetMenu,
@@ -82,7 +83,12 @@ export interface LiveTableValue {
   addToCart: (item: MenuItem, addedBy: string) => Promise<{ ok: boolean; message?: string }>;
   updateLine: (
     cartItemId: string,
-    patch: { quantity?: number; request_note?: string; allergy_note?: string },
+    patch: {
+      quantity?: number;
+      quantity_delta?: number;
+      request_note?: string;
+      allergy_note?: string;
+    },
   ) => Promise<void>;
   removeLine: (cartItemId: string) => Promise<void>;
   fire: () => Promise<{ ok: true } | { ok: false; failure: FireFailure }>;
@@ -122,15 +128,18 @@ export function useLiveTable(tableToken: string): LiveTableValue {
 
   async function loadLive(): Promise<Snapshot> {
     const session = await apiInitializeSession(tableToken);
-    const [menuPage, cartPage, orderPage] = await Promise.all([
-      apiGetMenu(tableToken, { limit: LIST_LIMIT }),
-      apiGetCartItems(tableToken, { limit: LIST_LIMIT }),
+    // Menu + cart must be COMPLETE (dish 101 still has to render), so they
+    // walk every page. Order history stays newest-first page 1: the active
+    // order is always the newest row, so the tracker can never miss it.
+    const [menu, cart, orderPage] = await Promise.all([
+      fetchAllPages((page) => apiGetMenu(tableToken, { page, limit: LIST_LIMIT })),
+      fetchAllPages((page) => apiGetCartItems(tableToken, { page, limit: LIST_LIMIT })),
       apiGetOrders(tableToken, { limit: LIST_LIMIT }),
     ]);
     return {
       table: toTable(session),
-      menu: menuPage.data.map(toMenuItem),
-      cart: cartPage.data.map(toCartLine),
+      menu: menu.map(toMenuItem),
+      cart: cart.map(toCartLine),
       orders: orderPage.data.map((row) => toOrder(row, session.code)),
     };
   }
@@ -158,8 +167,10 @@ export function useLiveTable(tableToken: string): LiveTableValue {
       return;
     }
     try {
-      const page = await apiGetCartItems(tableToken, { limit: LIST_LIMIT });
-      if (mountedRef.current) setCart(page.data.map(toCartLine));
+      const rows = await fetchAllPages((page) =>
+        apiGetCartItems(tableToken, { page, limit: LIST_LIMIT }),
+      );
+      if (mountedRef.current) setCart(rows.map(toCartLine));
     } catch (err) {
       if (err instanceof ApiError && isOfflineError(err)) {
         sourceRef.current = "demo";
@@ -175,6 +186,8 @@ export function useLiveTable(tableToken: string): LiveTableValue {
       return;
     }
     try {
+      // Newest-first: page 1 always holds the active order. History beyond
+      // 100 rows is archival, so it is deliberately not walked (see loadLive).
       const page = await apiGetOrders(tableToken, { limit: LIST_LIMIT });
       if (mountedRef.current) {
         setOrders(page.data.map((row) => toOrder(row, tableCodeRef.current ?? tableToken)));
@@ -268,7 +281,7 @@ export function useLiveTable(tableToken: string): LiveTableValue {
   useEffect(() => {
     if (phase !== "success" || sourceRef.current !== "live" || !activeOrderId) return;
 
-    return watchOrderStatus(activeOrderId, (statusUpdate) => {
+    return watchOrderStatus(activeOrderId, tableToken, (statusUpdate) => {
       if (!mountedRef.current) return;
       setOrders((current) =>
         current.map((order) =>
@@ -276,7 +289,7 @@ export function useLiveTable(tableToken: string): LiveTableValue {
         ),
       );
     });
-  }, [phase, activeOrderId, activeOrderStatus]);
+  }, [phase, activeOrderId, activeOrderStatus, tableToken]);
 
   // ---- Derived matrix (identical math to the old useTableData) ----------
   const menuIndex = useMemo(() => new Map(menu.map((item) => [item.id, item])), [menu]);
@@ -362,8 +375,10 @@ export function useLiveTable(tableToken: string): LiveTableValue {
           if (err.error === "ITEM_UNAVAILABLE" || err.error === "MENU_ITEM_NOT_FOUND") {
             // Server-side truth changed — refresh the menu so the row greys out.
             try {
-              const page = await apiGetMenu(tableToken, { limit: LIST_LIMIT });
-              if (mountedRef.current) setMenu(page.data.map(toMenuItem));
+              const rows = await fetchAllPages((page) =>
+                apiGetMenu(tableToken, { page, limit: LIST_LIMIT }),
+              );
+              if (mountedRef.current) setMenu(rows.map(toMenuItem));
             } catch {
               /* keep the inline message even if the refresh fails */
             }
@@ -379,7 +394,12 @@ export function useLiveTable(tableToken: string): LiveTableValue {
   const updateLine = useCallback(
     async (
       cartItemId: string,
-      patch: { quantity?: number; request_note?: string; allergy_note?: string },
+      patch: {
+        quantity?: number;
+        quantity_delta?: number;
+        request_note?: string;
+        allergy_note?: string;
+      },
     ) => {
       try {
         await apiUpdateCartItem(cartItemId, { table_token: tableToken, ...patch });
@@ -388,7 +408,17 @@ export function useLiveTable(tableToken: string): LiveTableValue {
         if (err instanceof ApiError && isOfflineError(err)) {
           sourceRef.current = "demo";
           setSource("demo");
-          await mock.updateCartLine({ cart_item_id: cartItemId, ...patch });
+          // The demo store has no server-side atomics: resolve the delta
+          // against the local line, then store an absolute value.
+          const { quantity_delta: delta, ...rest } = patch;
+          const localLine = mock.getCart(tableToken).find((line) => line.id === cartItemId);
+          await mock.updateCartLine({
+            cart_item_id: cartItemId,
+            ...rest,
+            ...(delta !== undefined && localLine
+              ? { quantity: Math.min(99, Math.max(1, localLine.quantity + delta)) }
+              : {}),
+          });
           syncFromMock();
           return;
         }
@@ -453,9 +483,9 @@ export function useLiveTable(tableToken: string): LiveTableValue {
         if (err.error === "INVENTORY_FAILURE" || err.error === "EMPTY_CART") {
           await Promise.all([
             reloadCart(),
-            apiGetMenu(tableToken, { limit: LIST_LIMIT })
-              .then((page) => {
-                if (mountedRef.current) setMenu(page.data.map(toMenuItem));
+            fetchAllPages((page) => apiGetMenu(tableToken, { page, limit: LIST_LIMIT }))
+              .then((rows) => {
+                if (mountedRef.current) setMenu(rows.map(toMenuItem));
               })
               .catch(() => undefined),
           ]);

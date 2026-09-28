@@ -3,6 +3,7 @@ import { fireOrder, getOrderStatus, listOrders } from "../services/orders.servic
 import {
   fireSchema,
   orderStatusParamsSchema,
+  orderStatusQuerySchema,
   ordersListQuerySchema,
   parseOrThrow,
 } from "../validation/schemas.js";
@@ -24,9 +25,12 @@ ordersRouter.get("/", async (req, res) => {
   res.status(200).json({ success: true, data, meta });
 });
 
-// E15 — GET /api/v1/orders/:order_id/status
+// E15 — GET /api/v1/orders/:order_id/status?table_token=…
+// The table_token is required and enforced in SQL (WHERE id AND table_id):
+// an order id alone must not be able to read another table's ticket.
 ordersRouter.get("/:order_id/status", async (req, res) => {
   const params = parseOrThrow(orderStatusParamsSchema, req.params);
-  const data = await getOrderStatus(params.order_id);
+  const query = parseOrThrow(orderStatusQuerySchema, req.query);
+  const data = await getOrderStatus(params.order_id, query.table_token);
   res.status(200).json({ success: true, data });
 });

@@ -20,13 +20,37 @@ function base64url(input: string | Buffer): string {
   return Buffer.from(input).toString("base64url");
 }
 
-export function signToken(claims: ShiftClaims, secret: string): string {
+/** Raw HS256 JWS over the given claims (shared by both token kinds). */
+function signClaims(claims: Record<string, unknown>, secret: string): string {
   const header = base64url(JSON.stringify({ alg: "HS256", typ: "JWT" }));
   const payload = base64url(JSON.stringify(claims));
   const signature = createHmac("sha256", secret)
     .update(`${header}.${payload}`)
     .digest("base64url");
   return `${header}.${payload}.${signature}`;
+}
+
+export function signToken(claims: ShiftClaims, secret: string): string {
+  return signClaims(claims as unknown as Record<string, unknown>, secret);
+}
+
+/** Claims for the Supabase-scoped READ tokens (E1 diner / E2 staff).
+    `role` must be a real Postgres role so PostgREST/Realtime accept the
+    token; `table_token` / `staff` are the two branches the RLS policies
+    in sql/001_init.sql match on. Never carries a secret — only scope. */
+export interface ReadTokenClaims {
+  sub: string;
+  role: "authenticated";
+  table_token?: string;
+  staff?: string;
+  iat: number;
+  exp: number;
+}
+
+/** Signed with SUPABASE_JWT_SECRET (NOT KDS_TOKEN_SECRET) so Supabase
+    itself validates the signature and forwards the claims to RLS. */
+export function signReadToken(claims: ReadTokenClaims, secret: string): string {
+  return signClaims(claims as unknown as Record<string, unknown>, secret);
 }
 
 /** Returns the claims when signature and expiry are valid, else null.

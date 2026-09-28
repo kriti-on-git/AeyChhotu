@@ -36,6 +36,7 @@ authRouter.post("/kds-login", async (req, res) => {
       expires_in: shift.expires_in,
       role: shift.role,
       terminal_id: shift.terminal_id,
+      realtime_token: shift.realtime_token,
       message: shift.message,
     },
   });

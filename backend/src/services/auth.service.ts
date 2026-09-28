@@ -1,7 +1,7 @@
 import { timingSafeEqual } from "node:crypto";
 import { env } from "../config/env.js";
 import { AppError } from "../errors/app-error.js";
-import { signToken, type ShiftClaims } from "../lib/jwt.js";
+import { signReadToken, signToken, type ShiftClaims } from "../lib/jwt.js";
 import { iso } from "../lib/util.js";
 import { pool } from "../db/pool.js";
 
@@ -26,6 +26,8 @@ export interface ShiftLoginResult {
   expires_in: number;
   role: string;
   terminal_id: string | null;
+  /** Supabase-scoped read token for Realtime/RLS (null when unconfigured). */
+  realtime_token: string | null;
   message: string;
 }
 
@@ -55,12 +57,31 @@ export async function authenticateShift(pin: string): Promise<ShiftLoginResult> 
     exp: now + TOKEN_TTL_SECONDS,
   };
 
+  // Supabase-scoped READ token for channel B (kds_orders): its `staff`
+  // claim is the second branch of the RLS SELECT policies, so the board
+  // may read every order. Signed with SUPABASE_JWT_SECRET, never with the
+  // shift secret — Supabase must be able to verify it. Null when the
+  // secret is not configured (REST-only deployment).
+  const realtimeToken = env.supabaseJwtSecret
+    ? signReadToken(
+        {
+          sub: claims.terminal_id ?? "kds",
+          role: "authenticated",
+          staff: claims.role,
+          iat: now,
+          exp: now + TOKEN_TTL_SECONDS,
+        },
+        env.supabaseJwtSecret,
+      )
+    : null;
+
   return {
     token: signToken(claims, env.kdsTokenSecret),
     token_type: "Bearer",
     expires_in: TOKEN_TTL_SECONDS,
     role: claims.role,
     terminal_id: claims.terminal_id,
+    realtime_token: realtimeToken,
     message: "Shift successfully armed. Tap screen to authorize chimes.",
   };
 }

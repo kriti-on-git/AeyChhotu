@@ -1,0 +1,601 @@
+<div align="center">
+
+# 🍛 AeyChhotu!
+
+### One table, one order, live from the kitchen.
+
+A zero-download, real-time operational bridge that **groups every phone at a table into one
+shared cart**, fires **one clean ticket** to the kitchen, and streams two-way status updates
+back to the diner — no app install, no login for guests.
+
+[![Next.js](https://img.shields.io/badge/Next.js-16.3.6-black?logo=nextdotjs&logoColor=white)](#-tech-stack)
+[![React](https://img.shields.io/badge/React-19.3-61DAFB?logo=react&logoColor=white)](#-tech-stack)
+[![TypeScript](https://img.shields.io/badge/TypeScript-6.0_strict-3178C6?logo=typescript&logoColor=white)](#-tech-stack)
+[![Tailwind CSS](https://img.shields.io/badge/Tailwind-v4-06B6D4?logo=tailwindcss&logoColor=white)](#-tech-stack)
+[![Express](https://img.shields.io/badge/Express-5.2-000000?logo=express&logoColor=white)](#-tech-stack)
+[![Postgres](https://img.shields.io/badge/Postgres-Supabase-4169E1?logo=postgresql&logoColor=white)](#-tech-stack)
+[![Zod](https://img.shields.io/badge/Zod-4.6-3E67B1?logo=zod&logoColor=white)](#-tech-stack)
+
+**Status:** MVP feature-complete — frontend build, backend build, `tsc`, and ESLint all green.
+Deployment hardening is the remaining work (see [Project Status](#-project-status)).
+
+</div>
+
+---
+
+## 📖 Table of contents
+
+- [The problem](#-the-problem)
+- [Core features](#-core-features)
+- [Who it is for](#-who-it-is-for)
+- [System architecture](#-system-architecture)
+- [Order lifecycle](#-order-lifecycle)
+- [Data model](#-data-model)
+- [Backend architecture](#-backend-architecture)
+- [Frontend architecture](#-frontend-architecture)
+- [Realtime channels](#-realtime-channels)
+- [Tech stack](#-tech-stack)
+- [Repository layout](#-repository-layout)
+- [Quick start](#-quick-start)
+- [Environment variables](#-environment-variables)
+- [Database setup](#-database-setup)
+- [API reference](#-api-reference)
+- [Security model](#-security-model)
+- [Build & verification](#-build--verification)
+- [Project status](#-project-status)
+- [Documentation index](#-documentation-index)
+
+---
+
+## 😖 The problem
+
+Traditional QR-ordering tools stop manual typing errors but create three new ones:
+
+| # | Failure mode | What happens in a real rush |
+|---|---|---|
+| 1 | **Ticket fragmentation** | 8 people at one table each tap “Submit” → the kitchen gets **8 separate tickets**, courses arrive out of order. |
+| 2 | **Buried allergy notes** | Serious allergy text hides in the same tiny box as “extra sauce”. Kitchens miss it. |
+| 3 | **One-way kitchen screens** | The cook taps *Done* → nothing reaches the diner or the server. Everyone waits blind, food dies under the lamp. |
+
+**AeyChhotu! attacks all three:** a shared table cart that fires once, allergy notes rendered
+unavoidably on the KDS, and a live `pending → preparing → ready → served` state stream to the diner’s browser.
+
+---
+
+## ✨ Core features
+
+| # | Feature | Where it lives | Status |
+|---|---|---|---|
+| 1 | Anonymous table initialization (QR `…/table/k7x2p`) | `E1` + `app/table/[token]` | ✅ |
+| 2 | KDS shift authentication (shared `STAFF_PIN`) | `E2` / `E2b` + `kitchen-pin-wall` | ✅ |
+| 3 | Live menu browsing (86’d items greyed, never hidden) | `E3` + `menu-list` | ✅ |
+| 4 | Real-time **shared table cart** (upsert + atomic delta edits) | `E4`–`E6` + channel A | ✅ |
+| 5 | Cart line removal | `E7` | ✅ |
+| 6 | **“Review & Fire”** — atomic order submission | `E8` → `fire_order()` RPC | ✅ |
+| 7 | Anti-duplicate guardrail (“Order already sent”) | `E9` + DB partial unique index | ✅ |
+| 8 | Kitchen Kanban dashboard (Pending / Preparing / Ready) | `E10` + channel B | ✅ |
+| 9 | Guardrailed allergy rendering (bold red on the card) | inside `E10` payload | ✅ |
+| 10 | One-tap status state machine | `E11` | ✅ |
+| 11 | Completed ticket pruning → table goes `empty` | `E12` | ✅ |
+| 12 | Live guest progress tracker (grey → amber → **green flash**) | `E15` / `E16` + channel C | ✅ |
+| 13 | Screen flash & audio chime (“Start shift”) | `E13` + `lib/sound.ts` | ✅ |
+| 14 | Quick item hide / 86ing | `E14` | ✅ |
+| 15 | Floor view pacing board (S6) | `E17` + `floor-view` | ⚠️ demo-store backed, see [status](#-project-status) |
+
+---
+
+## 🧑‍🍳 Who it is for
+
+<div align="center">
+
+| 👤 The Diner | 🍳 The Line Chef (Mr. Baawarchi) | 🏃 The Server (Chhotu) |
+|---|---|---|
+| Scans QR, edits the shared cart, types allergy notes, taps **Review & Fire** | Watches the Kanban, reads bold-red allergy alerts, one-tap status tags | Monitors floor pacing, runs food, 86’s dishes in one tap |
+| `/table/[token]` · `/table/[token]/tracker` | `/kitchen` | `/floor` |
+
+</div>
+
+---
+
+## 🏗 System architecture
+
+```mermaid
+graph LR
+    classDef client fill:#F7EAD7,stroke:#9A7354,stroke-width:2px,color:#3A2A1E
+    classDef app fill:#C7A27D,stroke:#3A2A1E,stroke-width:2px,color:#3A2A1E
+    classDef api fill:#9A7354,stroke:#3A2A1E,stroke-width:2px,color:#F7EAD7
+    classDef data fill:#4169E1,stroke:#1E3A8A,stroke-width:2px,color:#fff
+    classDef rt fill:#2ECC71,stroke:#1E7A45,stroke-width:2px,color:#06301A
+
+    D["📱 Diner phone<br/>(shared cart + tracker)"]:::client
+    K["🖥️ Kitchen tablet<br/>(KDS Kanban)"]:::client
+    F["📟 Floor handheld<br/>(pacing + 86)"]:::client
+
+    N["▲ Next.js 16 App Router<br/>React 19 · Tailwind v4"]:::app
+    A["🛠 Express 5 REST API<br/>/api/v1 · zod-validated"]:::api
+    P[("🗄️ Postgres<br/>Supabase")]:::data
+    R["⚡ Supabase Realtime<br/>(postgres_changes + Presence)"]:::rt
+
+    D -->|REST| N
+    K -->|REST| N
+    F -->|REST| N
+    N -->|fetch + Bearer| A
+    A -->|pg pool| P
+    P -.->|WAL| R
+    R -.->|websocket| D
+    R -.->|websocket| K
+```
+
+**Three guarantees the architecture makes:**
+
+1. **No business rule lives only in the browser.** Fire, duplicate-guard, inventory check and cart drain happen in *one* Postgres transaction (`fire_order()`).
+2. **Realtime is an optimization, never a requirement.** Every subscription has a REST path underneath; a dead socket degrades to polite 5 s polling.
+3. **`service_role` never leaves the server.** Browsers hold only the public `anon` key plus a **read-scoped** `realtime_token` whose claims the RLS policies match on.
+
+### The data-source ladder (diner + KDS)
+
+```mermaid
+flowchart TD
+    A["Hook requests data"] --> B{"Backend reachable?"}
+    B -->|yes| C["Live REST + Realtime"]
+    B -->|"status 0 (down / timeout / unconfigured)"| D["Seeded offline demo store<br/>lib/api · badge shows “demo”"]
+    C --> E{"Socket SUBSCRIBED?"}
+    E -->|yes| F["Live push"]
+    E -->|"no / error after 3 s grace"| G["REST polling every 5 s"]
+```
+
+---
+
+## 🔄 Order lifecycle
+
+```mermaid
+stateDiagram-v2
+    [*] --> pending : fire_order() · E8 · 201
+    pending --> preparing : one tap · E11
+    preparing --> ready : one tap · E11
+    ready --> served : prune · E12
+    served --> [*] : table goes “empty”
+
+    note right of pending
+        Only ONE active order per table
+        (partial UNIQUE index on
+         status IN pending/preparing/ready)
+    end note
+```
+
+**Key rule:** a `served` order **falls out** of the partial unique index, so a closed round
+never blocks the table’s next fire — the “cancelled booking must not block re-booking” requirement.
+
+---
+
+## 🗄 Data model
+
+```mermaid
+erDiagram
+    restaurant_tables ||--o{ cart_items : "holds cart lines"
+    restaurant_tables ||--o{ orders : "places"
+    menu_items ||--o{ cart_items : "is added to"
+    orders ||--o{ order_items : "contains"
+    menu_items ||--o{ order_items : "is sold as"
+
+    restaurant_tables {
+        uuid id PK
+        text code UK "QR token ^[a-z0-9]{4,16}$"
+        text name
+        text status "active | empty"
+    }
+    menu_items {
+        uuid id PK
+        text name
+        numeric price "numeric(10,2) >= 0"
+        text category
+        boolean is_available "86 flag"
+        text description
+        boolean vegetarian
+    }
+    cart_items {
+        uuid id PK
+        uuid table_id FK
+        uuid menu_item_id FK
+        int quantity "1..99"
+        text request_note "<=500"
+        text allergy_note "<=500"
+        text added_by "<=40"
+        timestamptz created_at
+    }
+    orders {
+        uuid id PK
+        uuid table_id FK
+        text status "pending|preparing|ready|served"
+        timestamptz created_at
+        timestamptz updated_at
+    }
+    order_items {
+        uuid id PK
+        uuid order_id FK
+        uuid menu_item_id FK
+        int quantity "1..99"
+        text request_note "<=500"
+        text allergy_note "<=500"
+    }
+    staff_terminals {
+        uuid id PK
+        text device_label
+        text role "kitchen | floor"
+        boolean is_active
+        text pin_env_var "NAME of the env var, never the PIN"
+        timestamptz created_at
+    }
+```
+
+**Delete behaviour:** `cart_items → restaurant_tables` is `CASCADE`; `orders → restaurant_tables`
+is `RESTRICT` (history can never be wiped by a table delete); every `→ menu_items` link is `RESTRICT`.
+
+**Indexes** (7 + 1 partial unique): `cart_items_upsert_uq`, `cart_items_table_created_idx`,
+`orders_table_status_idx`, `orders_active_idx` (partial), `orders_created_idx`,
+`order_items_order_idx`, `menu_items_category_idx`, `orders_one_active_uq` (partial unique).
+The DB review in [`docs/10-db-report.md`](docs/10-db-report.md) confirms **zero additional indexes are needed** — every access path is already covered.
+
+---
+
+## 🛠 Backend architecture
+
+```
+Request
+  → cors(CLIENT_URL only) → express.json(1mb)
+  → Router (zod parseOrThrow → service)          E1–E17
+  → notFoundHandler → errorHandler  ⟶ { success:false, error:{ code, message, … } }
+```
+
+| Layer | Files | Responsibility |
+|---|---|---|
+| **Config** | `src/config/env.ts` | Validates env at boot; missing/invalid → loud `exit(1)` |
+| **DB** | `src/db/pool.ts` | Single shared `pg` Pool (max 10), fatal on idle-client error |
+| **Routes** | `src/routes/*.ts` | Thin HTTP → service mapping, contract envelope |
+| **Validators** | `src/validation/schemas.ts` | One zod schema per endpoint; failures → `400 VALIDATION_ERROR` with `error.fields` |
+| **Services** | `src/services/*.ts` | All business logic + SQL; ownership checks; `AppError`s |
+| **Auth** | `src/lib/jwt.ts`, `src/middleware/auth.ts` | Dependency-free HS256 sign/verify, `requireAuth` (401) + `requireRole` (403) |
+| **Errors** | `src/errors/app-error.ts`, `middleware/error-handler.ts` | One envelope, no stack traces leaked |
+
+### The atomic fire (E8)
+
+```mermaid
+sequenceDiagram
+    participant P as 📱 Phone A
+    participant Q as 📱 Phone B
+    participant API as Express
+    participant DB as Postgres
+
+    P->>API: POST /orders/fire
+    Q->>API: POST /orders/fire
+    API->>DB: SELECT fire_order(token)
+    Note over DB: txn 1: lock table row FOR UPDATE<br/>guard → freeze cart → lock menu rows<br/>insert order + items → drain cart
+    DB-->>API: OK / jsonb code
+    Note over DB: txn 2 waits on the lock,<br/>takes a FRESH snapshot → sees txn 1’s order
+    DB-->>API: DUPLICATE_ORDER
+    API-->>P: 201 order_id
+    API-->>Q: 409 DUPLICATE_ORDER
+```
+
+Business outcomes are **returned as `jsonb` codes rather than raised**, so an
+`INVENTORY_FAILURE` cart purge still commits — the cart the diner sees always matches the 409 they are told.
+
+---
+
+## 🎨 Frontend architecture
+
+| Layer | Path | Notes |
+|---|---|---|
+| App Router pages | `app/` | 6 routes: `/`, `/floor`, `/kitchen`, `/table/[token]`, `/table/[token]/tracker`, `api/v1/auth/kds-login` |
+| UI primitives | `components/ui/` | 24 reusable components (Button, Card, Modal, Drawer, Toast, Field, EmptyState, …) |
+| Diner surfaces | `components/diner/` | menu list, cart modal/strip, allergy input, live tracker |
+| Staff surfaces | `components/staff/` | PIN wall, KDS board + cards, floor view, 86 drawer |
+| Data runtimes | `hooks/use-live-table.ts`, `hooks/use-live-kds.ts` | Live-first with mock fallback + realtime + polling safety net |
+| API client | `lib/api-client/` | `apiClient` (20 s timeout, envelope parse, 401 guard), `endpoints` (1 fn per endpoint), `realtime`, `paginate`, `normalize` |
+| Offline demo store | `lib/api/` | Seeded store used **only** when the backend is unreachable |
+| Design tokens | `app/globals.css` | Single `@theme` block — palette, type scale, radii, shadows, motion timings |
+
+**Motion:** scroll-driven parallax (`components/landscape/`), entrance reveals (`components/motion/reveal.tsx`),
+transform/opacity-only animations, and `useReducedMotion` respected everywhere.
+
+---
+
+## ⚡ Realtime channels
+
+| # | Channel | Transport | Payload | Consumers |
+|---|---|---|---|---|
+| **A** | `table_carts:{table_token}` | `postgres_changes` on `cart_items` | INSERT / UPDATE / DELETE | S1 menu, S2 cart |
+| **B** | `kds_orders` | `postgres_changes` on `orders` | INSERT → chime + refetch | S5 board |
+| **C** | `order_tracker:{order_id}` | `postgres_changes` on `orders` | UPDATE → colour / green flash | S1, S3 tracker |
+| **D** | `table_presence:{table_token}` | Supabase **Presence** | `{ device_id, table_token }` | S1 active-diners badge |
+
+> Realtime needs **all three**: `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`
+> (frontend) **and** `SUPABASE_JWT_SECRET` (backend, used to mint the RLS-scoped `realtime_token`).
+> Without them the app silently — and safely — runs REST + polling.
+
+---
+
+## 🧰 Tech stack
+
+<table>
+<tr><th>Layer</th><th>Technology</th></tr>
+<tr><td><b>Frontend</b></td><td>Next.js 16.3.6 (App Router, Turbopack) · React 19.3 · TypeScript 6 strict · Tailwind CSS v4 · <code>motion</code> v13 · lucide-react · Fraunces + Inter via <code>next/font</code></td></tr>
+<tr><td><b>Backend</b></td><td>Node ≥ 20 · Express 5.2.1 · <code>pg</code> 8.23 · zod 4.6.5 · TypeScript 6 (<code>tsx</code> dev, <code>tsc</code> build) · zero-dependency HS256 JWT</td></tr>
+<tr><td><b>Data</b></td><td>Postgres (Supabase) · SQL migrations · RLS · plpgsql <code>fire_order()</code> RPC</td></tr>
+<tr><td><b>Realtime</b></td><td>Supabase Realtime (<code>postgres_changes</code> + Presence) — optional, with REST polling fallback</td></tr>
+</table>
+
+**No UI kits, no ORM, no auth provider** — the surface is deliberately small and dependency-light.
+
+---
+
+## 📁 Repository layout
+
+```
+.
+├── README.md                  ← you are here
+├── backend/                   ← Express REST API (owns all writes)
+│   ├── sql/
+│   │   ├── 001_init.sql       ← tables, indexes, RLS, fire_order() RPC
+│   │   ├── 002_review_fixes.sql ← FK RESTRICT, one-active-order index, scoped RLS
+│   │   └── seed.sql           ← idempotent: 1 terminal / 5 tables / 20 dishes
+│   ├── src/
+│   │   ├── config/env.ts      ← boot-time env validation (exit 1 if broken)
+│   │   ├── db/pool.ts         ← shared pg Pool
+│   │   ├── lib/               ← jwt.ts · util.ts
+│   │   ├── middleware/        ← auth · not-found · error-handler
+│   │   ├── routes/            ← sessions auth menu cart orders kds floor health
+│   │   ├── services/          ← all business logic + SQL
+│   │   ├── validation/        ← zod schemas (one per endpoint)
+│   │   └── main: index.ts · app.ts
+│   ├── .env.example
+│   └── package.json
+├── frontend/                  ← Next.js 16 app
+│   ├── app/                   ← routes, layout, globals.css, error/not-found
+│   ├── components/            ← ui/ · diner/ · staff/ · landscape/ · motion/ · layout/ · brand/
+│   ├── hooks/                 ← use-live-table · use-live-kds · use-db · use-presence · use-now
+│   ├── lib/
+│   │   ├── api-client/        ← apiClient · endpoints · realtime · paginate · normalize · types
+│   │   └── api/               ← offline demo store (fallback only)
+│   ├── .env.example
+│   └── package.json
+└── docs/                      ← 10 design + engineering documents (source of truth)
+```
+
+---
+
+## 🚀 Quick start
+
+### Prerequisites
+
+- **Node.js ≥ 20** (backend declares `engines.node >= 20`)
+- **A Postgres database** — Supabase project (recommended) or local Postgres 15+
+- `psql` on your PATH
+
+### 1 · Install
+
+```bash
+cd backend  && npm install
+cd ../frontend && npm install
+```
+
+### 2 · Create the schema and seed
+
+```bash
+cd backend
+psql "$DATABASE_URL" -f sql/001_init.sql
+psql "$DATABASE_URL" -f sql/002_review_fixes.sql
+psql "$DATABASE_URL" -f sql/seed.sql
+```
+
+Seed is **idempotent** — run it as often as you like: 1 terminal, 5 tables, 20 dishes, no duplicates.
+
+### 3 · Configure environment
+
+```bash
+cp backend/.env.example  backend/.env
+cp frontend/.env.example frontend/.env.local
+# edit both files — see the reference below
+```
+
+### 4 · Run
+
+```bash
+# terminal 1
+cd backend  && npm run dev        # → http://localhost:4000
+
+# terminal 2
+cd frontend && npm run dev        # → http://localhost:3000
+```
+
+### 5 · Open the surfaces
+
+| Surface | URL | Credential |
+|---|---|---|
+| Diner menu (seeded QR token) | <http://localhost:3000/table/k7x2p> | none |
+| Live order tracker | <http://localhost:3000/table/k7x2p/tracker> | none |
+| Kitchen board | <http://localhost:3000/kitchen> | `STAFF_PIN` (example `1234`) |
+| Floor view | <http://localhost:3000/floor> | none |
+| API liveness | <http://localhost:4000/api/v1/health> | none |
+
+---
+
+## 🔐 Environment variables
+
+### `backend/.env`
+
+| Variable | Required | Example | Purpose |
+|---|---|---|---|
+| `PORT` | no | `4000` | API listen port |
+| `NODE_ENV` | no | `development` | `production` adds the `Secure` flag to the KDS cookie |
+| `CLIENT_URL` | **yes** | `http://localhost:3000` | The **only** origin allowed by CORS (no trailing slash) |
+| `DATABASE_URL` | **yes** | `postgresql://…` | Postgres/Supabase connection string — server refuses to boot without it |
+| `STAFF_PIN` | **yes** | `1234` | 4–6 digit kitchen PIN; validated at boot |
+| `KDS_TOKEN_SECRET` | **yes** | long random string | HMAC secret for shift JWTs |
+| `SUPABASE_JWT_SECRET` | no | from Supabase → Settings → API | When set, E1/E2 also mint the RLS-scoped `realtime_token`. Empty ⇒ REST-only, by design |
+
+### `frontend/.env.local`
+
+| Variable | Required | Example | Purpose |
+|---|---|---|---|
+| `NEXT_PUBLIC_API_URL` | **yes** | `http://localhost:4000` | Express base URL, no trailing slash |
+| `NEXT_PUBLIC_SUPABASE_URL` | for Realtime | `https://xxx.supabase.co` | Realtime endpoint |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | for Realtime | `eyJ…` | **Public anon key only** — never `service_role` |
+| `STAFF_PIN` | no | `1234` | Used only by the offline-fallback route `app/api/v1/auth/kds-login` |
+
+> ⚠️ Never commit `.env` / `.env.local`. Both are gitignored; only the `.env.example` templates are tracked.
+
+---
+
+## 🗃 Database setup
+
+```mermaid
+flowchart LR
+    A["001_init.sql<br/>tables · indexes · RLS · fire_order()"] --> B["002_review_fixes.sql<br/>FK RESTRICT · one-active-order<br/>claim-scoped RLS"]
+    B --> C["seed.sql<br/>1 terminal · 5 tables · 20 dishes"]
+    C --> D["Supabase dashboard<br/>enable Realtime on orders,<br/>cart_items, order_items"]
+```
+
+`fire_order(p_table_token text) RETURNS jsonb` is the heart of the system: it locks the table row
+(`FOR UPDATE`), guards duplicates, freezes and checks the cart, locks the referenced menu rows
+(`FOR UPDATE OF mi`, so 86-ing serializes against it), builds the ticket, and drains only the frozen lines.
+It is **revoked from `anon`/`authenticated`** — only the backend’s service path may execute it.
+
+---
+
+## 📡 API reference
+
+**Envelope (every endpoint):**
+
+```jsonc
+// success
+{ "success": true, "data": { }, "meta": { "page": 1, "limit": 20, "total": 12, "total_pages": 1 } }
+// error
+{ "success": false, "error": { "code": "SCREAMING_SNAKE_CASE", "message": "…", "fields": { } } }
+```
+
+`meta` appears **only** on paginated list endpoints. Full contract: [`docs/7-api-contract.md`](docs/7-api-contract.md).
+
+| # | Method & path | Auth | Screen | Paginated |
+|---|---|---|---|---|
+| E1 | `POST /api/v1/sessions/initialize` | none | S1 | — |
+| E2 | `POST /api/v1/auth/kds-login` | none | S4 | — |
+| E2b | `GET /api/v1/auth/me` | staff token (header **or** cookie) | S4/S5 | — |
+| E3 | `GET /api/v1/menu` | none | S1 · S5 · S6 | ✅ |
+| E4 | `GET /api/v1/cart/items` | none | S1 · S2 | ✅ |
+| E5 | `POST /api/v1/cart/items` | none | S1 · S2 | — |
+| E6 | `PATCH /api/v1/cart/items/:cart_item_id` | none | S2 | — |
+| E7 | `DELETE /api/v1/cart/items` | none | S2 | — |
+| E8 | `POST /api/v1/orders/fire` | none | S2 | — |
+| E9 | `GET /api/v1/sessions/:table_token/active-check` | none | S1 · S2 · S3 | — |
+| E10 | `GET /api/v1/kds/tickets` | staff | S5 | ✅ |
+| E11 | `PATCH /api/v1/kds/tickets/:order_id/status` | staff | S5 | — |
+| E12 | `PATCH /api/v1/kds/tickets/:order_id/prune` | staff | S5 | — |
+| E13 | `POST /api/v1/kds/shift/activate` | staff | S5 | — |
+| E14 | `PATCH /api/v1/menu/items/:menu_item_id/availability` | staff | S5 · S6 | — |
+| E15 | `GET /api/v1/orders/:order_id/status` | none (`order_id` + `table_token`) | S3 | — |
+| E16 | `GET /api/v1/orders` | none | S3 | ✅ |
+| E17 | `GET /api/v1/floor/tables` | staff | S6 | ✅ |
+
+**Error-code registry:** `VALIDATION_ERROR` `400` · `INVALID_PIN` `401` · `UNAUTHORIZED` `401`
+`FORBIDDEN` `403` · `TABLE_NOT_FOUND` `404` · `MENU_ITEM_NOT_FOUND` `404` · `CART_ITEM_NOT_FOUND` `404`
+`ORDER_NOT_FOUND` `404` · `ITEM_UNAVAILABLE` `409` · `EMPTY_CART` `409` · `DUPLICATE_ORDER` `409`
+`INVENTORY_FAILURE` `409` · `INVALID_STATUS_TRANSITION` `409` · `INTERNAL_ERROR` `500`
+
+---
+
+## 🛡 Security model
+
+| Concern | Mitigation |
+|---|---|
+| **No login for diners** | The random QR token (`^[a-z0-9]{4,16}$`) **is** the capability credential; it is unguessable and maps to one table |
+| **Cross-table data leaks** | Three layers: `table_token` resolved server-side, every SQL write re-asserts `AND table_id = $2`, and RLS SELECT policies are claim-scoped (`table_token` claim for diners, `staff` claim for the kitchen) |
+| **No token ⇒ no rows** | A browser with only the public `anon` key reads nothing — the old `USING (true)` hole is closed in `002_review_fixes.sql` |
+| **Kitchen is PIN-gated** | `STAFF_PIN` compared with `timingSafeEqual`; token is an 8-hour HS256 JWT with an explicit `role: "kitchen"` claim; `requireAuth` → 401, `requireRole` → 403 |
+| **Writes bypass RLS only server-side** | `service_role` and `fire_order()` never reach the browser; `anon` has **no** INSERT/UPDATE/DELETE policy |
+| **Secrets never echo** | `staff_terminals.pin_env_var` stores the *variable name*; no PIN, secret or stack trace ever appears in a payload or log |
+| **Boot fails loudly** | Missing/invalid env → clear message + `exit(1)`, never a half-working server |
+
+---
+
+## ✅ Build & verification
+
+Everything below was run and is green on the current tree:
+
+| Check | Command | Result |
+|---|---|---|
+| Backend types | `cd backend && npm run typecheck` | ✅ 0 errors |
+| Backend build | `cd backend && npm run build` | ✅ clean `dist/` emit |
+| Frontend types | `cd frontend && npm run typecheck` | ✅ 0 errors |
+| Frontend lint | `cd frontend && npm run lint` | ✅ 0 errors |
+| Frontend build | `cd frontend && npm run build` | ✅ 7 routes compiled |
+| Unit / integration tests | — | ⛔ **no test suite is committed** (verification was manual: `docs/9` records an 18/18 API smoke run) |
+
+<details>
+<summary><b>Production build output</b></summary>
+
+```
+Route (app)
+┌ ○ /                            (Static)
+├ ○ /_not-found
+├ ƒ /api/v1/auth/kds-login       (Dynamic)
+├ ○ /floor                       (Static)
+├ ○ /kitchen                     (Static)
+├ ƒ /table/[token]               (Dynamic)
+└ ƒ /table/[token]/tracker       (Dynamic)
+```
+
+</details>
+
+---
+
+## 🚦 Project status
+
+**Done:** all 12 core MVP features + 2 extensions, the full 17-endpoint contract, the atomic fire RPC,
+claim-scoped RLS, the design system, responsive QA (6 screens × 6 widths, 0 px overflow), and green
+typecheck/lint/build on both apps.
+
+**Not done (functional, non-deployment):**
+
+| Area | Gap |
+|---|---|
+| **Floor view (S6)** | `/floor` renders from the offline demo store — `getFloorTables` (E17) is written but never called, and the page has no staff PIN gate despite E17 requiring a bearer token |
+| **86 drawer list** | Reads its catalog from the demo store (E3 needs a `table_token`), though the toggle itself is live-first |
+| **Table presence** | `usePresence` writes to the demo store; Supabase Presence is wired only in the active-diners badge |
+| **Dead code** | `hooks/use-table-data.ts`, `getMe` (E2b) and `checkActiveOrder` (E9) exist but are never consumed; the frontend’s `/api/v1/auth/kds-login` route duplicates E2 with a non-contract `{ok:true}` envelope and a `1234` PIN fallback |
+| **Tests / CI** | No unit, integration, or e2e tests; no `.github/workflows` |
+| **Money precision** | E3 still selects `price::float8`; `order_items` has no `unit_price` and `orders` no `total`, so re-pricing a dish silently changes an old ticket’s bill |
+| **Audit trail** | No `created_at`/`updated_at` on `menu_items`, `restaurant_tables`, `order_items`; `orders.updated_at` is hand-written rather than trigger-maintained |
+| **DB state machine** | Rule 13 (`pending→preparing→ready→served`) is enforced in app code only, not by a transition trigger |
+| **Repo hygiene** | No root `.gitignore` (so `frontend/dev.log` is committable), no `frontend/public/` (favicon 404s), no LICENSE, no `.nvmrc` |
+| **Ops** | No rate limiting, security headers, structured logging, request IDs, health/readiness split, or graceful shutdown |
+
+Full engineering detail lives in the [docs index](#-documentation-index) — especially
+[`docs/10-db-report.md`](docs/10-db-report.md) §4 and [`docs/9-integration-report.md`](docs/9-integration-report.md).
+
+---
+
+## 📚 Documentation index
+
+| Doc | Contents |
+|---|---|
+| [`docs/1-real-problems.md`](docs/1-real-problems.md) | The 5 real restaurant problems + gap analysis of Toast/Square/me&u |
+| [`docs/2-mvp-ideation.md`](docs/2-mvp-ideation.md) | Value proposition, core features, innovations, DB blueprint |
+| [`docs/3-user-workflow.md`](docs/3-user-workflow.md) | Mermaid flows for diner, chef and server |
+| [`docs/4-architectural-mapping.md`](docs/4-architectural-mapping.md) | Feature → endpoint → tables mapping |
+| [`docs/5-ui-ux-blueprint.md`](docs/5-ui-ux-blueprint.md) | Screen map and design language |
+| [`docs/6-frontend-report.md`](docs/6-frontend-report.md) | Frontend build + browser QA report |
+| [`docs/7-api-contract.md`](docs/7-api-contract.md) | **The API contract** — envelopes, E1–E17, errors, channels |
+| [`docs/8-backend-report.md`](docs/8-backend-report.md) | Backend build + live endpoint verification |
+| [`docs/9-integration-report.md`](docs/9-integration-report.md) | Frontend ↔ API integration report, 18/18 smoke |
+| [`docs/10-db-report.md`](docs/10-db-report.md) | Senior-DB review: rules → constraints, indexes, hygiene audit |
+
+---
+
+<div align="center">
+
+**AeyChhotu!** — *one table, one order, live from the kitchen.* 🍛
+
+Built with Next.js, Express and Postgres/Supabase.
+
+</div>
