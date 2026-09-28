@@ -1,14 +1,3 @@
-# Secrets — .env must never be committed (.env.example stays tracked)
-.env
-.env.local
-.env.*.local
-
-# Dependencies & build output
-node_modules/
 dist/
-
-# Logs
-*.log
-
-# Throwaway local Postgres cluster used for E2E verification
-.pgdata/
+dist-test/
+tsconfig.tsbuildinfo

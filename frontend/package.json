@@ -8,6 +8,7 @@
     "start": "next start",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
+    "test": "node --import tsx --test test/normalize.test.mjs",
     "realtime:check": "node scripts/realtime-check.mjs",
     "check:floor": "node scripts/floor-check.mjs"
   },
@@ -29,6 +30,7 @@
     "eslint": "^9.39.5",
     "eslint-config-next": "^16.3.6",
     "tailwindcss": "^4.3.3",
+    "tsx": "^4.23.15",
     "typescript": "^6.0.3"
   }
 }

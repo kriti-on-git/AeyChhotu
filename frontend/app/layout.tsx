@@ -11,6 +11,8 @@ export const metadata: Metadata = {
   },
   description:
     "A zero-download, real-time operational bridge that groups individual table requests into a single unified cart and streams two-way status updates between diners and the kitchen.",
+  icons: { icon: "/icon.svg", apple: "/icon.svg" },
+  manifest: "/site.webmanifest",
 };
 
 export const viewport: Viewport = {

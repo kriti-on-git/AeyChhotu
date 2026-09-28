@@ -1,0 +1,17 @@
+{
+  "name": "AeyChhotu! — one table, one order, live from the kitchen",
+  "short_name": "AeyChhotu!",
+  "description": "A zero-download, real-time operational bridge that groups individual table requests into a single unified cart and streams two-way status updates between diners and the kitchen.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f7ead7",
+  "theme_color": "#f7ead7",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}

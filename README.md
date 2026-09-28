@@ -140,6 +140,7 @@ Every claim above is a command anyone can re-run:
 | Command | Where | What it proves |
 |---|---|---|
 | `npm run db:setup` | `backend/` | applies all SQL (idempotent) |
+| `npm test` | both apps | isolated unit tests: schemas, JWT, state machine (47) · normalizers, fallback gate (10) |
 | `npm run db:verify` | `backend/` | 51 assertions: schema, RLS on, 24 policies, indexes, claim-scoping, privileges, hardening |
 | `npm run smoke` | `backend/` | 69 contract checks across diner → kitchen → floor |
 | `npm run realtime:check` | `frontend/` | Realtime auth, delivery, RLS scoping, Presence |
@@ -563,9 +564,11 @@ Everything below was run and is green on the current tree:
 |---|---|---|
 | Backend types | `cd backend && npm run typecheck` | ✅ 0 errors |
 | Backend build | `cd backend && npm run build` | ✅ clean `dist/` emit |
+| **Backend unit tests** | `cd backend && npm test` | ✅ **47/47** — validation schemas, HS256 JWT (tamper/expiry/alg-none), pagination meta, ISO timestamps, Rule-13 matrix |
 | Frontend types | `cd frontend && npm run typecheck` | ✅ 0 errors |
 | Frontend lint | `cd frontend && npm run lint` | ✅ 0 errors |
 | Frontend build | `cd frontend && npm run build` | ✅ 7 routes compiled |
+| **Frontend unit tests** | `cd frontend && npm test` | ✅ **10/10** — normalizers incl. the fire-time price snapshot, production demo-fallback gate |
 | **Schema + RLS assertions** | `cd backend && npm run db:verify` | ✅ **51/51** — tables, RLS on, 24 policies, indexes, RLS claim-scoping, privileges, hardening (004) |
 | **Contract smoke (live server)** | `cd backend && npm run smoke` | ✅ **69/69** — every endpoint in the real diner → kitchen → floor journey, incl. the frozen bill |
 | Realtime wiring | `db:setup` on `wal_level=logical` | ✅ publication created, `REPLICA IDENTITY FULL` set |
@@ -617,15 +620,18 @@ typecheck/lint/build on both apps — and, verified end-to-end against a live Su
 | **Automated verification** | `db:verify` (51 assertions) and `smoke` (69 assertions) replace the hand-run curl sweep |
 | **CI** | `.github/workflows/ci.yml` — typecheck, lint, build for both apps, plus schema verify and contract smoke against a real Postgres 17 |
 | **Repo hygiene** | Root `.gitignore` (covers `.env`, logs, `.pgdata`, editor noise); `dev.log` can no longer be committed |
+| **Ops hardening** | helmet security headers (backend + `next.config.ts`), two-tier rate limiting (10 *failed* PIN attempts / 10 min on `kds-login` — correct PINs never consume budget), ndjson structured logs with `X-Request-Id` correlation (upstream ids honoured), `/api/v1/ready` readiness probe with a cached real Postgres ping, and bounded graceful shutdown on SIGTERM (drain → close pool) — verified live: brute-force gets 429 after 10 tries, SIGTERM drains and exits cleanly |
+| **Unit tests** | First slice on `node:test` (zero test deps): backend 47 (schemas/JWT/transitions/util), frontend 10 (normalizers + fallback gate), both wired into CI |
 | **Docs** | `README.md` with architecture, ER, state-machine and sequence diagrams |
 
 **Still open:**
 
 | Area | Gap |
 |---|---|
-| **Unit tests** | `db:verify`, `smoke`, `realtime:check` and `check:floor` cover the integration path; there are still no isolated unit tests, and no coverage gate |
-| **Assets / licence** | No `frontend/public/` (favicon 404s), no LICENSE, no `.nvmrc` |
-| **Ops** | No rate limiting, security headers, structured logging, request IDs, readiness probe or graceful shutdown |
+| **Coverage gate** | Unit tests cover the highest-risk pure logic; there is no coverage percentage gate in CI yet |
+| **Licence** | No LICENSE file (deliberate, for now) |
+| **CSP** | `Content-Security-Policy` not yet set on either app — needs nonce plumbing with Next inlines; the rest of the header set is in place |
+| **Secrets rotation** | `KDS_TOKEN_SECRET`/`STAFF_PIN` rotation is manual (restart with new values); no dual-secret overlap window |
 
 Full engineering detail lives in the [docs index](#-documentation-index) — especially
 [`docs/10-db-report.md`](docs/10-db-report.md) §4 and [`docs/9-integration-report.md`](docs/9-integration-report.md).
