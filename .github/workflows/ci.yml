@@ -12,15 +12,16 @@ on:
 
 # Node 22: supabase-js 2.117+ declares engines.node >= 22.
 #
-# NPM_VERSION 11 must match the npm that GENERATES the committed
-# package-lock.json files (the maintainer's machine). npm 10 prunes the
-# optional @emnapi wasm32 deps that npm 11 records; `npm ci` then rejects
-# the lock. Every future `npm install <pkg>` on the maintainer machine
-# rewrites the lock in npm-11 format, so pinning the runner to npm 11 is
-# the only durable fix — do not lower it without regenerating the locks.
+# NPM_VERSION must be EXACTLY the npm that generates the committed
+# package-lock.json files (the maintainer's machine — check `npm -v`).
+# Lock validation differs across npm versions: npm 10 prunes the optional
+# @emnapi wasm32 deps npm 11 records, and npm 12 rejects npm-11 locks —
+# both make `npm ci` fail with EUSAGE. A floating major (npm@11) also
+# broke when a newer 11.x tightened validation. Pin the exact version and
+# bump it only together with a regenerated lockfile.
 env:
   NODE_VERSION: "22"
-  NPM_VERSION: "11"
+  NPM_VERSION: "11.6.2"
 
 # A superseded run on the same ref teaches nobody anything — cancel it.
 concurrency:
