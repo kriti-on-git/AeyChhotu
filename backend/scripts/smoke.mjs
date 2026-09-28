@@ -128,7 +128,10 @@ try {
   }
 
   {
-    const wrong = await api("/api/v1/auth/kds-login", { method: "POST", body: { pin: "000000" } });
+    // A test must never encode the real PIN — CI runs with a dummy value.
+    // Derive a candidate that is guaranteed wrong for whatever STAFF_PIN is set.
+    const wrongPin = pin === "000000" ? "999999" : "000000";
+    const wrong = await api("/api/v1/auth/kds-login", { method: "POST", body: { pin: wrongPin } });
     check("E2 wrong PIN → 401 INVALID_PIN", wrong.body?.error?.code === "INVALID_PIN", `got ${wrong.body?.error?.code}`);
 
     if (!pin) {
