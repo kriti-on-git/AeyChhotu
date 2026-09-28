@@ -15,8 +15,8 @@ import {
   Users,
   type LucideIcon,
 } from "lucide-react";
+import Image from "next/image";
 import Link from "next/link";
-import { LandscapeScene } from "@/components/landscape/landscape-scene";
 import { OrganicShape } from "@/components/landscape/organic-shape";
 import { SectionDivider } from "@/components/landscape/section-divider";
 import { Reveal } from "@/components/motion/reveal";
@@ -216,7 +216,23 @@ export default function LandingPage() {
   return (
     <>
       <section className="relative isolate overflow-hidden">
-        <LandscapeScene />
+        {/* Hero photo: image1.png, served from /public. A cream veil keeps the
+            dark ink text readable over the mid-tone image; the gentle gradient
+            melts the photo into the page below so the reveal doesn't end on a
+            hard edge. */}
+        <div aria-hidden className="absolute inset-0">
+          <Image
+            src="/hero.png"
+            alt=""
+            fill
+            priority
+            sizes="100vw"
+            className="object-cover object-center"
+          />
+          <div className="absolute inset-0 bg-cream/70" />
+          <div className="absolute inset-x-0 bottom-0 h-40 bg-gradient-to-b from-transparent to-canvas" />
+          <div className="absolute inset-x-0 top-0 h-24 bg-gradient-to-b from-cream/60 to-transparent" />
+        </div>
 
         <Container className="relative z-10 flex min-h-[88svh] flex-col justify-center pt-16 pb-44 sm:pb-40">
           <Reveal className="max-w-3xl">
