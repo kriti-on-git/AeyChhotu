@@ -1,18 +1,21 @@
 "use client";
 
-import { Clock, EyeOff, Hash, ShieldAlert, Users } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { Clock, EyeOff, Hash, Lock, ShieldAlert, Users } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { MenuAvailabilityDrawer } from "@/components/staff/menu-availability-drawer";
 import { Badge, type BadgeTone } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Container } from "@/components/ui/container";
-import { EmptyState } from "@/components/ui/empty-state";
+import { EmptyState, ErrorState } from "@/components/ui/empty-state";
+import { Skeleton } from "@/components/ui/loading-state";
 import { PageHeader } from "@/components/ui/page-header";
+import { useToast } from "@/components/ui/toast";
+import { useDb } from "@/hooks/use-db";
+import { useLiveFloor } from "@/hooks/use-live-floor";
 import { useNow } from "@/hooks/use-now";
 import { usePresence } from "@/hooks/use-presence";
-import { useDb } from "@/hooks/use-db";
-import { fetchFloorSummaries } from "@/lib/api";
+import { useStaffMenuCatalog } from "@/hooks/use-staff-menu-catalog";
 import { countActiveDiners } from "@/lib/api/store";
 import type { FloorTableSummary, OrderStatus } from "@/lib/api/types";
 import { formatElapsed, formatTableLabel } from "@/lib/format";
@@ -47,32 +50,45 @@ function urgency(summary: FloorTableSummary) {
   return urgencyRank[order.status];
 }
 
-export function FloorView() {
-  const db = useDb();
+export interface FloorViewProps {
+  /** Ends the shift — returns the operator to the PIN wall. */
+  onLock: () => void;
+}
+
+export function FloorView({ onLock }: FloorViewProps) {
+  const { phase, error, source, tables, retry } = useLiveFloor();
   const now = useNow(1000);
+  const { toast } = useToast();
   const [availabilityOpen, setAvailabilityOpen] = useState(false);
-  const [summaries, setSummaries] = useState<FloorTableSummary[]>([]);
 
-  usePresence(null);
+  /* The catalog is global but E3 needs a table token; the floor already knows
+     every table code, so hand one over instead of making the hook re-fetch
+     the floor list. */
+  const catalogToken = tables[0]?.table.code ?? null;
+  const catalog = useStaffMenuCatalog(catalogToken);
 
+  // Demo-only: the seeded presence heartbeats keep the phone count alive while
+  // the board is offline. Live presence is per-table (channel D) and the floor
+  // board spans every table, so it shows cart pressure instead of a count.
+  usePresence(null, source === "demo");
+
+  const offlineToastShown = useRef(false);
   useEffect(() => {
-    let active = true;
-
-    void fetchFloorSummaries().then((result) => {
-      if (active && result.ok) setSummaries(result.data);
+    if (phase !== "success" || source !== "demo" || offlineToastShown.current) return;
+    offlineToastShown.current = true;
+    toast({
+      title: "Offline demo floor",
+      description: "The backend is unreachable — showing seeded demo tables.",
+      tone: "info",
     });
-
-    return () => {
-      active = false;
-    };
-  }, [db]);
+  }, [phase, source, toast]);
 
   const ordered = useMemo(
     () =>
-      [...summaries].sort(
+      [...tables].sort(
         (a, b) => urgency(b) - urgency(a) || a.table.code.localeCompare(b.table.code),
       ),
-    [summaries],
+    [tables],
   );
 
   return (
@@ -83,33 +99,80 @@ export function FloorView() {
           title="Floor view"
           description="Live pacing for every table in the room — no walk to the kitchen pass required."
           actions={
-            <Button
-              variant="outline"
-              onClick={() => setAvailabilityOpen(true)}
-              leftIcon={<EyeOff className="size-4" aria-hidden />}
-            >
-              Quick 86 panel
-            </Button>
+            <div className="flex flex-wrap items-center gap-2.5">
+              <Badge tone={source === "demo" ? "outline" : "ready"} size="md">
+                {source === "demo" ? "Demo data" : "Live"}
+              </Badge>
+
+              <Button
+                variant="outline"
+                onClick={() => setAvailabilityOpen(true)}
+                leftIcon={<EyeOff className="size-4" aria-hidden />}
+              >
+                Quick 86 panel
+              </Button>
+
+              <Button
+                variant="ghost"
+                onClick={onLock}
+                leftIcon={<Lock className="size-4" aria-hidden />}
+              >
+                Lock board
+              </Button>
+            </div>
           }
         />
 
-        {ordered.length === 0 ? (
+        {/* ---- State matrix: loading ---------------------------------- */}
+        {phase === "loading" ? (
+          <div className="mt-10 grid gap-5 sm:grid-cols-2 xl:grid-cols-3" aria-busy="true">
+            {Array.from({ length: 6 }).map((_, index) => (
+              <Skeleton key={index} className="h-44 rounded-xl" />
+            ))}
+          </div>
+        ) : phase === "error" ? (
+          /* ---- State matrix: error — API message + Retry -------------- */
+          <div className="mt-12">
+            <ErrorState
+              titleAs="h2"
+              title="The floor lost its connection"
+              description={error?.message ?? "The floor service could not be reached."}
+              action={
+                <Button size="md" onClick={retry}>
+                  Retry Connection
+                </Button>
+              }
+            />
+          </div>
+        ) : ordered.length === 0 ? (
+          /* ---- State matrix: empty ----------------------------------- */
           <div className="mt-12">
             <EmptyState
               title="No tables are configured"
-              description="Tables are seeded for the demo service. Reload the page to restore them."
+              description="Add tables in the database and they appear here the moment a diner scans one."
+              action={
+                <Button variant="outline" size="md" onClick={retry}>
+                  Refresh
+                </Button>
+              }
             />
           </div>
         ) : (
+          /* ---- State matrix: success --------------------------------- */
           <ul className="mt-10 grid gap-5 sm:grid-cols-2 xl:grid-cols-3">
             {ordered.map((summary) => (
-              <TableCard key={summary.table.id} summary={summary} now={now} db={db} />
+              <TableCard key={summary.table.id} summary={summary} now={now} demo={source === "demo"} />
             ))}
           </ul>
         )}
       </Container>
 
-      <MenuAvailabilityDrawer open={availabilityOpen} onClose={() => setAvailabilityOpen(false)} />
+      <MenuAvailabilityDrawer
+        open={availabilityOpen}
+        onClose={() => setAvailabilityOpen(false)}
+        menu={catalog.menu}
+        onSetAvailability={catalog.setAvailability}
+      />
     </main>
   );
 }
@@ -117,16 +180,20 @@ export function FloorView() {
 function TableCard({
   summary,
   now,
-  db,
+  demo,
 }: {
   summary: FloorTableSummary;
   now: number | null;
-  db: ReturnType<typeof useDb>;
+  demo: boolean;
 }) {
+  const db = useDb();
   const { table, active_order: order, cart_line_count } = summary;
   const status = order?.status ?? null;
-  const diners = now === null ? 0 : countActiveDiners(db, table.code, now);
 
+  const diners = now === null ? null : countActiveDiners(db, table.code, now);
+
+  /* Allergy lines are the reason this card exists: they come straight from
+     E17's `active_order.items`, which is the live join to the ticket. */
   const allergyLines = order
     ? order.items.filter((item) => item.allergy_note.trim()).length
     : 0;
@@ -173,10 +240,15 @@ function TableCard({
             <span>{cart_line_count} staged</span>
           )}
 
-          <span className="flex items-center gap-1.5">
-            <Users className="size-3.5" aria-hidden />
-            {diners === 1 ? "1 phone" : `${diners} phones`}
-          </span>
+          {/* Phone count is only meaningful from real presence, which the
+              floor board does not subscribe to per table. Showing a seeded
+              number next to live orders would be worse than showing none. */}
+          {demo && diners !== null ? (
+            <span className="flex items-center gap-1.5">
+              <Users className="size-3.5" aria-hidden />
+              {diners === 1 ? "1 phone" : `${diners} phones`}
+            </span>
+          ) : null}
 
           {allergyLines > 0 ? (
             <span className="flex items-center gap-1.5 font-bold uppercase tracking-wide text-alert">

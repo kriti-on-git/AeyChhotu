@@ -26,6 +26,7 @@ import {
   getCartItems as apiGetCartItems,
   getMenu as apiGetMenu,
   getOrders as apiGetOrders,
+  checkActiveOrder,
   initializeSession as apiInitializeSession,
   removeCartItem as apiRemoveCartItem,
   shouldUseDemoFallback,
@@ -458,6 +459,25 @@ export function useLiveTable(tableToken: string): LiveTableValue {
 
   const fire = useCallback(async (): Promise<{ ok: true } | { ok: false; failure: FireFailure }> => {
     try {
+      /* E9 — the documented anti-duplicate guardrail (Feature 7 / screen S2's
+         double-tap guard). Asking first means a second tap inside the same
+         second is answered from the server's own state, with the contract's
+         usual "Order already sent" copy, instead of racing fire_order().
+         The 409 branch below still backstops a race that slips through. */
+      const active = await checkActiveOrder(tableToken);
+      if (active.has_active_order) {
+        await reloadOrders();
+        return {
+          ok: false,
+          failure: {
+            code: "DUPLICATE_ORDER",
+            message: active.message,
+            soldOut: [],
+            fields: {},
+          },
+        };
+      }
+
       await apiFire(tableToken);
       // Success path: reset the table room cart state + pull a clean snapshot.
       await Promise.all([reloadCart(), reloadOrders()]);

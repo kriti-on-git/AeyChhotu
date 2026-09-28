@@ -15,9 +15,12 @@ const keys = ["1", "2", "3", "4", "5", "6", "7", "8", "9"];
 
 export interface KitchenPinWallProps {
   onSuccess: () => void;
+  /** Which back-of-house surface is asking, e.g. "kitchen" or "floor".
+      Only changes the copy — one shared PIN guards every staff screen. */
+  surface?: string;
 }
 
-export function KitchenPinWall({ onSuccess }: KitchenPinWallProps) {
+export function KitchenPinWall({ onSuccess, surface = "kitchen" }: KitchenPinWallProps) {
   const [pin, setPin] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -75,7 +78,7 @@ export function KitchenPinWall({ onSuccess }: KitchenPinWallProps) {
       <Container size="narrow" className="flex flex-col items-center gap-8">
         <div className="flex flex-col items-center gap-3 text-center">
           <Logo />
-          <p className="text-sm text-ink-muted">Staff-only screens for the kitchen line.</p>
+          <p className="text-sm text-ink-muted">Staff-only screens for the {surface} line.</p>
         </div>
 
         <form
@@ -87,7 +90,7 @@ export function KitchenPinWall({ onSuccess }: KitchenPinWallProps) {
             <span className="flex size-11 items-center justify-center rounded-pill bg-dark-brown text-cream">
               <KeyRound className="size-5" aria-hidden />
             </span>
-            <h1 className="font-display text-subheading text-ink">Enter kitchen staff PIN</h1>
+            <h1 className="font-display text-subheading text-ink">Enter {surface} staff PIN</h1>
             <p className="text-sm text-ink-muted">The board stays hidden until the PIN matches.</p>
           </div>
 

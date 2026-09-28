@@ -180,13 +180,23 @@ export interface CartRemovalResult {
   message: string;
 }
 
-/** E17 — floor row. */
+/** E17 — floor row.
+    `active_order.items` is the v2.1 addition documented in docs/7: the
+    ticket lines travel with the floor row so a runner can see the table's
+    allergy alerts without calling the kitchen board as well. */
+export interface FloorActiveOrder {
+  order_id: string;
+  status: ActiveOrderStatus;
+  created_at: string;
+  items: OrderItemLine[];
+}
+
 export interface FloorTable {
   table_id: string;
   code: string;
   name: string;
   status: TableStatus;
-  active_order: { order_id: string; status: OrderStatus; created_at: string } | null;
+  active_order: FloorActiveOrder | null;
   cart_line_count: number;
 }
 

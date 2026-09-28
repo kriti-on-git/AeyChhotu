@@ -6,6 +6,7 @@
 import { ApiError } from "./errors";
 import type {
   CartLine as ApiCartLine,
+  FloorTable as FloorTableResponse,
   KdsTicket,
   OrderHistoryItem,
   OrderItemLine,
@@ -13,6 +14,7 @@ import type {
 } from "./types";
 import type {
   CartLine,
+  FloorTableSummary,
   MenuItem,
   Order,
   OrderItem,
@@ -127,6 +129,28 @@ export function toOrder(
     created_at: row.created_at,
     updated_at: row.created_at,
     items: toOrderItems(row.order_id, row.items),
+  };
+}
+
+/** E17 floor row → the UI's FloorTableSummary, so the floor screen keeps its
+    existing markup while reading live data. Mirrors toOrder/toKdsOrder:
+    `price` is not part of the floor payload, so it is 0 — the floor card
+    shows pacing and allergies, never money. */
+export function toFloorSummary(row: FloorTableResponse): FloorTableSummary {
+  return {
+    table: { id: row.table_id, code: row.code, name: row.name },
+    active_order: row.active_order
+      ? {
+          id: row.active_order.order_id,
+          table_id: row.table_id,
+          table_code: row.code,
+          status: row.active_order.status,
+          created_at: row.active_order.created_at,
+          updated_at: row.active_order.created_at,
+          items: toOrderItems(row.active_order.order_id, row.active_order.items ?? []),
+        }
+      : null,
+    cart_line_count: row.cart_line_count,
   };
 }
 

@@ -40,14 +40,29 @@ export function getSupabase(): SupabaseClient | null {
   if (!url || !anonKey) return null;
 
   supabaseInstance = createClient(url, anonKey, {
-    // Read the RLS-scoped token live: called on connect and on every
-    // realtime heartbeat, so a token stored after the client was created
-    // (E1 resolves first, subscriptions arm after) is picked up too.
+    // Read the RLS-scoped token live so REST calls always use the current one.
     accessToken: async () => getRealtimeAuth(),
   });
 
-  // A token arriving on an already-open socket is pushed straight in.
   const instance = supabaseInstance;
+
+  /* CRITICAL — `accessToken` does NOT authenticate the Realtime socket.
+     supabase-js applies it to REST requests only; the websocket still
+     connects as `anon`, the claim-scoped RLS policies match no rows, and
+     every postgres_changes event is dropped with no error anywhere. The
+     channel even reports SUBSCRIBED, so the UI looks healthy while nothing
+     streams.
+
+     In the normal flow E1 (diner) / E2 (staff) resolve BEFORE this client is
+     created, so the change listener below never fires — this explicit push
+     is what actually authorizes the socket. Verified against a live project:
+     a subscription with `accessToken` alone receives nothing, while one that
+     also calls setAuth receives events. */
+  const existingToken = getRealtimeAuth();
+  if (existingToken) instance.realtime.setAuth(existingToken);
+
+  // A token arriving (or being cleared) after the socket is open is pushed
+  // straight in, so a re-login or sign-out takes effect without a reload.
   onRealtimeAuthChange((token) => {
     void instance.realtime.setAuth(token ?? undefined);
   });
@@ -125,6 +140,46 @@ export function subscribeKdsOrders(onInsert: (event: KdsIntakeEvent) => void): D
         };
         if (!row.id || !row.table_id || !row.status) return;
         onInsert({ order_id: row.id, table_id: row.table_id, status: row.status });
+      },
+    )
+    .subscribe();
+
+  return () => {
+    void client.removeChannel(channel);
+  };
+}
+
+/* ---- B2. Staff-wide order feed ---------------------------------------
+   The KDS board only needs INSERT (docs/7 §3 B: a new ticket animates in).
+   The Floor view needs UPDATE too — a ticket moving preparing→ready is
+   precisely the event that tells a runner "go pick this up" — so this is a
+   separate subscription rather than a widening of the board's channel.
+   DELETE matters as well: pruning a ticket is what clears a table. */
+export interface OrderFeedEvent {
+  event: "INSERT" | "UPDATE" | "DELETE";
+  order_id: string | null;
+  status: OrderStatus | null;
+}
+
+export function subscribeOrdersFeed(onChange: (event: OrderFeedEvent) => void): Detach {
+  const client = getSupabase();
+  if (!client) return NOOP_DETACH;
+
+  const channel = client
+    .channel("orders_feed")
+    .on(
+      "postgres_changes",
+      { event: "*", schema: "public", table: "orders" },
+      (payload) => {
+        const row = payload.new as unknown as { id?: string; status?: OrderStatus } | null;
+        const previous = payload.old as unknown as { id?: string } | null;
+        onChange({
+          event: payload.eventType as OrderFeedEvent["event"],
+          // With REPLICA IDENTITY FULL the old record is complete, so a
+          // DELETE still tells us which ticket disappeared.
+          order_id: row?.id ?? previous?.id ?? null,
+          status: row?.status ?? null,
+        });
       },
     )
     .subscribe();

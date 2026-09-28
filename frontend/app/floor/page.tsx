@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { FloorView } from "@/components/staff/floor-view";
+import { FloorScreen } from "@/components/staff/floor-screen";
 
 export const metadata: Metadata = {
   title: "Floor view",
@@ -8,5 +8,5 @@ export const metadata: Metadata = {
 };
 
 export default function FloorPage() {
-  return <FloorView />;
+  return <FloorScreen />;
 }

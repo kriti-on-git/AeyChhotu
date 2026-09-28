@@ -8,7 +8,20 @@ export interface FloorTable {
   code: string;
   name: string;
   status: string;
-  active_order: { order_id: string; status: string; created_at: string } | null;
+  active_order: {
+    order_id: string;
+    status: string;
+    created_at: string;
+    /** Ticket lines, same shape as E10 — lets the floor card surface allergy
+        alerts without a second round trip. */
+    items: Array<{
+      menu_item_id: string;
+      name: string;
+      quantity: number;
+      request_note: string;
+      allergy_note: string;
+    }>;
+  } | null;
   cart_line_count: number;
 }
 
@@ -25,7 +38,7 @@ export async function listFloorTables(params: {
     code: string;
     name: string;
     status: string;
-    active_order: { order_id: string; status: string; created_at: string } | null;
+    active_order: FloorTable["active_order"];
     cart_line_count: number;
   }>(
     `SELECT t.id AS table_id,
@@ -36,7 +49,25 @@ export async function listFloorTables(params: {
               SELECT jsonb_build_object(
                        'order_id',   o.id,
                        'status',     o.status,
-                       'created_at', to_jsonb(o.created_at)
+                       'created_at', to_jsonb(o.created_at),
+                       'items',      COALESCE(
+                         (
+                           SELECT jsonb_agg(
+                                    jsonb_build_object(
+                                      'menu_item_id', oi.menu_item_id,
+                                      'name',         mi.name,
+                                      'quantity',     oi.quantity,
+                                      'request_note', oi.request_note,
+                                      'allergy_note', oi.allergy_note
+                                    )
+                                    ORDER BY oi.id
+                                  )
+                             FROM order_items oi
+                             JOIN menu_items mi ON mi.id = oi.menu_item_id
+                            WHERE oi.order_id = o.id
+                         ),
+                         '[]'::jsonb
+                       )
                      )
                 FROM orders o
                WHERE o.table_id = t.id
@@ -63,6 +94,7 @@ export async function listFloorTables(params: {
           order_id: row.active_order.order_id,
           status: row.active_order.status,
           created_at: iso(row.active_order.created_at),
+          items: row.active_order.items ?? [],
         }
       : null,
     cart_line_count: row.cart_line_count,

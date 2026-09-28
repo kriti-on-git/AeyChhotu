@@ -349,27 +349,29 @@ export async function setMenuItemAvailability(
   return { ok: true, data: { ...item, is_available: isAvailable } };
 }
 
-export async function fetchFloorSummaries(): Promise<ServiceResult<FloorTableSummary[]>> {
+/** Synchronous floor summary. Exists because subscription callbacks cannot
+    await, and duplicating the aggregation in two places is how the demo store
+    and the service function drift apart. */
+export function getFloorSummaries(): FloorTableSummary[] {
   const snapshot = getSnapshot();
 
-  return {
-    ok: true,
-    data: snapshot.tables.map((table) => {
-      const order =
-        snapshot.orders
-          .filter(
-            (entry) => entry.table_id === table.id && ACTIVE_STATUSES.includes(entry.status),
-          )
-          .sort((a, b) => b.created_at.localeCompare(a.created_at))
-          .at(0) ?? null;
+  return snapshot.tables.map((table) => {
+    const order =
+      snapshot.orders
+        .filter((entry) => entry.table_id === table.id && ACTIVE_STATUSES.includes(entry.status))
+        .sort((a, b) => b.created_at.localeCompare(a.created_at))
+        .at(0) ?? null;
 
-      return {
-        table,
-        active_order: order,
-        cart_line_count: snapshot.cart.filter((line) => line.table_id === table.id).length,
-      };
-    }),
-  };
+    return {
+      table,
+      active_order: order,
+      cart_line_count: snapshot.cart.filter((line) => line.table_id === table.id).length,
+    };
+  });
+}
+
+export async function fetchFloorSummaries(): Promise<ServiceResult<FloorTableSummary[]>> {
+  return { ok: true, data: getFloorSummaries() };
 }
 
 export interface KdsLoginResult {

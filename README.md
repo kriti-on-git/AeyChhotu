@@ -81,7 +81,7 @@ unavoidably on the KDS, and a live `pending → preparing → ready → served` 
 | 12 | Live guest progress tracker (grey → amber → **green flash**) | `E15` / `E16` + channel C | ✅ |
 | 13 | Screen flash & audio chime (“Start shift”) | `E13` + `lib/sound.ts` | ✅ |
 | 14 | Quick item hide / 86ing | `E14` | ✅ |
-| 15 | Floor view pacing board (S6) | `E17` + `floor-view` | ⚠️ demo-store backed, see [status](#-project-status) |
+| 15 | Floor view pacing board (S6) | `E17` + `floor-view` | ✅ live, PIN-gated |
 
 ---
 
@@ -132,6 +132,20 @@ graph LR
 1. **No business rule lives only in the browser.** Fire, duplicate-guard, inventory check and cart drain happen in *one* Postgres transaction (`fire_order()`).
 2. **Realtime is an optimization, never a requirement.** Every subscription has a REST path underneath; a dead socket degrades to polite 5 s polling.
 3. **`service_role` never leaves the server.** Browsers hold only the public `anon` key plus a **read-scoped** `realtime_token` whose claims the RLS policies match on.
+
+### Verification scripts
+
+Every claim above is a command anyone can re-run:
+
+| Command | Where | What it proves |
+|---|---|---|
+| `npm run db:setup` | `backend/` | applies all SQL (idempotent) |
+| `npm run db:verify` | `backend/` | 35 assertions: schema, RLS on, 24 policies, indexes, claim-scoping, privileges |
+| `npm run smoke` | `backend/` | 66 contract checks across diner → kitchen → floor |
+| `npm run realtime:check` | `frontend/` | Realtime auth, delivery, RLS scoping, Presence |
+| `npm run check:floor` | `frontend/` | the floor UI in real headless Chrome |
+
+The three live suites need both servers running (`npm run dev` in each app).
 
 ### The data-source ladder (diner + KDS)
 
@@ -430,7 +444,7 @@ cd frontend && npm run dev        # → http://localhost:3000
 | Diner menu (seeded QR token) | <http://localhost:3000/table/k7x2p> | none |
 | Live order tracker | <http://localhost:3000/table/k7x2p/tracker> | none |
 | Kitchen board | <http://localhost:3000/kitchen> | `STAFF_PIN` (example `1234`) |
-| Floor view | <http://localhost:3000/floor> | none |
+| Floor view | <http://localhost:3000/floor> | `STAFF_PIN` |
 | API liveness | <http://localhost:4000/api/v1/health> | none |
 
 ---
@@ -556,7 +570,10 @@ Everything below was run and is green on the current tree:
 | Realtime wiring | `db:setup` on `wal_level=logical` | ✅ publication created, `REPLICA IDENTITY FULL` set |
 | Degradation path | `db:setup` on `wal_level=replica` | ✅ reports and skips; app runs REST + 5 s polling |
 | Production fallback gate | `next build && next start` | ✅ dev-only login route returns `404` in prod; pages serve `200` |
-| CI | [`.github/workflows/ci.yml`](.github/workflows/ci.yml) | ✅ typecheck · lint · build for both apps, plus schema verify and smoke against a real Postgres 17 |
+| **Realtime end-to-end** | `cd frontend && npm run realtime:check` | ✅ **12/12** — token acceptance, delivery, RLS scoping, Presence |
+| **Floor view in a browser** | `cd frontend && npm run check:floor` | ✅ **11/11** — headless Chrome over CDP: gate holds, live board renders, allergy alert reaches the card |
+| Suites are idempotent | `npm run smoke` twice in a row | ✅ **66/66** both times (pre-flight reset) |
+| CI | [`.github/workflows/ci.yml`](.github/workflows/ci.yml) | ✅ 3 jobs — typecheck · lint · build, schema verify + smoke against Postgres 17, and the browser E2E for the floor view |
 
 <details>
 <summary><b>Production build output</b></summary>
@@ -588,6 +605,10 @@ typecheck/lint/build on both apps — and, verified end-to-end against a live Su
 | Area | What changed |
 |---|---|
 | **Realtime wiring** | `003_realtime.sql` adds the streamed tables + `REPLICA IDENTITY FULL`. Previously a manual dashboard step whose omission failed silently; now versioned, idempotent, and asserted by `db:verify` |
+| **Realtime delivery bug** | `realtime.ts` authenticated the REST client but **not the websocket** — supabase-js only applies `accessToken` to REST, so the socket connected as `anon`, RLS matched no rows, and every event was dropped with no error while the channel still reported `SUBSCRIBED`. Found by `realtime:check` (variant A delivered nothing, variant B delivered), fixed with an explicit `realtime.setAuth()` at client creation, and guarded by a source assertion so it cannot silently regress |
+| **Floor view (S6)** | Now `useLiveFloor` → real E17 data behind a shared PIN gate, with a staff-wide `orders` feed for instant refresh plus a 15 s polling safety net. Allergy alerts come from the new `active_order.items` on E17 |
+| **86 drawer** | Reads a **live** catalog via `useStaffMenuCatalog` (E3 with a table token discovered from E17) — previously it could only ever 86 a *seeded* dish. Shared by both staff surfaces |
+| **Dead code** | `use-table-data.ts` deleted; `checkActiveOrder` (E9) now used as the diner's documented double-tap guardrail, and `getMe` (E2b) surfaced as a shift-expiry indicator on the KDS header |
 | **Production demo gate** | New `shouldUseDemoFallback()` predicate on all 12 fallback paths, plus `NEXT_PUBLIC_ENABLE_DEMO_FALLBACK`. A production build never renders seeded data |
 | **Dev-only auth route** | The frontend’s duplicate `kds-login` returns `404` in production and now speaks the contract envelope |
 | **Hosting flexibility** | Multi-origin CORS allow-list, `credentials: true`, configurable `COOKIE_SAME_SITE`, `credentials: "include"` on the client — same code works same-site *or* cross-site |
@@ -600,11 +621,8 @@ typecheck/lint/build on both apps — and, verified end-to-end against a live Su
 
 | Area | Gap |
 |---|---|
-| **Floor view (S6)** | `/floor` renders from the offline demo store — `getFloorTables` (E17) is written but never called, and the page has no staff PIN gate despite E17 requiring a bearer token |
-| **86 drawer list** | Reads its catalog from the demo store (E3 needs a `table_token`), though the toggle itself is live-first |
-| **Table presence** | `usePresence` writes to the demo store; Supabase Presence is wired only in the active-diners badge |
-| **Dead code** | `hooks/use-table-data.ts`, `getMe` (E2b) and `checkActiveOrder` (E9) exist but are never consumed by a screen |
-| **Unit tests** | `db:verify` and `smoke` cover integration; there are still no isolated unit tests, and no coverage gate |
+
+| **Unit tests** | `db:verify`, `smoke`, `realtime:check` and `check:floor` cover the integration path; there are still no isolated unit tests, and no coverage gate |
 | **Money precision** | E3 still selects `price::float8`; `order_items` has no `unit_price` and `orders` no `total`, so re-pricing a dish silently changes an old ticket’s bill |
 | **Audit trail** | No `created_at`/`updated_at` on `menu_items`, `restaurant_tables`, `order_items`; `orders.updated_at` is hand-written rather than trigger-maintained |
 | **DB state machine** | Rule 13 (`pending→preparing→ready→served`) is enforced in app code only, not by a transition trigger |

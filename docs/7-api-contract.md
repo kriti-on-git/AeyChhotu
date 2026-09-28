@@ -806,7 +806,16 @@ Clients map `pending` → grey, `preparing` → amber, `ready` → full-screen g
       "active_order": {
         "order_id": "99b0c2a5-4f71-477c-bc8a-d142b78aef01",
         "status": "preparing",
-        "created_at": "2026-09-27T21:35:00Z"
+        "created_at": "2026-09-27T21:35:00Z",
+        "items": [
+          {
+            "menu_item_id": "a1b2c3d4-e5f6-7a8b-9c0d-1e2f3a4b5c6d",
+            "name": "Masala Dosa",
+            "quantity": 2,
+            "request_note": "Extra butter",
+            "allergy_note": "NO PEANUTS - SEVERE"
+          }
+        ]
       },
       "cart_line_count": 3
     },
@@ -823,6 +832,8 @@ Clients map `pending` → grey, `preparing` → amber, `ready` → full-screen g
 }
 ```
 `active_order` = newest order with `status ∈ {pending, preparing, ready}` or `null`. `cart_line_count` is a computed aggregate (exempt from the column rule).
+
+**v2.1 addition — `active_order.items`.** The floor card's whole job is to tell a runner *which* table needs attention and *whether there is a food-safety alert on it*, so `items` (identical shape to E10's `items[]`) is part of the payload. Without it the floor view had to make a second call to a kitchen endpoint just to count allergy notes. This is an additive change: existing consumers that ignore the field are unaffected.
 
 **Errors:** `400 VALIDATION_ERROR` · `401 UNAUTHORIZED` · `500 INTERNAL_ERROR`
 

@@ -141,3 +141,100 @@ jobs:
           echo "--- API server log ---"
           cat /tmp/api.log
           exit $RC
+
+  # The floor screen is the one surface where compiling proves nothing: it is
+  # PIN-gated, needs a staff bearer token, and its entire value is rendering
+  # live E17 data. This drives real headless Chrome over the DevTools protocol
+  # and asserts what a person would see.
+  e2e:
+    name: E2E — floor view in a real browser
+    runs-on: ubuntu-latest
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres
+      CLIENT_URL: http://localhost:3000
+      STAFF_PIN: "460468"
+      KDS_TOKEN_SECRET: ci-only-secret-not-used-anywhere-else
+      NEXT_PUBLIC_API_URL: http://localhost:4000
+      # Force the live path: the demo fallback is on by default in a dev
+      # server, and this job must fail if the board silently serves seed data.
+      NEXT_PUBLIC_ENABLE_DEMO_FALLBACK: "false"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Start Postgres 17 with logical decoding
+        working-directory: .
+        run: |
+          docker run -d --name pg \
+            -e POSTGRES_PASSWORD=postgres \
+            -p 5432:5432 \
+            postgres:17 -c wal_level=logical
+
+          for i in $(seq 1 30); do
+            if docker exec pg pg_isready -U postgres >/dev/null 2>&1; then
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "::error::postgres never became ready"
+          docker logs pg
+          exit 1
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: |
+            backend/package-lock.json
+            frontend/package-lock.json
+
+      - name: Locate Chrome
+        run: |
+          for c in google-chrome google-chrome-stable chromium chromium-browser; do
+            if command -v "$c" >/dev/null 2>&1; then
+              echo "CHROME_PATH=$(command -v $c)" >> "$GITHUB_ENV"
+              exit 0
+            fi
+          done
+          echo "::error::no Chrome binary found on the runner"
+          exit 1
+
+      - name: Install backend
+        working-directory: backend
+        run: npm ci
+
+      - name: Install frontend
+        working-directory: frontend
+        run: npm ci
+
+      - name: Apply schema, Realtime wiring and seed
+        working-directory: backend
+        run: npm run db:setup
+
+      - name: Build the API
+        working-directory: backend
+        run: npm run build
+
+      - name: Floor view end-to-end
+        working-directory: frontend
+        run: |
+          (cd ../backend && npm start > /tmp/api.log 2>&1) &
+          API_PID=$!
+          npm run dev > /tmp/web.log 2>&1 &
+          WEB_PID=$!
+
+          for i in $(seq 1 60); do
+            curl -sf -m 2 http://localhost:4000/api/v1/health >/dev/null 2>&1 && \
+            curl -sf -m 2 http://localhost:3000/ >/dev/null 2>&1 && break
+            sleep 1
+          done
+
+          set +e
+          npm run check:floor
+          RC=$?
+          set -e
+
+          kill "$API_PID" "$WEB_PID" 2>/dev/null || true
+          echo "--- API log ---"; tail -20 /tmp/api.log
+          echo "--- web log ---"; tail -20 /tmp/web.log
+          exit $RC

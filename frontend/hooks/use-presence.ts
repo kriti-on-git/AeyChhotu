@@ -6,10 +6,14 @@ import { heartbeat, releasePresence } from "@/lib/api/store";
 
 const HEARTBEAT_MS = 15_000;
 
-/* Announces this device to the shared state so every screen can show how
-   many phones are live on a table. */
-export function usePresence(tableToken: string | null = null) {
+/* Announces this device to the DEMO store so a screen can show how many
+   phones are live on a table. Live deployments use Supabase Presence instead
+   (see trackTablePresence / ActiveDinersBadge) — pass `enabled: false` there
+   so an offline heartbeat is not written for a board that never reads it. */
+export function usePresence(tableToken: string | null = null, enabled = true) {
   useEffect(() => {
+    if (!enabled) return;
+
     const deviceId = getDeviceId();
 
     heartbeat(deviceId, tableToken);
@@ -22,5 +26,5 @@ export function usePresence(tableToken: string | null = null) {
       window.clearInterval(timer);
       window.removeEventListener("pagehide", handleHide);
     };
-  }, [tableToken]);
+  }, [tableToken, enabled]);
 }

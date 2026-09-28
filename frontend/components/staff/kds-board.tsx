@@ -13,7 +13,10 @@ import { Skeleton } from "@/components/ui/loading-state";
 import { useToast } from "@/components/ui/toast";
 import { useNow } from "@/hooks/use-now";
 import { usePresence } from "@/hooks/use-presence";
+import { getMe, type SessionIdentity } from "@/lib/api-client";
 import { useLiveKds } from "@/hooks/use-live-kds";
+import { useStaffMenuCatalog } from "@/hooks/use-staff-menu-catalog";
+import { formatIstTime } from "@/lib/format";
 import { activateShift } from "@/lib/api-client";
 import { getDeviceId } from "@/lib/api/session";
 import type { Order, OrderStatus } from "@/lib/api/types";
@@ -68,6 +71,27 @@ export interface KdsBoardProps {
 
 export function KdsBoard({ onLock }: KdsBoardProps) {
   const { phase, error, source, tickets, busy, retry, refresh, advance } = useLiveKds();
+  /* The 86 drawer needs the LIVE catalog. E3 requires a table token that the
+     kitchen does not hold, so the hook resolves one from E17 — see
+     useStaffMenuCatalog. Was previously read from the offline demo store,
+     which meant real dishes could not be 86'd from the board. */
+  const catalog = useStaffMenuCatalog();
+  const [shift, setShift] = useState<SessionIdentity | null>(null);
+
+  /* E2b — restore the armed shift's identity from the stored bearer token.
+     Claims only (role, terminal, expiry); a lapsed token 401s and the
+     api-client's global guard sends the operator back to the PIN wall. */
+  useEffect(() => {
+    let cancelled = false;
+    void getMe()
+      .then((identity) => {
+        if (!cancelled) setShift(identity);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, []);
   const now = useNow(1000);
   const { toast } = useToast();
   const [audioArmed, setAudioArmed] = useState(false);
@@ -177,6 +201,15 @@ export function KdsBoard({ onLock }: KdsBoardProps) {
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
+            {/* E2b — the shift's own expiry, decoded from the bearer token.
+                An 8-hour token expiring mid-service used to mean every one-tap
+                action silently 401ing; now the line can see it coming. */}
+            {shift ? (
+              <Badge tone="neutral" size="md" title={`Signed in as ${shift.role}`}>
+                Shift ends {formatIstTime(shift.expires_at)}
+              </Badge>
+            ) : null}
+
             <Button
               variant={audioArmed ? "secondary" : "primary"}
               size="md"
@@ -303,7 +336,12 @@ export function KdsBoard({ onLock }: KdsBoardProps) {
         </Container>
       )}
 
-      <MenuAvailabilityDrawer open={availabilityOpen} onClose={() => setAvailabilityOpen(false)} />
+      <MenuAvailabilityDrawer
+        open={availabilityOpen}
+        onClose={() => setAvailabilityOpen(false)}
+        menu={catalog.menu}
+        onSetAvailability={catalog.setAvailability}
+      />
     </main>
   );
 }

@@ -58,6 +58,39 @@ async function api(path, { method = "GET", body, token } = {}) {
 
 console.log(`[smoke] target ${BASE}`);
 
+/* Pre-flight: start from a clean table.
+   Without this the suite is order-dependent — a ticket left behind by an
+   interrupted run makes the next run fail at E8 with a 409, and the cascade
+   of red afterwards hides the real cause (this happened). Cheap to do, and it
+   means CI can run the suites in any order, repeatedly. */
+if (process.env.DATABASE_URL) {
+  const client = new pg.Client({ connectionString: process.env.DATABASE_URL.trim() });
+  try {
+    await client.connect();
+    const { rows } = await client.query(
+      `DELETE FROM orders
+        WHERE table_id = (SELECT id FROM restaurant_tables WHERE code = $1)
+        RETURNING id`,
+      [TABLE_TOKEN],
+    );
+    await client.query(
+      `DELETE FROM cart_items
+        WHERE table_id = (SELECT id FROM restaurant_tables WHERE code = $1)`,
+      [TABLE_TOKEN],
+    );
+    await client.query(`UPDATE restaurant_tables SET status = 'empty' WHERE code = $1`, [
+      TABLE_TOKEN,
+    ]);
+    if (rows.length > 0) {
+      console.log(`[smoke] pre-flight: cleared ${rows.length} leftover order(s)`);
+    }
+  } catch (err) {
+    console.warn(`[smoke] pre-flight reset skipped: ${err.message}`);
+  } finally {
+    await client.end().catch(() => {});
+  }
+}
+
 try {
   // ------------------------------------------------------------------ health
   section("Health");
@@ -228,6 +261,23 @@ try {
 
     const active = await api(`/api/v1/sessions/${TABLE_TOKEN}/active-check`);
     check("E9 active-check reports the block", active.body?.data?.has_active_order === true);
+
+    // E17 while the ticket is LIVE — the floor card depends on these items to
+    // show allergy alerts, so assert the shape here (after pruning the order
+    // is served and active_order becomes null).
+    const floorLive = await api("/api/v1/floor/tables?limit=100", { token: staffToken });
+    const liveRow = (floorLive.body?.data ?? []).find((t) => t.code === TABLE_TOKEN);
+    check("E17 active_order carries the ticket items", Array.isArray(liveRow?.active_order?.items));
+    check(
+      "E17 items carry the allergy note",
+      liveRow?.active_order?.items?.[0]?.allergy_note === "NO PEANUTS - SMOKE TEST",
+      `got ${JSON.stringify(liveRow?.active_order?.items?.[0]?.allergy_note)}`,
+    );
+    check(
+      "E17 items carry the dish name (live join)",
+      typeof liveRow?.active_order?.items?.[0]?.name === "string" &&
+        liveRow.active_order.items[0].name.length > 0,
+    );
 
     const status = await api(`/api/v1/orders/${orderId}/status?table_token=${TABLE_TOKEN}`);
     check("E15 status → 200 pending", status.body?.data?.status === "pending");

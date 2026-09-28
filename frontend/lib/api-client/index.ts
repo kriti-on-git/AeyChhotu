@@ -42,11 +42,13 @@ export {
   getSupabase,
   subscribeTableCart,
   subscribeKdsOrders,
+  subscribeOrdersFeed,
   subscribeOrderTracker,
   trackTablePresence,
   watchOrderStatus,
   type CartChangeEvent,
   type KdsIntakeEvent,
+  type OrderFeedEvent,
   type OrderTrackerEvent,
   type WatchOptions,
 } from "./realtime";
@@ -60,6 +62,7 @@ export {
   toCartLine,
   toOrder,
   toKdsOrder,
+  toFloorSummary,
 } from "./normalize";
 export { fetchAllPages, MAX_PAGE_FETCHES, type PagedResult } from "./paginate";
 export { setRealtimeAuth, getRealtimeAuth } from "./realtime-auth";
