@@ -257,12 +257,6 @@ export default function LandingPage() {
             </div>
           </Reveal>
 
-          <Reveal delay={0.24} className="mt-6">
-            <Text variant="caption" tone="subtle">
-              Table {demoTableToken} is a live demo link. Staff screens are behind the shared kitchen
-              PIN.
-            </Text>
-          </Reveal>
         </Container>
       </section>
 
@@ -332,7 +326,6 @@ export default function LandingPage() {
           <SectionHeader
             eyebrow="Why it is different"
             title="Three things the incumbents do not do"
-            description="The MVP exists to close these three gaps — everything else is deliberately out of scope."
           />
 
           <div className="mt-14 grid gap-6 lg:grid-cols-3">
@@ -359,7 +352,7 @@ export default function LandingPage() {
       <Section id="features" spacing="lg" className="scroll-mt-20">
         <Container>
           <SectionHeader
-            eyebrow="MVP scope"
+            eyebrow="Features"
             title="What ships, feature by feature"
             description="Ten capabilities, all of them built around protecting kitchen pacing and keeping guests informed."
           />
@@ -433,9 +426,7 @@ export default function LandingPage() {
             <div className="grid gap-10 lg:grid-cols-[1.2fr_1fr] lg:items-center">
               <div className="flex flex-col gap-5">
                 <SectionHeader
-                  eyebrow="Deliberately out of scope"
                   title="No payments. No accounts."
-                  description="Diners pay the waiter through the house POS, and a guest's physical table is their authorisation token. AeyChhotu manages operations, not transactions."
                 />
               </div>
 
@@ -453,9 +444,6 @@ export default function LandingPage() {
                     {link.label}
                   </Link>
                 ))}
-                <Text variant="caption" tone="subtle" className="mt-1">
-                  The kitchen and floor screens ask for the shared staff PIN.
-                </Text>
               </div>
             </div>
           </div>

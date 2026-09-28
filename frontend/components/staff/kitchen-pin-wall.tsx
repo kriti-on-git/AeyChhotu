@@ -162,11 +162,6 @@ export function KitchenPinWall({ onSuccess, surface = "kitchen" }: KitchenPinWal
           <Button type="submit" size="lg" fullWidth loading={busy}>
             Unlock board
           </Button>
-
-          <p className="text-center text-xs leading-relaxed text-ink-subtle">
-            Set <span className="font-medium text-ink-muted">STAFF_PIN</span> in the environment to
-            change it — the fallback for a fresh clone is 1234.
-          </p>
         </form>
       </Container>
     </main>

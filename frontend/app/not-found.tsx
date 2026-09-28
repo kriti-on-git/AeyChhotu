@@ -3,7 +3,6 @@ import Link from "next/link";
 import { buttonStyles } from "@/components/ui/button";
 import { Container } from "@/components/ui/container";
 import { EmptyState } from "@/components/ui/empty-state";
-import { demoTableToken } from "@/lib/site";
 
 export default function NotFound() {
   return (
@@ -16,9 +15,6 @@ export default function NotFound() {
           description="The link may be old, or the QR code points somewhere that no longer exists."
           action={
             <div className="flex flex-wrap justify-center gap-3">
-              <Link href={`/table/${demoTableToken}`} className={buttonStyles({ size: "md" })}>
-                Open demo table {demoTableToken}
-              </Link>
               <Link href="/" className={buttonStyles({ variant: "outline", size: "md" })}>
                 Back to home
               </Link>

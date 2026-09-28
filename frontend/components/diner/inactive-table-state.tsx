@@ -3,7 +3,6 @@ import Link from "next/link";
 import { buttonStyles } from "@/components/ui/button";
 import { Container } from "@/components/ui/container";
 import { EmptyState } from "@/components/ui/empty-state";
-import { demoTableToken } from "@/lib/site";
 
 export function InactiveTableState() {
   return (
@@ -14,13 +13,10 @@ export function InactiveTableState() {
           icon={QrCode}
           titleAs="h1"
           title="This table link is not active"
-          description="The QR code may have been replaced or the table closed. Ask a host for the current code, or try the demo table."
+          description="The QR code may have been replaced or the table closed. Ask a host for the current code."
           className="w-full"
         />
         <div className="flex flex-wrap justify-center gap-3">
-          <Link href={`/table/${demoTableToken}`} className={buttonStyles({ size: "md" })}>
-            Open demo table {demoTableToken}
-          </Link>
           <Link href="/" className={buttonStyles({ variant: "outline", size: "md" })}>
             Back to home
           </Link>

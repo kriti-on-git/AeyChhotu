@@ -50,15 +50,6 @@ export function SiteFooter() {
             ))}
           </nav>
         </div>
-
-        <div className="mt-14 flex flex-col gap-2 border-t border-cream/15 pt-6 sm:flex-row sm:items-center sm:justify-between">
-          <Text variant="caption" tone="inverse" className="opacity-60">
-            MVP scope: no payments and no accounts — the table is the authorisation token.
-          </Text>
-          <Text variant="caption" tone="inverse" className="opacity-60">
-            AeyChhotu · built on the documented MVP specification
-          </Text>
-        </div>
       </Container>
     </footer>
   );
