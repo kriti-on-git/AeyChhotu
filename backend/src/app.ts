@@ -19,16 +19,30 @@ export function createApp() {
 
   app.disable("x-powered-by");
 
-  // CORS: only the client origin may read responses (preflight included).
-  // The origin header is emitted only when the request's Origin matches
-  // CLIENT_URL exactly; everyone else gets no CORS headers at all.
+  /* CORS: only allow-listed origins may read responses (preflight included).
+     `credentials: true` is what lets the httpOnly kds_token cookie work when
+     the frontend and API share a site — and it is also why the allow-list
+     must be explicit: browsers forbid `Access-Control-Allow-Origin: *`
+     together with credentials, so a wildcard is never an option here.
+
+     Requests with no Origin header (health probes, curl, server-to-server,
+     same-origin navigation) are allowed through: they are not cross-origin
+     reads, and blocking them would break uptime monitoring. */
   app.use(
     cors({
       origin: (requestOrigin, callback) => {
-        callback(null, requestOrigin === env.clientUrl);
+        if (!requestOrigin) {
+          callback(null, true);
+          return;
+        }
+        callback(null, env.clientUrls.includes(requestOrigin));
       },
+      credentials: true,
       methods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
       allowedHeaders: ["Content-Type", "Authorization"],
+      // Cache the preflight so every mutating call doesn't pay for an extra
+      // round trip once the browser has learned the policy.
+      maxAge: 86_400,
     }),
   );
 

@@ -384,10 +384,18 @@ export async function checkKdsLogin(pin: string): Promise<KdsLoginResult> {
     body: JSON.stringify({ pin }),
   });
 
-  if (response.ok) return { ok: true };
+  const payload = (await response.json().catch(() => null)) as
+    | { success?: boolean; error?: { message?: string }; message?: string }
+    | null;
 
-  const payload = (await response.json().catch(() => null)) as { message?: string } | null;
-  return { ok: false, message: payload?.message ?? "Incorrect PIN." };
+  if (response.ok && payload?.success === true) return { ok: true };
+
+  // Contract envelope first (docs/7 §1.1); the bare `message` shape is kept
+  // so an older deployment of this route still renders a sensible error.
+  return {
+    ok: false,
+    message: payload?.error?.message ?? payload?.message ?? "Incorrect PIN.",
+  };
 }
 
 export function getDeviceIdentity() {

@@ -5,7 +5,7 @@ import { Drawer } from "@/components/ui/drawer";
 import { useToast } from "@/components/ui/toast";
 import { useDb } from "@/hooks/use-db";
 import { setMenuItemAvailability } from "@/lib/api";
-import { ApiError, isOfflineError, toggleItemAvailability } from "@/lib/api-client";
+import { ApiError, shouldUseDemoFallback, toggleItemAvailability } from "@/lib/api-client";
 import type { MenuItem } from "@/lib/api/types";
 import { formatPrice } from "@/lib/format";
 import { cn } from "@/lib/utils";
@@ -45,7 +45,7 @@ export function MenuAvailabilityDrawer({ open, onClose }: MenuAvailabilityDrawer
       await toggleItemAvailability(item.id, next);
       result = { ok: true, data: { ...item, is_available: next } };
     } catch (err) {
-      if (isOfflineError(err)) {
+      if (shouldUseDemoFallback(err)) {
         // API unreachable — mirror the change on the local store instead.
         result = await setMenuItemAvailability(item.id, next);
       } else if (err instanceof ApiError) {

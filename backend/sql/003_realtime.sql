@@ -26,68 +26,89 @@
 --   FULL is what makes DELETE propagation correct. Cost: slightly larger WAL
 --   entries for these two tables — acceptable, they are small hot tables.
 --
+-- DEGRADES INSTEAD OF FAILING
+--   `CREATE PUBLICATION` raises "logical decoding requires wal_level >=
+--   logical". Supabase ships with wal_level=logical, but a plain self-hosted
+--   Postgres defaults to `replica` — and on such a server Realtime simply
+--   cannot work. That is a degraded-but-valid deployment (the client falls
+--   back to REST polling), so this migration does NOT abort setup over it:
+--   it reports the reason and leaves the rest of the schema intact.
+--   Log grep target: "realtime skipped".
+--
 -- Apply:  psql "$DATABASE_URL" -f sql/003_realtime.sql
 --         (or just: npm run db:setup)
 -- Safe to re-run (idempotent).
 -- =====================================================================
 
--- -----------------------1. Ensure the publication exists ---------------
--- Supabase provisions `supabase_realtime` automatically; on a bare
--- Postgres (self-hosted / local rehearsal) it may be missing entirely.
+-- -----------------------1 + 2. Publication and membership --------------
 DO $$
+DECLARE
+  v_wal     text;
+  v_target  text;
 BEGIN
+  v_wal := current_setting('wal_level', true);
+
+  IF v_wal IS DISTINCT FROM 'logical' THEN
+    RAISE NOTICE
+      'realtime skipped: wal_level is "%" (needs "logical"). Realtime will not stream; the app runs REST + 5s polling instead. Fix with: postgres -c wal_level=logical, then re-run.',
+      COALESCE(v_wal, 'unknown');
+    RETURN;
+  END IF;
+
+  -- Supabase provisions `supabase_realtime` automatically; on a bare
+  -- Postgres (self-hosted / CI / local rehearsal) it may be missing.
   IF NOT EXISTS (SELECT 1 FROM pg_publication WHERE pubname = 'supabase_realtime') THEN
     CREATE PUBLICATION supabase_realtime;
     RAISE NOTICE 'created publication supabase_realtime';
   ELSE
     RAISE NOTICE 'publication supabase_realtime already present — skipped';
   END IF;
-END
-$$;
 
--- -----------------------2. Add the streamed tables ---------------------
--- pg_publication_tables is the membership view, so re-running is a no-op
--- instead of an "already member of publication" error.
-DO $$
-DECLARE
-  target text;
-BEGIN
-  FOREACH target IN ARRAY ARRAY['orders', 'cart_items']
+  -- pg_publication_tables is the membership view, so re-running is a no-op
+  -- instead of an "already member of publication" error.
+  FOREACH v_target IN ARRAY ARRAY['orders', 'cart_items']
   LOOP
     IF EXISTS (
       SELECT 1
         FROM pg_publication_tables
        WHERE pubname    = 'supabase_realtime'
          AND schemaname = 'public'
-         AND tablename  = target
+         AND tablename  = v_target
     ) THEN
-      RAISE NOTICE 'public.% already streamed — skipped', target;
+      RAISE NOTICE 'public.% already streamed — skipped', v_target;
     ELSE
-      EXECUTE format('ALTER PUBLICATION supabase_realtime ADD TABLE public.%I', target);
-      RAISE NOTICE 'public.% now streaming on supabase_realtime', target;
+      EXECUTE format('ALTER PUBLICATION supabase_realtime ADD TABLE public.%I', v_target);
+      RAISE NOTICE 'public.% now streaming on supabase_realtime', v_target;
     END IF;
   END LOOP;
 END
 $$;
 
 -- -----------------------3. Full replica identity ----------------------
--- Required for DELETE events to carry table_id so the client-side
--- `filter: table_id=eq.<uuid>` can match them.
+-- Not gated on wal_level: this is valid on any Postgres and only affects
+-- the contents of the WAL record, so it is harmless to set up front.
 ALTER TABLE orders     REPLICA IDENTITY FULL;
 ALTER TABLE cart_items REPLICA IDENTITY FULL;
 
 -- -----------------------4. Prove the wiring ---------------------------
--- Prints the resulting membership so a green run is verifiable, not assumed.
 DO $$
 DECLARE
-  listed text;
+  v_wal    text;
+  v_listed text;
 BEGIN
+  v_wal := current_setting('wal_level', true);
+
+  IF v_wal IS DISTINCT FROM 'logical' THEN
+    RAISE NOTICE 'supabase_realtime: unavailable on this server (wal_level=%)', COALESCE(v_wal, 'unknown');
+    RETURN;
+  END IF;
+
   SELECT string_agg(tablename, ', ' ORDER BY tablename)
-    INTO listed
+    INTO v_listed
     FROM pg_publication_tables
    WHERE pubname = 'supabase_realtime'
      AND schemaname = 'public';
 
-  RAISE NOTICE 'supabase_realtime streams: %', COALESCE(listed, '(none)');
+  RAISE NOTICE 'supabase_realtime streams: %', COALESCE(v_listed, '(none)');
 END
 $$;

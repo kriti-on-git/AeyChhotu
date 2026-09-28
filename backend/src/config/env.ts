@@ -41,11 +41,64 @@ if (!Number.isInteger(port) || port < 1 || port > 65535) {
   process.exit(1);
 }
 
+/* CLIENT_URL is the CORS allow-list. A single origin is the common case
+   (same domain behind one reverse proxy); a comma-separated list covers
+   "Next.js on one host, API on another" — e.g. Vercel preview URLs plus the
+   production domain. Trailing slashes are stripped because a browser's
+   Origin header never carries one, so `https://x.com/` would never match. */
+function parseOrigins(raw: string): string[] {
+  return raw
+    .split(",")
+    .map((origin) => origin.trim().replace(/\/+$/, ""))
+    .filter(Boolean);
+}
+
+const clientUrls = parseOrigins(requireEnv("CLIENT_URL"));
+if (clientUrls.length === 0) {
+  console.error("[config] FATAL: CLIENT_URL must list at least one origin.");
+  process.exit(1);
+}
+
+/* Cookie scope for the httpOnly kds_token issued by E2.
+     strict (default) — frontend and API share a site; the cookie is never
+                        sent cross-site, which is the safest default.
+     lax               — top-level navigations may carry it.
+     none              — required when the API lives on a DIFFERENT site than
+                        the frontend (e.g. Vercel app + *.onrender.com API).
+                        Browsers reject `SameSite=None` without `Secure`,
+                        so that combination is enforced below. */
+const SAME_SITE_VALUES = ["strict", "lax", "none"] as const;
+type SameSiteValue = (typeof SAME_SITE_VALUES)[number];
+
+const sameSiteRaw = (process.env.COOKIE_SAME_SITE ?? "strict").trim().toLowerCase();
+if (!SAME_SITE_VALUES.includes(sameSiteRaw as SameSiteValue)) {
+  console.error(
+    `[config] FATAL: COOKIE_SAME_SITE must be one of ${SAME_SITE_VALUES.join(", ")}, got "${sameSiteRaw}".`,
+  );
+  process.exit(1);
+}
+const cookieSameSite = sameSiteRaw as SameSiteValue;
+
+const nodeEnv = process.env.NODE_ENV ?? "development";
+
+/* Secure is mandatory in production, and mandatory for SameSite=None in ANY
+   environment because browsers silently drop the cookie otherwise. */
+const cookieSecure = nodeEnv === "production" || cookieSameSite === "none";
+
 export const env = {
-  nodeEnv: process.env.NODE_ENV ?? "development",
+  nodeEnv,
   port,
-  /** Only origin allowed by CORS. */
-  clientUrl: requireEnv("CLIENT_URL"),
+  /** First allow-listed origin — used for logging and back-compat. */
+  clientUrl: clientUrls[0] as string,
+  /** Every origin allowed by CORS (CLIENT_URL, comma-separated). */
+  clientUrls,
+  /** SameSite attribute for the kds_token cookie. */
+  cookieSameSite: (cookieSameSite.charAt(0).toUpperCase() + cookieSameSite.slice(1)) as
+    | "Strict"
+    | "Lax"
+    | "None",
+  /** Adds `Secure` to the kds_token cookie (forces HTTPS-only transport). */
+  cookieSecure,
   /** Postgres/Supabase connection string — fails loudly if missing. */
   databaseUrl: requireEnv("DATABASE_URL"),
   /** Kitchen shift PIN checked by POST /api/v1/auth/kds-login (E2). */

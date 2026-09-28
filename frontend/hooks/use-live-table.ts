@@ -2,12 +2,15 @@
 
 /* useLiveTable — the Diner side data runtime.
 
-   Strategy: LIVE WITH MOCK FALLBACK (product decision, this turn).
+   Strategy: LIVE WITH MOCK FALLBACK.
    1. Every read/write goes through the api-client to the Express backend
       first (20 s timeout, ApiError envelope parsing).
    2. When a request never reaches the backend (status 0: down / timeout /
-      unconfigured), the hook transparently falls back to the seeded offline
-      demo store (lib/api) so the prototype still runs without a server.
+      unconfigured), the hook falls back to the seeded offline demo store
+      (lib/api) so the prototype still runs without a server. That fallback
+      is GATED: development only, or an explicit
+      NEXT_PUBLIC_ENABLE_DEMO_FALLBACK=true — production never silently
+      renders seeded data. See shouldUseDemoFallback().
    3. Realtime: `table_carts` channel streams cart mutations, and
       `order_tracker` (via watchOrderStatus) streams status flips — with
       REST polling underneath as the WebSocket safety net.
@@ -24,8 +27,8 @@ import {
   getMenu as apiGetMenu,
   getOrders as apiGetOrders,
   initializeSession as apiInitializeSession,
-  isOfflineError,
   removeCartItem as apiRemoveCartItem,
+  shouldUseDemoFallback,
   subscribeTableCart,
   toCartLine,
   toMenuItem,
@@ -172,7 +175,7 @@ export function useLiveTable(tableToken: string): LiveTableValue {
       );
       if (mountedRef.current) setCart(rows.map(toCartLine));
     } catch (err) {
-      if (err instanceof ApiError && isOfflineError(err)) {
+      if (shouldUseDemoFallback(err)) {
         sourceRef.current = "demo";
         setSource("demo");
         if (mountedRef.current) setCart(mock.getCart(tableToken));
@@ -193,7 +196,7 @@ export function useLiveTable(tableToken: string): LiveTableValue {
         setOrders(page.data.map((row) => toOrder(row, tableCodeRef.current ?? tableToken)));
       }
     } catch (err) {
-      if (err instanceof ApiError && isOfflineError(err)) {
+      if (shouldUseDemoFallback(err)) {
         sourceRef.current = "demo";
         setSource("demo");
         if (mountedRef.current) setOrders(mock.getOrdersForTable(tableToken));
@@ -217,7 +220,7 @@ export function useLiveTable(tableToken: string): LiveTableValue {
           sourceRef.current = "live";
           setSource("live");
         } catch (err) {
-          if (err instanceof ApiError && isOfflineError(err)) {
+          if (shouldUseDemoFallback(err)) {
             snapshot = await loadDemo();
             sourceRef.current = "demo";
             setSource("demo");
@@ -354,7 +357,7 @@ export function useLiveTable(tableToken: string): LiveTableValue {
         await reloadCart();
         return { ok: true };
       } catch (err) {
-        if (err instanceof ApiError && isOfflineError(err)) {
+        if (shouldUseDemoFallback(err)) {
           const result = await mock.addCartLine({
             table_token: tableToken,
             menu_item_id: item.id,
@@ -405,7 +408,7 @@ export function useLiveTable(tableToken: string): LiveTableValue {
         await apiUpdateCartItem(cartItemId, { table_token: tableToken, ...patch });
         await reloadCart();
       } catch (err) {
-        if (err instanceof ApiError && isOfflineError(err)) {
+        if (shouldUseDemoFallback(err)) {
           sourceRef.current = "demo";
           setSource("demo");
           // The demo store has no server-side atomics: resolve the delta
@@ -439,7 +442,7 @@ export function useLiveTable(tableToken: string): LiveTableValue {
         await apiRemoveCartItem({ table_token: tableToken, cart_item_id: cartItemId });
         await reloadCart();
       } catch (err) {
-        if (err instanceof ApiError && isOfflineError(err)) {
+        if (shouldUseDemoFallback(err)) {
           sourceRef.current = "demo";
           setSource("demo");
           await mock.removeCartLine({ cart_item_id: cartItemId });
@@ -460,7 +463,7 @@ export function useLiveTable(tableToken: string): LiveTableValue {
       await Promise.all([reloadCart(), reloadOrders()]);
       return { ok: true };
     } catch (err) {
-      if (err instanceof ApiError && isOfflineError(err)) {
+      if (shouldUseDemoFallback(err)) {
         sourceRef.current = "demo";
         setSource("demo");
         const result = await mock.fireOrder(tableToken);

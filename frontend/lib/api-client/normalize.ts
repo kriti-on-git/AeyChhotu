@@ -26,6 +26,34 @@ export function isOfflineError(error: unknown): boolean {
   return error instanceof ApiError && error.status === 0;
 }
 
+/**
+ * May the offline demo store stand in for the live API?
+ *
+ * Default: ON in development, OFF in a production build. A production
+ * deployment must never quietly serve seeded demo data because
+ * NEXT_PUBLIC_API_URL points somewhere unreachable — that failure looks
+ * exactly like a working restaurant and is invisible from the outside.
+ *
+ * Set NEXT_PUBLIC_ENABLE_DEMO_FALLBACK=true to opt back in deliberately
+ * (e.g. a public demo deployment that intentionally has no backend).
+ */
+export function demoFallbackEnabled(): boolean {
+  const raw = process.env.NEXT_PUBLIC_ENABLE_DEMO_FALLBACK?.trim().toLowerCase();
+  if (raw === "true" || raw === "1") return true;
+  if (raw === "false" || raw === "0") return false;
+  return process.env.NODE_ENV !== "production";
+}
+
+/**
+ * The single predicate every demo/mock path goes through: the request never
+ * reached the backend AND the demo store is permitted here. Keeping both
+ * conditions in one export means a newly added fallback path cannot forget
+ * the production gate.
+ */
+export function shouldUseDemoFallback(error: unknown): boolean {
+  return isOfflineError(error) && demoFallbackEnabled();
+}
+
 /** ServiceResult-shaped failure from the mock layer → ApiError for one code path. */
 export function apiErrorFromServiceFailure(failure: {
   code: string;

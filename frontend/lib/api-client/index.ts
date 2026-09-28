@@ -52,6 +52,8 @@ export {
 } from "./realtime";
 export {
   isOfflineError,
+  demoFallbackEnabled,
+  shouldUseDemoFallback,
   apiErrorFromServiceFailure,
   toTable,
   toMenuItem,

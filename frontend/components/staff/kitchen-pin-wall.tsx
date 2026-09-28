@@ -8,7 +8,7 @@ import { Container } from "@/components/ui/container";
 import { FieldShell, controlStyles, useFieldControl } from "@/components/ui/field";
 import { Spinner } from "@/components/ui/spinner";
 import { checkKdsLogin } from "@/lib/api";
-import { ApiError, isOfflineError, loginKDS } from "@/lib/api-client";
+import { ApiError, loginKDS, shouldUseDemoFallback } from "@/lib/api-client";
 import { cn } from "@/lib/utils";
 
 const keys = ["1", "2", "3", "4", "5", "6", "7", "8", "9"];
@@ -41,7 +41,7 @@ export function KitchenPinWall({ onSuccess }: KitchenPinWallProps) {
       onSuccess();
       return;
     } catch (err) {
-      if (isOfflineError(err)) {
+      if (shouldUseDemoFallback(err)) {
         // API unreachable / not configured — fall back to the demo guard.
         const result = await checkKdsLogin(value);
         if (result.ok) {

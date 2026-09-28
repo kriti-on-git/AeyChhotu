@@ -16,8 +16,9 @@ back to the diner — no app install, no login for guests.
 [![Postgres](https://img.shields.io/badge/Postgres-Supabase-4169E1?logo=postgresql&logoColor=white)](#-tech-stack)
 [![Zod](https://img.shields.io/badge/Zod-4.6-3E67B1?logo=zod&logoColor=white)](#-tech-stack)
 
-**Status:** MVP feature-complete — frontend build, backend build, `tsc`, and ESLint all green.
-Deployment hardening is the remaining work (see [Project Status](#-project-status)).
+**Status:** MVP feature-complete and verified against a live Supabase database — **35/35** schema & RLS
+assertions, **63/63** contract checks, both apps green on typecheck · lint · build. CI enforces it
+(see [Project Status](#-project-status)).
 
 </div>
 
@@ -41,7 +42,7 @@ Deployment hardening is the remaining work (see [Project Status](#-project-statu
 - [Database setup](#-database-setup)
 - [API reference](#-api-reference)
 - [Security model](#-security-model)
-- [Build & verification](#-build--verification)
+- [Build & verification](#-build-verification)
 - [Project status](#-project-status)
 - [Documentation index](#-documentation-index)
 
@@ -334,11 +335,18 @@ transform/opacity-only animations, and `useReducedMotion` respected everywhere.
 ```
 .
 ├── README.md                  ← you are here
+├── .gitignore                 ← repo-wide: secrets, logs, build output, noise
+├── .github/workflows/ci.yml   ← typecheck · lint · build + schema/contract suites
 ├── backend/                   ← Express REST API (owns all writes)
 │   ├── sql/
 │   │   ├── 001_init.sql       ← tables, indexes, RLS, fire_order() RPC
 │   │   ├── 002_review_fixes.sql ← FK RESTRICT, one-active-order index, scoped RLS
+│   │   ├── 003_realtime.sql   ← Realtime publication + REPLICA IDENTITY FULL
 │   │   └── seed.sql           ← idempotent: 1 terminal / 5 tables / 20 dishes
+│   ├── scripts/
+│   │   ├── db-setup.mjs       ← npm run db:setup   (apply every sql/*.sql)
+│   │   ├── db-verify.mjs      ← npm run db:verify  (35 schema/RLS assertions)
+│   │   └── smoke.mjs          ← npm run smoke      (63 contract checks)
 │   ├── src/
 │   │   ├── config/env.ts      ← boot-time env validation (exit 1 if broken)
 │   │   ├── db/pool.ts         ← shared pg Pool
@@ -379,16 +387,23 @@ cd backend  && npm install
 cd ../frontend && npm install
 ```
 
-### 2 · Create the schema and seed
+### 2 · Create the schema, wire Realtime and seed
 
 ```bash
 cd backend
-psql "$DATABASE_URL" -f sql/001_init.sql
-psql "$DATABASE_URL" -f sql/002_review_fixes.sql
-psql "$DATABASE_URL" -f sql/seed.sql
+npm run db:setup          # applies every sql/*.sql in order
+npm run db:verify         # asserts the result (see below)
 ```
 
-Seed is **idempotent** — run it as often as you like: 1 terminal, 5 tables, 20 dishes, no duplicates.
+No `psql` needed — the runner uses the `pg` dependency you already have. Every step is **idempotent**, so re-running is always safe: 1 terminal, 5 tables, 20 dishes, no duplicates.
+
+```bash
+npm run db:setup -- --dry-run     # list what would be applied
+npm run db:setup -- --no-seed     # schema only
+npm run db:verify                 # 35 assertions: schema, RLS scope, indexes, privileges
+```
+
+> 🌱 **`db:setup` also wires Supabase Realtime** (`003_realtime.sql`). That step used to be a dashboard click that failed *silently* when skipped — the browser subscribes fine, receives zero events, and the app quietly falls back to REST polling. On a Postgres without `wal_level=logical` it now reports that instead of aborting.
 
 ### 3 · Configure environment
 
@@ -428,11 +443,12 @@ cd frontend && npm run dev        # → http://localhost:3000
 |---|---|---|---|
 | `PORT` | no | `4000` | API listen port |
 | `NODE_ENV` | no | `development` | `production` adds the `Secure` flag to the KDS cookie |
-| `CLIENT_URL` | **yes** | `http://localhost:3000` | The **only** origin allowed by CORS (no trailing slash) |
+| `CLIENT_URL` | **yes** | `http://localhost:3000` | CORS allow-list — one origin, or several **comma-separated** (prod domain + Vercel preview URLs). No trailing slash |
 | `DATABASE_URL` | **yes** | `postgresql://…` | Postgres/Supabase connection string — server refuses to boot without it |
 | `STAFF_PIN` | **yes** | `1234` | 4–6 digit kitchen PIN; validated at boot |
 | `KDS_TOKEN_SECRET` | **yes** | long random string | HMAC secret for shift JWTs |
 | `SUPABASE_JWT_SECRET` | no | from Supabase → Settings → API | When set, E1/E2 also mint the RLS-scoped `realtime_token`. Empty ⇒ REST-only, by design |
+| `COOKIE_SAME_SITE` | no | `strict` | `strict` \| `lax` \| `none` for the httpOnly `kds_token` cookie. Use `none` when frontend and API live on **different sites** — it forces `Secure` automatically |
 
 ### `frontend/.env.local`
 
@@ -441,7 +457,8 @@ cd frontend && npm run dev        # → http://localhost:3000
 | `NEXT_PUBLIC_API_URL` | **yes** | `http://localhost:4000` | Express base URL, no trailing slash |
 | `NEXT_PUBLIC_SUPABASE_URL` | for Realtime | `https://xxx.supabase.co` | Realtime endpoint |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | for Realtime | `eyJ…` | **Public anon key only** — never `service_role` |
-| `STAFF_PIN` | no | `1234` | Used only by the offline-fallback route `app/api/v1/auth/kds-login` |
+| `NEXT_PUBLIC_ENABLE_DEMO_FALLBACK` | no | *(empty)* | Opts back into the offline demo store. **Default: on in `next dev`, off in a production build** — a deployment with a wrong API URL must fail loudly, not render seeded dishes as real orders |
+| `STAFF_PIN` | no | `1234` | Used only by the dev-only offline route `app/api/v1/auth/kds-login`, which returns `404` in a production build |
 
 > ⚠️ Never commit `.env` / `.env.local`. Both are gitignored; only the `.env.example` templates are tracked.
 
@@ -452,9 +469,14 @@ cd frontend && npm run dev        # → http://localhost:3000
 ```mermaid
 flowchart LR
     A["001_init.sql<br/>tables · indexes · RLS · fire_order()"] --> B["002_review_fixes.sql<br/>FK RESTRICT · one-active-order<br/>claim-scoped RLS"]
-    B --> C["seed.sql<br/>1 terminal · 5 tables · 20 dishes"]
-    C --> D["Supabase dashboard<br/>enable Realtime on orders,<br/>cart_items, order_items"]
+    B --> C["003_realtime.sql<br/>supabase_realtime publication<br/>REPLICA IDENTITY FULL"]
+    C --> D["seed.sql<br/>1 terminal · 5 tables · 20 dishes"]
+    D --> E["db:verify<br/>35 assertions"]
 ```
+
+Run the whole chain with **`npm run db:setup`** — no `psql`, no dashboard clicks, safe to re-run.
+`003_realtime.sql` needs `wal_level=logical` (Supabase default). On a plain Postgres it reports the
+limitation and skips, and the app correctly degrades to REST + polling instead of failing to set up.
 
 `fire_order(p_table_token text) RETURNS jsonb` is the heart of the system: it locks the table row
 (`FOR UPDATE`), guards duplicates, freezes and checks the cart, locks the referenced menu rows
@@ -529,7 +551,12 @@ Everything below was run and is green on the current tree:
 | Frontend types | `cd frontend && npm run typecheck` | ✅ 0 errors |
 | Frontend lint | `cd frontend && npm run lint` | ✅ 0 errors |
 | Frontend build | `cd frontend && npm run build` | ✅ 7 routes compiled |
-| Unit / integration tests | — | ⛔ **no test suite is committed** (verification was manual: `docs/9` records an 18/18 API smoke run) |
+| **Schema + RLS assertions** | `cd backend && npm run db:verify` | ✅ **35/35** — tables, RLS on, 24 policies, indexes, RLS claim-scoping, privileges |
+| **Contract smoke (live server)** | `cd backend && npm run smoke` | ✅ **63/63** — every endpoint in the real diner → kitchen → floor journey |
+| Realtime wiring | `db:setup` on `wal_level=logical` | ✅ publication created, `REPLICA IDENTITY FULL` set |
+| Degradation path | `db:setup` on `wal_level=replica` | ✅ reports and skips; app runs REST + 5 s polling |
+| Production fallback gate | `next build && next start` | ✅ dev-only login route returns `404` in prod; pages serve `200` |
+| CI | [`.github/workflows/ci.yml`](.github/workflows/ci.yml) | ✅ typecheck · lint · build for both apps, plus schema verify and smoke against a real Postgres 17 |
 
 <details>
 <summary><b>Production build output</b></summary>
@@ -552,23 +579,37 @@ Route (app)
 ## 🚦 Project status
 
 **Done:** all 12 core MVP features + 2 extensions, the full 17-endpoint contract, the atomic fire RPC,
-claim-scoped RLS, the design system, responsive QA (6 screens × 6 widths, 0 px overflow), and green
-typecheck/lint/build on both apps.
+claim-scoped RLS, the design system, responsive QA (6 screens × 6 widths, 0 px overflow), green
+typecheck/lint/build on both apps — and, verified end-to-end against a live Supabase database,
+**35 schema/RLS assertions** plus a **63-check contract smoke** across the whole diner → kitchen → floor journey.
 
-**Not done (functional, non-deployment):**
+**Closed in this pass:**
+
+| Area | What changed |
+|---|---|
+| **Realtime wiring** | `003_realtime.sql` adds the streamed tables + `REPLICA IDENTITY FULL`. Previously a manual dashboard step whose omission failed silently; now versioned, idempotent, and asserted by `db:verify` |
+| **Production demo gate** | New `shouldUseDemoFallback()` predicate on all 12 fallback paths, plus `NEXT_PUBLIC_ENABLE_DEMO_FALLBACK`. A production build never renders seeded data |
+| **Dev-only auth route** | The frontend’s duplicate `kds-login` returns `404` in production and now speaks the contract envelope |
+| **Hosting flexibility** | Multi-origin CORS allow-list, `credentials: true`, configurable `COOKIE_SAME_SITE`, `credentials: "include"` on the client — same code works same-site *or* cross-site |
+| **Automated verification** | `db:verify` (35 assertions) and `smoke` (63 assertions) replace the hand-run curl sweep |
+| **CI** | `.github/workflows/ci.yml` — typecheck, lint, build for both apps, plus schema verify and contract smoke against a real Postgres 17 |
+| **Repo hygiene** | Root `.gitignore` (covers `.env`, logs, `.pgdata`, editor noise); `dev.log` can no longer be committed |
+| **Docs** | `README.md` with architecture, ER, state-machine and sequence diagrams |
+
+**Still open:**
 
 | Area | Gap |
 |---|---|
 | **Floor view (S6)** | `/floor` renders from the offline demo store — `getFloorTables` (E17) is written but never called, and the page has no staff PIN gate despite E17 requiring a bearer token |
 | **86 drawer list** | Reads its catalog from the demo store (E3 needs a `table_token`), though the toggle itself is live-first |
 | **Table presence** | `usePresence` writes to the demo store; Supabase Presence is wired only in the active-diners badge |
-| **Dead code** | `hooks/use-table-data.ts`, `getMe` (E2b) and `checkActiveOrder` (E9) exist but are never consumed; the frontend’s `/api/v1/auth/kds-login` route duplicates E2 with a non-contract `{ok:true}` envelope and a `1234` PIN fallback |
-| **Tests / CI** | No unit, integration, or e2e tests; no `.github/workflows` |
+| **Dead code** | `hooks/use-table-data.ts`, `getMe` (E2b) and `checkActiveOrder` (E9) exist but are never consumed by a screen |
+| **Unit tests** | `db:verify` and `smoke` cover integration; there are still no isolated unit tests, and no coverage gate |
 | **Money precision** | E3 still selects `price::float8`; `order_items` has no `unit_price` and `orders` no `total`, so re-pricing a dish silently changes an old ticket’s bill |
 | **Audit trail** | No `created_at`/`updated_at` on `menu_items`, `restaurant_tables`, `order_items`; `orders.updated_at` is hand-written rather than trigger-maintained |
 | **DB state machine** | Rule 13 (`pending→preparing→ready→served`) is enforced in app code only, not by a transition trigger |
-| **Repo hygiene** | No root `.gitignore` (so `frontend/dev.log` is committable), no `frontend/public/` (favicon 404s), no LICENSE, no `.nvmrc` |
-| **Ops** | No rate limiting, security headers, structured logging, request IDs, health/readiness split, or graceful shutdown |
+| **Assets / licence** | No `frontend/public/` (favicon 404s), no LICENSE, no `.nvmrc` |
+| **Ops** | No rate limiting, security headers, structured logging, request IDs, readiness probe or graceful shutdown |
 
 Full engineering detail lives in the [docs index](#-documentation-index) — especially
 [`docs/10-db-report.md`](docs/10-db-report.md) §4 and [`docs/9-integration-report.md`](docs/9-integration-report.md).

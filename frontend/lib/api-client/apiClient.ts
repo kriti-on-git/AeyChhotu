@@ -169,6 +169,12 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
       body: options.body !== undefined ? JSON.stringify(options.body) : undefined,
       signal: controller.signal,
       cache: "no-store",
+      // Send/accept the httpOnly kds_token cookie. The default ("same-origin")
+      // would silently stop working the moment the API moves to its own
+      // host, so the cookie path is exercised in both hosting shapes. The
+      // Bearer header above stays the primary mechanism: cookies are scoped
+      // SameSite=Strict and are useless cross-site.
+      credentials: "include",
     });
   } catch (err) {
     if (controller.signal.aborted) {

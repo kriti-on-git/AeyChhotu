@@ -2,21 +2,21 @@
 
 /* useLiveKds — the Kitchen Display data runtime.
 
-   LIVE WITH MOCK FALLBACK:
+   LIVE WITH MOCK FALLBACK (gated — see shouldUseDemoFallback()):
    - reads:  GET /api/v1/kds/tickets (bearer injected by the api-client)
    - writes: PATCH status / prune, with a per-ticket busy map that is the
      frontend double-tap guardrail for one-tap state modifications.
    - realtime: `kds_orders` INSERT channel → instant refetch so new tickets
      pop into Pending without a page refresh; mock store subscription keeps
-     the offline demo cross-tab live. */
+     the offline demo cross-tab live (development only). */
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ApiError,
   fetchAllPages,
   getKdsTickets as apiGetKdsTickets,
-  isOfflineError,
   pruneKdsTicket as apiPruneKdsTicket,
+  shouldUseDemoFallback,
   subscribeKdsOrders,
   toKdsOrder,
   updateKdsStatus as apiUpdateKdsStatus,
@@ -74,7 +74,7 @@ export function useLiveKds(): LiveKdsValue {
       const rows = await fetchAllPages((page) => apiGetKdsTickets({ page, limit: LIST_LIMIT }));
       return { list: rows.map(toKdsOrder), source: "live" };
     } catch (err) {
-      if (err instanceof ApiError && isOfflineError(err)) {
+      if (shouldUseDemoFallback(err)) {
         // Backend unreachable → offline demo board from the seeded store.
         return { list: mock.getKdsTickets(), source: "demo" };
       }
@@ -165,7 +165,7 @@ export function useLiveKds(): LiveKdsValue {
         await refresh();
         return { ok: true };
       } catch (err) {
-        if (err instanceof ApiError && isOfflineError(err)) {
+        if (shouldUseDemoFallback(err)) {
           sourceRef.current = "demo";
           setSource("demo");
           const result = await mock.updateTicketStatus(order.id, next);

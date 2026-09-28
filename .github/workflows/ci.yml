@@ -1,0 +1,143 @@
+name: CI
+
+# Keeps the "green" claim in the README honest: both apps are typechecked,
+# linted and built, and the backend additionally proves its schema, RLS
+# scoping and all 17 contract endpoints against a real Postgres.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# A superseded run on the same ref teaches nobody anything — cancel it.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  frontend:
+    name: Frontend — typecheck · lint · build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Build (production)
+        run: npm run build
+        env:
+          # NEXT_PUBLIC_* are inlined at build time. This artefact is never
+          # deployed (the host supplies real values), so a placeholder is
+          # enough to make the build deterministic.
+          NEXT_PUBLIC_API_URL: http://localhost:4000
+          # Deliberately NOT enabled: a production build must not fall back to
+          # the offline demo store. See shouldUseDemoFallback().
+          NEXT_PUBLIC_ENABLE_DEMO_FALLBACK: "false"
+
+  backend:
+    name: Backend — typecheck · schema · contract smoke
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+
+    # A real Postgres, not a mock. Started via `docker run` rather than a
+    # `services:` block because logical decoding needs `-c wal_level=logical`,
+    # and `services:` cannot override the container command.
+    #
+    # 001_init.sql creates the anon/authenticated/service_role stubs when they
+    # are missing, which is exactly why the whole schema is testable on a bare
+    # Postgres with no Supabase account.
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres
+      CLIENT_URL: http://localhost:3000
+      STAFF_PIN: "460468"
+      KDS_TOKEN_SECRET: ci-only-secret-not-used-anywhere-else
+      # Left unset on purpose: without SUPABASE_JWT_SECRET the app runs
+      # REST-only and realtime_token is null — the documented degraded mode.
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Start Postgres 17 with logical decoding
+        working-directory: .
+        run: |
+          docker run -d --name pg \
+            -e POSTGRES_PASSWORD=postgres \
+            -p 5432:5432 \
+            postgres:17 -c wal_level=logical
+
+          for i in $(seq 1 30); do
+            if docker exec pg pg_isready -U postgres >/dev/null 2>&1; then
+              echo "postgres ready"
+              exit 0
+            fi
+            sleep 2
+          done
+
+          echo "::error::postgres never became ready"
+          docker logs pg
+          exit 1
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Build
+        run: npm run build
+
+      - name: Apply schema, Realtime wiring and seed
+        run: npm run db:setup
+
+      - name: Verify schema, RLS scoping, indexes and privileges
+        run: npm run db:verify
+
+      - name: Contract smoke against a live server
+        run: |
+          npm start > /tmp/api.log 2>&1 &
+          API_PID=$!
+
+          for i in $(seq 1 40); do
+            if curl -sf -m 2 http://localhost:4000/api/v1/health >/dev/null 2>&1; then
+              break
+            fi
+            sleep 1
+          done
+
+          set +e
+          npm run smoke
+          RC=$?
+          set -e
+
+          kill "$API_PID" 2>/dev/null || true
+          echo "--- API server log ---"
+          cat /tmp/api.log
+          exit $RC

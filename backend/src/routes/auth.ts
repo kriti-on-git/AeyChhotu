@@ -14,8 +14,10 @@ authRouter.post("/kds-login", async (req, res) => {
   const body = parseOrThrow(kdsLoginSchema, req.body);
   const shift = await authenticateShift(body.pin);
 
-  // httpOnly cookie for same-origin browser terminals: JavaScript on the
-  // page can never read the token (SameSite=Strict; Secure in production).
+  /* httpOnly cookie for browser terminals: JavaScript on the page can never
+     read the token. SameSite/Secure come from config so the same code works
+     whether the deployment is same-site (Strict) or cross-site
+     (COOKIE_SAME_SITE=none, which forces Secure automatically). */
   res.setHeader(
     "Set-Cookie",
     [
@@ -23,8 +25,8 @@ authRouter.post("/kds-login", async (req, res) => {
       "HttpOnly",
       "Path=/",
       `Max-Age=${shift.expires_in}`,
-      "SameSite=Strict",
-      ...(env.nodeEnv === "production" ? ["Secure"] : []),
+      `SameSite=${env.cookieSameSite}`,
+      ...(env.cookieSecure ? ["Secure"] : []),
     ].join("; "),
   );
 

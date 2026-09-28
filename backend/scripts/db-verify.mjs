@@ -128,17 +128,36 @@ try {
   // ------------------------------------------------------------ 3. replication
   section("3. Realtime replication");
 
-  const { rows: pubRows } = await q(
-    `SELECT tablename FROM pg_publication_tables
-      WHERE pubname = 'supabase_realtime' AND schemaname = 'public'
-      ORDER BY tablename`,
-  );
-  const published = pubRows.map((r) => r.tablename);
-  report(
-    "orders + cart_items streamed",
-    published.includes("orders") && published.includes("cart_items"),
-    published.join(", ") || "publication empty",
-  );
+  /* Logical decoding is a SERVER setting, not something the schema controls.
+     Supabase ships wal_level=logical; a plain Postgres defaults to `replica`,
+     where streaming is impossible and the app correctly falls back to REST
+     polling. That is a degraded-but-valid deployment, so it is reported as a
+     skip rather than a failure — failing here would train people to ignore
+     this script. */
+  const { rows: walRows } = await q("SELECT current_setting('wal_level', true) AS wal");
+  const walLevel = walRows[0]?.wal;
+  const realtimePossible = walLevel === "logical";
+
+  if (!realtimePossible) {
+    console.log(
+      `  ⏭️  skipped — wal_level is "${walLevel ?? "unknown"}", so Realtime cannot stream here.`,
+    );
+    console.log(
+      "      The app falls back to REST + 5s polling. Fix: postgres -c wal_level=logical",
+    );
+  } else {
+    const { rows: pubRows } = await q(
+      `SELECT tablename FROM pg_publication_tables
+        WHERE pubname = 'supabase_realtime' AND schemaname = 'public'
+        ORDER BY tablename`,
+    );
+    const published = pubRows.map((r) => r.tablename);
+    report(
+      "orders + cart_items streamed",
+      published.includes("orders") && published.includes("cart_items"),
+      published.join(", ") || "publication empty",
+    );
+  }
 
   const { rows: identRows } = await q(
     `SELECT relname, relreplident FROM pg_class
