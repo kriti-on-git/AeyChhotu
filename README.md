@@ -16,8 +16,8 @@ back to the diner — no app install, no login for guests.
 [![Postgres](https://img.shields.io/badge/Postgres-Supabase-4169E1?logo=postgresql&logoColor=white)](#-tech-stack)
 [![Zod](https://img.shields.io/badge/Zod-4.6-3E67B1?logo=zod&logoColor=white)](#-tech-stack)
 
-**Status:** MVP feature-complete and verified against a live Supabase database — **35/35** schema & RLS
-assertions, **63/63** contract checks, both apps green on typecheck · lint · build. CI enforces it
+**Status:** MVP feature-complete and verified against a live Supabase database — **51/51** schema, RLS &
+hardening assertions, **69/69** contract checks, both apps green on typecheck · lint · build. CI enforces it
 (see [Project Status](#-project-status)).
 
 </div>
@@ -140,8 +140,8 @@ Every claim above is a command anyone can re-run:
 | Command | Where | What it proves |
 |---|---|---|
 | `npm run db:setup` | `backend/` | applies all SQL (idempotent) |
-| `npm run db:verify` | `backend/` | 35 assertions: schema, RLS on, 24 policies, indexes, claim-scoping, privileges |
-| `npm run smoke` | `backend/` | 66 contract checks across diner → kitchen → floor |
+| `npm run db:verify` | `backend/` | 51 assertions: schema, RLS on, 24 policies, indexes, claim-scoping, privileges, hardening |
+| `npm run smoke` | `backend/` | 69 contract checks across diner → kitchen → floor |
 | `npm run realtime:check` | `frontend/` | Realtime auth, delivery, RLS scoping, Presence |
 | `npm run check:floor` | `frontend/` | the floor UI in real headless Chrome |
 
@@ -359,8 +359,8 @@ transform/opacity-only animations, and `useReducedMotion` respected everywhere.
 │   │   └── seed.sql           ← idempotent: 1 terminal / 5 tables / 20 dishes
 │   ├── scripts/
 │   │   ├── db-setup.mjs       ← npm run db:setup   (apply every sql/*.sql)
-│   │   ├── db-verify.mjs      ← npm run db:verify  (35 schema/RLS assertions)
-│   │   └── smoke.mjs          ← npm run smoke      (63 contract checks)
+│   │   ├── db-verify.mjs      ← npm run db:verify  (51 schema/RLS/hardening assertions)
+│   │   └── smoke.mjs          ← npm run smoke      (69 contract checks)
 │   ├── src/
 │   │   ├── config/env.ts      ← boot-time env validation (exit 1 if broken)
 │   │   ├── db/pool.ts         ← shared pg Pool
@@ -414,7 +414,7 @@ No `psql` needed — the runner uses the `pg` dependency you already have. Every
 ```bash
 npm run db:setup -- --dry-run     # list what would be applied
 npm run db:setup -- --no-seed     # schema only
-npm run db:verify                 # 35 assertions: schema, RLS scope, indexes, privileges
+npm run db:verify                 # 51 assertions: schema, RLS scope, indexes, privileges, hardening
 ```
 
 > 🌱 **`db:setup` also wires Supabase Realtime** (`003_realtime.sql`). That step used to be a dashboard click that failed *silently* when skipped — the browser subscribes fine, receives zero events, and the app quietly falls back to REST polling. On a Postgres without `wal_level=logical` it now reports that instead of aborting.
@@ -483,9 +483,10 @@ cd frontend && npm run dev        # → http://localhost:3000
 ```mermaid
 flowchart LR
     A["001_init.sql<br/>tables · indexes · RLS · fire_order()"] --> B["002_review_fixes.sql<br/>FK RESTRICT · one-active-order<br/>claim-scoped RLS"]
-    B --> C["003_realtime.sql<br/>supabase_realtime publication<br/>REPLICA IDENTITY FULL"]
-    C --> D["seed.sql<br/>1 terminal · 5 tables · 20 dishes"]
-    D --> E["db:verify<br/>35 assertions"]
+    B -->    C["003_realtime.sql<br/>supabase_realtime publication<br/>REPLICA IDENTITY FULL"]
+    C --> F["004_hardening.sql<br/>price snapshot · audit timestamps<br/>status-transition guard"]
+    F --> D["seed.sql<br/>1 terminal · 5 tables · 20 dishes"]
+    D --> E["db:verify<br/>51 assertions"]
 ```
 
 Run the whole chain with **`npm run db:setup`** — no `psql`, no dashboard clicks, safe to re-run.
@@ -565,14 +566,14 @@ Everything below was run and is green on the current tree:
 | Frontend types | `cd frontend && npm run typecheck` | ✅ 0 errors |
 | Frontend lint | `cd frontend && npm run lint` | ✅ 0 errors |
 | Frontend build | `cd frontend && npm run build` | ✅ 7 routes compiled |
-| **Schema + RLS assertions** | `cd backend && npm run db:verify` | ✅ **35/35** — tables, RLS on, 24 policies, indexes, RLS claim-scoping, privileges |
-| **Contract smoke (live server)** | `cd backend && npm run smoke` | ✅ **63/63** — every endpoint in the real diner → kitchen → floor journey |
+| **Schema + RLS assertions** | `cd backend && npm run db:verify` | ✅ **51/51** — tables, RLS on, 24 policies, indexes, RLS claim-scoping, privileges, hardening (004) |
+| **Contract smoke (live server)** | `cd backend && npm run smoke` | ✅ **69/69** — every endpoint in the real diner → kitchen → floor journey, incl. the frozen bill |
 | Realtime wiring | `db:setup` on `wal_level=logical` | ✅ publication created, `REPLICA IDENTITY FULL` set |
 | Degradation path | `db:setup` on `wal_level=replica` | ✅ reports and skips; app runs REST + 5 s polling |
 | Production fallback gate | `next build && next start` | ✅ dev-only login route returns `404` in prod; pages serve `200` |
 | **Realtime end-to-end** | `cd frontend && npm run realtime:check` | ✅ **12/12** — token acceptance, delivery, RLS scoping, Presence |
 | **Floor view in a browser** | `cd frontend && npm run check:floor` | ✅ **11/11** — headless Chrome over CDP: gate holds, live board renders, allergy alert reaches the card |
-| Suites are idempotent | `npm run smoke` twice in a row | ✅ **66/66** both times (pre-flight reset) |
+| Suites are idempotent | `npm run smoke` twice in a row | ✅ **69/69** both times (pre-flight reset) |
 | CI | [`.github/workflows/ci.yml`](.github/workflows/ci.yml) | ✅ 3 jobs — typecheck · lint · build, schema verify + smoke against Postgres 17, and the browser E2E for the floor view |
 
 <details>
@@ -598,7 +599,7 @@ Route (app)
 **Done:** all 12 core MVP features + 2 extensions, the full 17-endpoint contract, the atomic fire RPC,
 claim-scoped RLS, the design system, responsive QA (6 screens × 6 widths, 0 px overflow), green
 typecheck/lint/build on both apps — and, verified end-to-end against a live Supabase database,
-**35 schema/RLS assertions** plus a **63-check contract smoke** across the whole diner → kitchen → floor journey.
+**51 schema/RLS/hardening assertions** plus a **69-check contract smoke** across the whole diner → kitchen → floor journey.
 
 **Closed in this pass:**
 
@@ -612,7 +613,8 @@ typecheck/lint/build on both apps — and, verified end-to-end against a live Su
 | **Production demo gate** | New `shouldUseDemoFallback()` predicate on all 12 fallback paths, plus `NEXT_PUBLIC_ENABLE_DEMO_FALLBACK`. A production build never renders seeded data |
 | **Dev-only auth route** | The frontend’s duplicate `kds-login` returns `404` in production and now speaks the contract envelope |
 | **Hosting flexibility** | Multi-origin CORS allow-list, `credentials: true`, configurable `COOKIE_SAME_SITE`, `credentials: "include"` on the client — same code works same-site *or* cross-site |
-| **Automated verification** | `db:verify` (35 assertions) and `smoke` (63 assertions) replace the hand-run curl sweep |
+| **Data integrity (004)** | `004_hardening.sql` freezes the bill at fire time (`order_items.unit_price`, `orders.total`), adds trigger-maintained `created_at`/`updated_at` to every table, and enforces Rule 13 with an `enforce_order_status_transition()` trigger — all asserted by `db:verify` §5, including firing a real cart in a rolled-back transaction |
+| **Automated verification** | `db:verify` (51 assertions) and `smoke` (69 assertions) replace the hand-run curl sweep |
 | **CI** | `.github/workflows/ci.yml` — typecheck, lint, build for both apps, plus schema verify and contract smoke against a real Postgres 17 |
 | **Repo hygiene** | Root `.gitignore` (covers `.env`, logs, `.pgdata`, editor noise); `dev.log` can no longer be committed |
 | **Docs** | `README.md` with architecture, ER, state-machine and sequence diagrams |
@@ -621,11 +623,7 @@ typecheck/lint/build on both apps — and, verified end-to-end against a live Su
 
 | Area | Gap |
 |---|---|
-
 | **Unit tests** | `db:verify`, `smoke`, `realtime:check` and `check:floor` cover the integration path; there are still no isolated unit tests, and no coverage gate |
-| **Money precision** | E3 still selects `price::float8`; `order_items` has no `unit_price` and `orders` no `total`, so re-pricing a dish silently changes an old ticket’s bill |
-| **Audit trail** | No `created_at`/`updated_at` on `menu_items`, `restaurant_tables`, `order_items`; `orders.updated_at` is hand-written rather than trigger-maintained |
-| **DB state machine** | Rule 13 (`pending→preparing→ready→served`) is enforced in app code only, not by a transition trigger |
 | **Assets / licence** | No `frontend/public/` (favicon 404s), no LICENSE, no `.nvmrc` |
 | **Ops** | No rate limiting, security headers, structured logging, request IDs, readiness probe or graceful shutdown |
 

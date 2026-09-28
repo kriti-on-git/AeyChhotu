@@ -11,6 +11,9 @@
  *   4. SECURITY    claim-scoped RLS actually returns 0 rows with no token,
  *                  1 row for a diner token, the whole floor for a staff
  *                  token, and anon writes are denied
+ *   5. HARDENING   the audit columns/triggers, the frozen price snapshot and
+ *                  the status-transition guard added by 004_hardening.sql —
+ *                  including firing a real cart in a rolled-back transaction
  *
  * Usage (from backend/):
  *   npm run db:verify
@@ -256,8 +259,163 @@ try {
   }
   report("anon cannot INSERT into cart_items", anonWriteDenied, anonWriteError);
 
-  // ------------------------------------------------------------------- 5. seed
-  section("5. Seed data");
+  /* ------------------------------------------------------- 5. hardening (004)
+     The three data-integrity defects 004_hardening.sql closes. Asserting them
+     here means a future schema edit that drops a column or a trigger fails
+     loudly instead of silently un-freezing historical bills. */
+  section("5. Hardening (004_hardening.sql)");
+
+  // 5a. Audit columns exist and are NOT NULL.
+  const { rows: auditRows } = await q(
+    `SELECT table_name, column_name, is_nullable
+       FROM information_schema.columns
+      WHERE table_schema = 'public'
+        AND column_name IN ('created_at', 'updated_at')
+        AND table_name IN ('menu_items', 'restaurant_tables', 'order_items', 'cart_items')`,
+  );
+  const audit = new Map(auditRows.map((r) => [`${r.table_name}.${r.column_name}`, r.is_nullable]));
+  for (const col of [
+    "menu_items.created_at",
+    "menu_items.updated_at",
+    "restaurant_tables.created_at",
+    "restaurant_tables.updated_at",
+    "order_items.created_at",
+    "cart_items.updated_at",
+  ]) {
+    report(
+      `audit column ${col} NOT NULL`,
+      audit.get(col) === "NO",
+      audit.has(col) ? "nullable" : "missing",
+    );
+  }
+
+  // 5b. Price snapshot columns are NOT NULL with a 0 default.
+  const { rows: priceRows } = await q(
+    `SELECT table_name, column_name, is_nullable, column_default
+       FROM information_schema.columns
+      WHERE table_schema = 'public'
+        AND ((table_name = 'order_items' AND column_name = 'unit_price')
+          OR (table_name = 'orders'      AND column_name = 'total'))`,
+  );
+  const priceCol = new Map(priceRows.map((r) => [`${r.table_name}.${r.column_name}`, r]));
+  for (const col of ["order_items.unit_price", "orders.total"]) {
+    const row = priceCol.get(col);
+    report(`${col} NOT NULL DEFAULT 0`, row?.is_nullable === "NO" && /\b0\b/.test(row?.column_default ?? ""), row ? `nullable=${row.is_nullable} default=${row.column_default}` : "missing");
+  }
+
+  // 5c. Triggers attached where they must be.
+  const { rows: trigRows } = await q(
+    `SELECT tgname, relname FROM pg_trigger t
+       JOIN pg_class c ON c.oid = t.tgrelid
+      WHERE NOT t.tgisinternal AND c.relname = ANY($1)`,
+    [["orders", "menu_items", "restaurant_tables", "cart_items"]],
+  );
+  const triggers = new Set(trigRows.map((r) => `${r.relname}.${r.tgname}`));
+  for (const t of [
+    "orders.orders_status_transition",
+    "orders.orders_set_updated_at",
+    "menu_items.menu_items_set_updated_at",
+    "restaurant_tables.restaurant_tables_set_updated_at",
+    "cart_items.cart_items_set_updated_at",
+  ]) {
+    report(`trigger ${t}`, triggers.has(t));
+  }
+
+  // 5d. STATUS GUARD — an illegal jump must be rejected by the database, not
+  //     merely by app code. Done inside a rolled-back transaction so the real
+  //     data is never touched.
+  let illegalRejected = false;
+  let illegalDetail = "no error raised — UPDATE was accepted";
+  let legalAllowed = false;
+  try {
+    await q("BEGIN");
+    const { rows: mk } = await q(
+      `INSERT INTO orders (table_id, status)
+       VALUES ((SELECT id FROM restaurant_tables ORDER BY code LIMIT 1), 'pending')
+       RETURNING id`,
+    );
+    const probeId = mk[0].id;
+    // legal: pending → preparing
+    await q("UPDATE orders SET status = 'preparing' WHERE id = $1", [probeId]);
+    legalAllowed = true;
+    // illegal: preparing → pending (backwards). Use a savepoint so the error
+    // does not poison the outer transaction.
+    await q("SAVEPOINT s1");
+    try {
+      await q("UPDATE orders SET status = 'pending' WHERE id = $1", [probeId]);
+    } catch (err) {
+      illegalRejected = /illegal order status transition|check_violation/i.test(err.message);
+      illegalDetail = err.message;
+    }
+    await q("ROLLBACK TO SAVEPOINT s1");
+    await q("ROLLBACK");
+  } catch (err) {
+    await q("ROLLBACK").catch(() => {});
+    illegalDetail = err.message;
+  }
+  report("legal pending→preparing accepted", legalAllowed);
+  report("illegal preparing→pending rejected by trigger", illegalRejected, illegalDetail);
+
+  /* 5e. PRICE SNAPSHOT end-to-end inside a rolled-back transaction: fire a real
+     cart and prove the stored unit price is the menu price at fire time, then
+     re-price the dish and prove the ticket does NOT change. */
+  let snapshotOk = false;
+  let snapshotDetail = "not exercised";
+  try {
+    await q("BEGIN");
+    const { rows: pick } = await q(
+      `SELECT t.id AS table_id, t.code, mi.id AS menu_item_id, mi.price
+         FROM restaurant_tables t
+         CROSS JOIN LATERAL (
+           SELECT id, price FROM menu_items ORDER BY id LIMIT 1
+         ) mi
+        WHERE NOT EXISTS (
+          SELECT 1 FROM orders o
+           WHERE o.table_id = t.id AND o.status IN ('pending','preparing','ready')
+        )
+        ORDER BY t.code LIMIT 1`,
+    );
+    if (!pick[0]) {
+      snapshotDetail = "no idle table available";
+    } else {
+      const { table_id, code, menu_item_id, price } = pick[0];
+      await q("DELETE FROM cart_items WHERE table_id = $1", [table_id]);
+      await q(
+        "INSERT INTO cart_items (table_id, menu_item_id, quantity) VALUES ($1, $2, 2)",
+        [table_id, menu_item_id],
+      );
+      const { rows: fire } = await q("SELECT fire_order($1) AS r", [code]);
+      const fired = fire[0].r;
+      const { rows: line } = await q(
+        "SELECT unit_price FROM order_items WHERE order_id = $1",
+        [fired.order_id],
+      );
+      const { rows: ord } = await q("SELECT total FROM orders WHERE id = $1", [fired.order_id]);
+      const expected = Number(price) * 2;
+      const got = Number(line[0]?.unit_price);
+      const total = Number(ord[0]?.total);
+      // Re-price the dish AFTER firing — the ticket must not follow.
+      await q("UPDATE menu_items SET price = price + 100 WHERE id = $1", [menu_item_id]);
+      const { rows: after } = await q(
+        "SELECT unit_price FROM order_items WHERE order_id = $1",
+        [fired.order_id],
+      );
+      snapshotOk =
+        fired.code === "OK" &&
+        got === Number(price) &&
+        Number(after[0]?.unit_price) === got &&
+        total === expected;
+      snapshotDetail = `charged ${got} (menu ${price}), total ${total} (expected ${expected}), after re-price ${after[0]?.unit_price}`;
+    }
+    await q("ROLLBACK");
+  } catch (err) {
+    await q("ROLLBACK").catch(() => {});
+    snapshotDetail = err.message;
+  }
+  report("fire_order snapshots price & freezes total", snapshotOk, snapshotDetail);
+
+  // ------------------------------------------------------------------- 6. seed
+  section("6. Seed data");
 
   const { rows: seedRows } = await q(`
     SELECT

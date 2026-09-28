@@ -20,6 +20,8 @@ export interface FloorTable {
       quantity: number;
       request_note: string;
       allergy_note: string;
+      /** Frozen at fire time — see sql/004_hardening.sql. */
+      unit_price: number;
     }>;
   } | null;
   cart_line_count: number;
@@ -58,7 +60,9 @@ export async function listFloorTables(params: {
                                       'name',         mi.name,
                                       'quantity',     oi.quantity,
                                       'request_note', oi.request_note,
-                                      'allergy_note', oi.allergy_note
+                                      'allergy_note', oi.allergy_note,
+                                      -- price charged at fire time (sql/004_hardening.sql)
+                                      'unit_price',   oi.unit_price
                                     )
                                     ORDER BY oi.id
                                   )

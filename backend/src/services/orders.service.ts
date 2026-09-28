@@ -112,7 +112,11 @@ export interface OrderListItem {
     quantity: number;
     request_note: string;
     allergy_note: string;
+    /** Frozen at fire time — see sql/004_hardening.sql. */
+    unit_price: number;
   }>;
+  /** Bill frozen at fire time (sql/004_hardening.sql). */
+  total: number;
 }
 
 /* E16 — GET /api/v1/orders?table_token=… (tracker bootstrap + history). */
@@ -140,12 +144,14 @@ export async function listOrders(params: {
     table_id: string;
     status: string;
     created_at: Date;
+    total: string;
     items: OrderListItem["items"];
   }>(
     `SELECT o.id AS order_id,
             o.table_id,
             o.status,
             o.created_at,
+            o.total,
             COALESCE(
               (
                 SELECT jsonb_agg(
@@ -154,7 +160,11 @@ export async function listOrders(params: {
                            'name',         mi.name,
                            'quantity',      oi.quantity,
                            'request_note',  oi.request_note,
-                           'allergy_note',  oi.allergy_note
+                           'allergy_note',  oi.allergy_note,
+                           -- price CHARGED at fire time, not today's menu
+                           -- price: a re-priced dish must not rewrite an
+                           -- old ticket's bill (sql/004_hardening.sql)
+                           'unit_price',    oi.unit_price
                          )
                          ORDER BY oi.id
                        )
@@ -176,6 +186,7 @@ export async function listOrders(params: {
     table_id: row.table_id,
     status: row.status,
     created_at: iso(row.created_at),
+    total: Number(row.total ?? 0),
     items: row.items ?? [],
   }));
 

@@ -587,6 +587,7 @@ On `INVENTORY_FAILURE` the sold-out lines are purged from `cart_items` inside th
           "menu_item_id": "a1b2c3d4-e5f6-7a8b-9c0d-1e2f3a4b5c6d",
           "name": "Masala Dosa",
           "quantity": 2,
+          "unit_price": 130,
           "request_note": "Extra butter",
           "allergy_note": "NO PEANUTS - SEVERE"
         },
@@ -594,6 +595,7 @@ On `INVENTORY_FAILURE` the sold-out lines are purged from `cart_items` inside th
           "menu_item_id": "3c7d2e19-5b48-4f6a-9d21-8e6c0a7f4b12",
           "name": "Hyderabadi Biryani",
           "quantity": 1,
+          "unit_price": 220,
           "request_note": "",
           "allergy_note": ""
         }
@@ -603,7 +605,7 @@ On `INVENTORY_FAILURE` the sold-out lines are purged from `cart_items` inside th
   "meta": { "page": 1, "limit": 20, "total": 3, "total_pages": 1 }
 }
 ```
-`items[].name` is the live join to `menu_items.name` (v1's `item_name`); `allergy_note` is always rendered bold red on the card while `request_note` stays normal text.
+`items[].name` is the live join to `menu_items.name` (v1's `item_name`); `allergy_note` is always rendered bold red on the card while `request_note` stays normal text. `items[].unit_price` is the price **charged at fire time** (`sql/004_hardening.sql`), not today's menu price — a re-priced dish must never rewrite an old ticket's bill.
 
 **Errors:** `400 VALIDATION_ERROR` (bad `status`/pagination) · `401 UNAUTHORIZED` · `500 INTERNAL_ERROR`
 
@@ -769,11 +771,13 @@ Clients map `pending` → grey, `preparing` → amber, `ready` → full-screen g
       "table_id": "8c3b9b4f-8012-4f35-90d1-0f796d11f181",
       "status": "preparing",
       "created_at": "2026-09-27T21:35:00Z",
+      "total": 260,
       "items": [
         {
           "menu_item_id": "a1b2c3d4-e5f6-7a8b-9c0d-1e2f3a4b5c6d",
           "name": "Masala Dosa",
           "quantity": 2,
+          "unit_price": 130,
           "request_note": "Extra butter",
           "allergy_note": "NO PEANUTS - SEVERE"
         }
@@ -783,6 +787,7 @@ Clients map `pending` → grey, `preparing` → amber, `ready` → full-screen g
   "meta": { "page": 1, "limit": 20, "total": 5, "total_pages": 1 }
 }
 ```
+**v2.1 addition — `total` and `items[].unit_price`.** The bill is **frozen at fire time** by `fire_order()` (`sql/004_hardening.sql`): `total` is `sum(quantity × unit_price)` as charged, and each `unit_price` is the menu price at the instant the ticket was fired. Both are unaffected by a later menu edit (`unit_price` is a live join only for `name`). Additive — consumers that ignore the fields are unaffected.
 
 **Errors:** `400 VALIDATION_ERROR` · `404 TABLE_NOT_FOUND` · `500 INTERNAL_ERROR`
 
@@ -812,6 +817,7 @@ Clients map `pending` → grey, `preparing` → amber, `ready` → full-screen g
             "menu_item_id": "a1b2c3d4-e5f6-7a8b-9c0d-1e2f3a4b5c6d",
             "name": "Masala Dosa",
             "quantity": 2,
+            "unit_price": 130,
             "request_note": "Extra butter",
             "allergy_note": "NO PEANUTS - SEVERE"
           }
@@ -949,8 +955,8 @@ The API above is field-exact against `docs/2` **except** for the following colum
 | `cart_items` | `added_by` | `text not null default 'Guest'` | E4–E6; S2 wireframe "Added by Amit" (`docs/5`) |
 | `menu_items` | `description` | `text` | S1 rows, existing `MenuItem` type |
 | `menu_items` | `vegetarian` | `boolean not null default true` | S1 veg/non-veg mark, existing `MenuItem` type |
-| `orders` | `updated_at` | `timestamptz not null default now()` (recommended) | audit + deterministic Realtime ordering |
-| `cart_items` | `created_at` | `timestamptz not null default now()` (recommended) | stable oldest-first ordering + offset pagination for E4 |
-| `order_items` | *(recommendation, v2+)* snapshot `item_name` / `item_price` at fire time | — | Today E10/E16 join `menu_items.name` live; if a dish is renamed or re-priced after firing, historical tickets change under the kitchen's eyes. MVP accepts the join; snapshot columns are the v2 fix. |
+| `orders` | `updated_at` | `timestamptz not null default now()` (recommended) | ✅ **applied** — `004_hardening.sql`, maintained by the shared `set_updated_at()` trigger |
+| `cart_items` | `created_at` | `timestamptz not null default now()` (recommended) | ✅ **applied**; `cart_items.updated_at` was added too |
+| `order_items` | snapshot `item_price` at fire time | `unit_price numeric(10,2) not null default 0` | ✅ **applied** — `004_hardening.sql` writes it from `menu_items.price` inside `fire_order()`, and freezes `orders.total` with it (returned by E10/E16/E17). `item_name` is deliberately **not** snapshotted: a rename showing through on an old ticket is harmless, whereas a re-price is not. |
 
 Enum casing note: `docs/7` v1 used `Pending/Preparing/Ready/Served`. The blueprint (`docs/2`) and the shipped frontend (`lib/api/types.ts`) both use lowercase — v2 standardizes on lowercase everywhere, including `active/empty`.

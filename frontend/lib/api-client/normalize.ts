@@ -109,7 +109,9 @@ function toOrderItems(orderId: string, items: OrderItemLine[]): OrderItem[] {
     order_id: orderId,
     menu_item_id: item.menu_item_id,
     name: item.name,
-    price: 0,
+    // The price CHARGED at fire time (sql/004_hardening.sql), not today's
+    // menu price. Falls back to 0 for any payload that predates the column.
+    price: item.unit_price ?? 0,
     quantity: item.quantity,
     request_note: item.request_note,
     allergy_note: item.allergy_note,
@@ -133,9 +135,9 @@ export function toOrder(
 }
 
 /** E17 floor row → the UI's FloorTableSummary, so the floor screen keeps its
-    existing markup while reading live data. Mirrors toOrder/toKdsOrder:
-    `price` is not part of the floor payload, so it is 0 — the floor card
-    shows pacing and allergies, never money. */
+    existing markup while reading live data. Mirrors toOrder/toKdsOrder: items
+    carry the fire-time `unit_price`, though the floor card itself shows pacing
+    and allergies, never money. */
 export function toFloorSummary(row: FloorTableResponse): FloorTableSummary {
   return {
     table: { id: row.table_id, code: row.code, name: row.name },

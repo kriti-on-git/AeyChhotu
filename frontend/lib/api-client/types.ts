@@ -104,13 +104,17 @@ export interface SessionIdentity {
   source: "header" | "cookie";
 }
 
-/** Order line as embedded in E10 tickets / E16 history (name joined live). */
+/** Order line as embedded in E17 floor rows / E10 tickets / E16 history.
+    `name` is joined LIVE from menu_items (a rename shows through), while
+    `unit_price` is the price CHARGED at fire time — a re-priced dish must
+    never rewrite an old ticket's bill. */
 export interface OrderItemLine {
   menu_item_id: string;
   name: string;
   quantity: number;
   request_note: string;
   allergy_note: string;
+  unit_price?: number;
 }
 
 /** E8 — fired order (201). */
@@ -136,6 +140,8 @@ export interface OrderHistoryItem {
   table_id: string;
   status: OrderStatus;
   created_at: string;
+  /** Bill frozen at fire time (sql/004_hardening.sql). */
+  total?: number;
   items: OrderItemLine[];
 }
 
@@ -188,7 +194,7 @@ export interface FloorActiveOrder {
   order_id: string;
   status: ActiveOrderStatus;
   created_at: string;
-  items: OrderItemLine[];
+  items?: OrderItemLine[];
 }
 
 export interface FloorTable {

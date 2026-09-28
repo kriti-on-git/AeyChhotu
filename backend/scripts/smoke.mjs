@@ -299,6 +299,14 @@ try {
     check("E10 board contains the fired ticket", Boolean(ticket));
     check("E10 ticket joins the table code", ticket?.table?.code === TABLE_TOKEN);
     check("E10 ticket carries the allergy note", ticket?.items?.[0]?.allergy_note === "NO PEANUTS - SMOKE TEST");
+
+    // PRICE SNAPSHOT (sql/004_hardening.sql): the ticket must carry the price
+    // charged at fire time, not a hardcoded 0 and not a later menu edit.
+    check(
+      "E10 ticket carries the fire-time unit price",
+      ticket?.items?.[0]?.unit_price === target.price,
+      `got ${ticket?.items?.[0]?.unit_price} expected ${target.price}`,
+    );
   }
 
   {
@@ -359,6 +367,21 @@ try {
     const history = await api(`/api/v1/orders?table_token=${TABLE_TOKEN}&limit=100`);
     check("E16 history contains the served order", (history.body?.data ?? []).some((o) => o.order_id === orderId));
     check("E16 newest-first ordering", (history.body?.data?.[0]?.order_id ?? null) === orderId);
+
+    // The frozen bill must survive on history too, and equal quantity × the
+    // charged unit price (2 + 1 merged + 2 delta = qty 5 in this run).
+    const hist = (history.body?.data ?? []).find((o) => o.order_id === orderId);
+    const histLine = hist?.items?.[0];
+    check(
+      "E16 history carries the fire-time unit price",
+      histLine?.unit_price === target.price,
+      `got ${histLine?.unit_price} expected ${target.price}`,
+    );
+    check(
+      "E16 frozen total equals qty x unit price",
+      hist?.total === (histLine?.quantity ?? 0) * target.price,
+      `got total ${hist?.total} for qty ${histLine?.quantity} @ ${target.price}`,
+    );
 
     const shift = await api("/api/v1/kds/shift/activate", {
       method: "POST",
