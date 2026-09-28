@@ -40,17 +40,31 @@ The free path is **deployed and verified** — Vercel + Render + Supabase, no co
 > **15 minutes** with no inbound traffic (HTTP requests *or* WebSocket messages), and waking it takes
 > **~1 minute**. Both apps handle it: the client surfaces *"Serving line taking a moment to spin up,
 > please try again!"*, and the production demo-fallback gate means it will **not** quietly serve seeded
-> dishes instead. To keep it awake for a demo, run the built-in **bounded** pinger — 3 hours by default,
-> then it stops on its own, so you spend instance hours only for the window you asked for:
->
-> ```bash
-> cd backend && npm run keep-alive -- https://aeychhotu-api-bkp8.onrender.com
-> ```
->
+> dishes instead.
+
+### ⏰ Keeping the API awake for a demo
+
+Run this **once** — it holds the API awake for **3 hours**, then stops by itself, so you spend instance
+hours only for the window you asked for:
+
+```bash
+cd backend && npm run keep-alive -- https://aeychhotu-api-bkp8.onrender.com
+```
+
+To keep it running after you close the terminal:
+
+```bash
+cd backend && nohup npm run keep-alive -- https://aeychhotu-api-bkp8.onrender.com > /tmp/aeychhotu-keepalive.log 2>&1 &
+```
+
+Tune the window with `KEEP_ALIVE_HOURS` (default `3`) and `KEEP_ALIVE_INTERVAL_MIN` (default `10`).
+Leaving the **`/floor`** screen open also works — it polls every 15 s unconditionally. `/kitchen` and the
+diner screens do **not**: with Realtime healthy their updates arrive over Supabase WebSockets, which
+never touch Render.
+
 > Budget note: Render grants **750 Free instance hours per workspace per month**, and one always-on
 > service costs up to 744 h — so a 24/7 pinger leaves no margin and fits **only if that is the only Free
-> web service you run**. Tuning vars, the detached form, and the zero-setup `/floor` trick are in
-> [`docs/11-deploy.md`](docs/11-deploy.md) §4.
+> web service you run.** Full detail in [`docs/11-deploy.md`](docs/11-deploy.md) §4.
 
 ---
 
