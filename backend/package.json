@@ -16,7 +16,8 @@
     "db:setup": "node scripts/db-setup.mjs",
     "db:setup:noseed": "node scripts/db-setup.mjs --no-seed",
     "db:verify": "node scripts/db-verify.mjs",
-    "smoke": "node scripts/smoke.mjs"
+    "smoke": "node scripts/smoke.mjs",
+    "keep-alive": "node scripts/keep-alive.mjs"
   },
   "dependencies": {
     "cors": "2.8.6",

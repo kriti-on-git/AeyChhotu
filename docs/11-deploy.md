@@ -120,6 +120,38 @@ https://<your-render-service-url>/api/v1/ready
 
 every 5–10 minutes.
 
+### The bounded option: awake for exactly as long as you need
+
+A permanent pinger is the wrong shape — see the hours math below — so the repo ships a script that
+buys a **fixed window** instead:
+
+```bash
+cd backend
+
+# default: 3 hours, a ping every 10 minutes, then it stops by itself
+npm run keep-alive -- https://<your-render-service-url>
+
+# tune the window
+KEEP_ALIVE_HOURS=2 KEEP_ALIVE_INTERVAL_MIN=12 npm run keep-alive -- https://<your-render-service-url>
+```
+
+It hits `/api/v1/ready` — a real `SELECT 1`, so every ping also proves the database link — and it
+**refuses an interval of 15 minutes or more**, because that would let the service fall asleep between
+pings. Ctrl-C stops it early and prints a summary.
+
+Closing the terminal kills it with the terminal. For a genuinely hands-off window, detach it:
+
+```bash
+cd backend
+nohup npm run keep-alive -- https://<your-render-service-url> > /tmp/aeychhotu-keepalive.log 2>&1 &
+```
+
+**No third-party service is needed at all** if you are presenting: leaving the **`/floor`** screen open
+in a tab also holds the API awake, because `use-live-floor.ts` polls it every 15 seconds
+unconditionally. Note that `/kitchen` and the diner screens do **not** — with Realtime healthy their
+updates arrive over Supabase WebSockets, which never touch Render, so an idle kitchen board generates
+zero inbound traffic and the API still sleeps.
+
 Render grants **750 free instance hours per workspace per calendar month**, and one always-on service
 costs at most 744 h in a 31-day month — so this fits, **but only if that free service is the only one
 you run.** Run a second free web service and the hours run out mid-month, at which point Render
