@@ -1,0 +1,71 @@
+# =====================================================================
+# AeyChhotu! — Render Blueprint (free tier).
+#
+# Defines ONE free web service for the Express API. The Next.js app is
+# deployed on Vercel (see docs/11-deploy.md); the database is Supabase and
+# is not provisioned here.
+#
+# Why a Blueprint instead of clicking the dashboard: the four settings
+# that are easy to get wrong are pinned in version control —
+#   * rootDir: backend          (repo is a monorepo; Render builds from the
+#                                service's root directory)
+#   * buildCommand --include=dev (NODE_ENV=production is set below, and npm
+#                                would otherwise skip devDependencies — which
+#                                is where `tsc` lives, so the build would
+#                                fail with "tsc: not found")
+#   * healthCheckPath /api/v1/ready (a real Postgres ping, so Render only
+#                                promotes the deploy once the DB answers)
+#   * COOKIE_SAME_SITE=none     (frontend and API are on different sites)
+#
+# Values marked `sync: false` are secrets: Render prompts for them on the
+# first Blueprint sync and never reads them from git.
+# =====================================================================
+
+services:
+  - type: web
+    name: aeychhotu-api
+    runtime: node
+    plan: free
+    # Pick the region closest to your Supabase project (and your diners).
+    # One of: oregon (default) | ohio | virginia | frankfurt | singapore
+    region: oregon
+    # The repo is a monorepo — this is the API app, not the repo root.
+    rootDir: backend
+    # NODE_ENV=production is set below and also applies to the BUILD, where
+    # npm would drop devDependencies (typescript/tsc). --include=dev puts
+    # them back so `tsc -p tsconfig.json` can actually run.
+    buildCommand: npm ci --include=dev && npm run build
+    startCommand: npm start
+    healthCheckPath: /api/v1/ready
+    # Continuous deployment: every push to the linked branch redeploys.
+    autoDeployTrigger: commit
+    envVars:
+      # Must match .nvmrc (22). Render reads .nvmrc/.node-version from the
+      # service's root directory, so at rootDir=backend it would not see
+      # the repo-root .nvmrc — set it explicitly instead.
+      - key: NODE_VERSION
+        value: "22"
+      # production ⇒ Secure cookie flag + HSTS (see src/config/env.ts).
+      - key: NODE_ENV
+        value: production
+      # Frontend (Vercel) and API (Render) are different sites, so the
+      # httpOnly kds_token cookie needs SameSite=None. env.ts forces
+      # `Secure` automatically for this combination.
+      - key: COOKIE_SAME_SITE
+        value: none
+      # CORS allow-list. Exact origins, comma-separated, no trailing slash.
+      # Start with localhost, then add the Vercel URL after step 2.
+      - key: CLIENT_URL
+        sync: false
+      # Supabase → Connect → "Session pooler" URI (IPv4-resolvable).
+      # The direct db.<ref>.supabase.co host is IPv6-only now, and Render
+      # egress is IPv4 — the pooler is the connection string that works.
+      - key: DATABASE_URL
+        sync: false
+      - key: STAFF_PIN
+        sync: false
+      - key: KDS_TOKEN_SECRET
+        sync: false
+      # Optional: without it the app runs REST-only (no Realtime).
+      - key: SUPABASE_JWT_SECRET
+        sync: false

@@ -1,0 +1,171 @@
+# 11 · Free deployment
+
+**Goal:** the app live on the public internet for **$0**, with **push-to-deploy** on both apps so a
+frontend tweak goes live in about a minute.
+
+| Piece | Host | Plan | Why this one |
+|---|---|---|---|
+| Next.js frontend | **Vercel** | Hobby (free) | Built for Next.js; every push to `main` redeploys automatically |
+| Express API | **Render** | Free web service | Still card-free in 2026; supports a monorepo root directory and an HTTP health-check path |
+| Postgres + Realtime | **Supabase** | Free | Already set up (`npm run db:setup`) |
+
+Two things this guide is honest about up front:
+
+- **The free API sleeps.** Render spins a free web service down after 15 minutes without traffic and
+  takes ~1 minute to wake it. Your API client already handles it: the 20 s timeout surfaces
+  *"Serving line taking a moment to spin up, please try again!"*, and the production demo-fallback
+  gate means it will **not** quietly serve seeded dishes instead. §4 removes the cold start for free.
+- **Neither free tier is a production plan.** Render's docs say free instances are not for production,
+  and Vercel's Hobby plan is **non-commercial only**. That is fine for a demo, QA, or a
+  portfolio — a restaurant actually paying you needs ~$5–25/month (see §7).
+
+---
+
+## 1 · Backend on Render (do this first)
+
+1. Sign up at <https://dashboard.render.com/register> with **GitHub** (no credit card for free
+   instances).
+2. **New +** → **Blueprint** → connect `kriti-on-git/AeyChhotu`.
+3. Render reads [`render.yaml`](../render.yaml) and shows one service, `aeychhotu-api`. It prompts for
+   the five `sync: false` values:
+
+   | Key | Value |
+   |---|---|
+   | `CLIENT_URL` | `http://localhost:3000` for now — replaced in §3 (comma-separate to keep both) |
+   | `DATABASE_URL` | Supabase → **Connect** → **Session pooler** URI (`aws-0-<region>.pooler.supabase.com:5432`). **Not** the direct `db.<ref>.supabase.co` host — that one is IPv6-only and Render's egress is IPv4 |
+   | `STAFF_PIN` | same as local |
+   | `KDS_TOKEN_SECRET` | same as local |
+   | `SUPABASE_JWT_SECRET` | same as local (omit/blank ⇒ REST-only, no Realtime) |
+
+4. **Apply** → first build (~2–3 min).
+
+The deploy is only promoted to live after `GET /api/v1/ready` returns 200. That probe runs a real
+`SELECT 1` against Postgres, so **a green deploy proves the database credentials work** — if it stays
+unhealthy, the `DATABASE_URL` is the thing to fix, not the app.
+
+Your API is now at `https://aeychhotu-api.onrender.com` (the name from the Blueprint).
+
+### Why the Blueprint matters
+
+It pins the four settings that are easy to get wrong by hand:
+
+- `rootDir: backend` — the repo is a monorepo, so the API must build from its own directory.
+- `npm ci --include=dev && npm run build` — `NODE_ENV=production` also applies at build time, where
+  npm would normally skip devDependencies. `tsc` lives there, so without `--include=dev` the build
+  fails with `tsc: not found`.
+- `healthCheckPath: /api/v1/ready` — the readiness probe, not liveness.
+- `COOKIE_SAME_SITE=none` — frontend and API are on different sites; `env.ts` forces `Secure` for it.
+
+---
+
+## 2 · Frontend on Vercel
+
+1. Sign up at <https://vercel.com/signup> → **Continue with GitHub**.
+2. **Add New → Project** → import `kriti-on-git/AeyChhotu`.
+3. Set **Root Directory** to `frontend` (Edit → Root Directory). Framework auto-detects Next.js.
+4. **Environment Variables** (tick Production *and* Preview):
+
+   | Key | Value |
+   |---|---|
+   | `NEXT_PUBLIC_API_URL` | `https://aeychhotu-api.onrender.com` — no trailing slash |
+   | `NEXT_PUBLIC_SUPABASE_URL` | `https://aqqexhkvidoykdlthwfj.supabase.co` |
+   | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | your public anon key |
+
+   Leave `NEXT_PUBLIC_ENABLE_DEMO_FALLBACK` **unset** — a production build must never render seeded
+   data as real orders.
+
+5. **Deploy** → note the URL, `https://<something>.vercel.app`.
+
+---
+
+## 3 · Close the CORS loop (~30 s)
+
+Render → `aeychhotu-api` → **Environment** → set:
+
+```
+CLIENT_URL=https://<your-vercel-url>,http://localhost:3000
+```
+
+Save. Render redeploys the service automatically — **no code change, no rebuild of the frontend.**
+Without this the browser blocks every API call (the allow-list is exact-match, `credentials: true`,
+so a wildcard is impossible by design).
+
+---
+
+## 4 · Optional: keep the free API awake
+
+The cold start is mostly cosmetic — the client's "spin up" message covers it — but you can remove it
+for free with any uptime pinger (UptimeRobot's free tier, cron-job.org, …) pointed at:
+
+```
+https://aeychhotu-api.onrender.com/api/v1/ready
+```
+
+every 5–10 minutes.
+
+Render grants **750 free instance hours per workspace per calendar month**, and one always-on service
+costs at most 744 h in a 31-day month — so this fits, **but only if that free service is the only one
+you run.** Run a second free web service and the hours run out mid-month, at which point Render
+suspends all of them until the 1st.
+
+---
+
+## 5 · Verify
+
+```bash
+API=https://aeychhotu-api.onrender.com
+WEB=https://<your-vercel-url>
+
+curl -s $API/api/v1/health
+curl -s -o /dev/null -w '%{http_code}\n' $API/api/v1/ready          # 200
+
+# CORS preflight for the deployed frontend
+curl -si -X OPTIONS $API/api/v1/menu \
+  -H "Origin: $WEB" -H "Access-Control-Request-Method: GET" | grep -i access-control
+
+# Cross-site cookie flags (expect SameSite=None; Secure; HttpOnly)
+curl -si -X POST $API/api/v1/auth/kds-login \
+  -H 'Content-Type: application/json' -H "Origin: $WEB" \
+  -d '{"pin":"<your STAFF_PIN>"}' | grep -i set-cookie
+```
+
+Then walk the real surfaces in a browser: `$WEB/table/k7x2p` → fire an order → `$WEB/kitchen` (PIN) →
+move it through `pending → preparing → ready`, and watch `$WEB/table/k7x2p/tracker` update live.
+
+If Realtime stays silent, check the three-way requirement: both `NEXT_PUBLIC_SUPABASE_*` in Vercel
+**and** `SUPABASE_JWT_SECRET` in Render. Missing either one degrades to REST + 5 s polling by design.
+
+---
+
+## 6 · Everyday workflow: push to deploy
+
+Both services watch `main`. To ship a change:
+
+```bash
+git add -A
+git commit -m "…"
+git push            # Vercel ~1 min · Render ~2–3 min (runs npm ci && npm run build)
+```
+
+**The one thing to remember:** `NEXT_PUBLIC_*` values are inlined into the frontend at **build** time.
+If the API URL ever changes, update `NEXT_PUBLIC_API_URL` in Vercel, update `CLIENT_URL` in Render,
+and **redeploy the frontend** — editing environment variables alone will not update an already-built
+bundle.
+
+Vercel **preview** deployments get a fresh generated URL per branch, which will not be in the API's
+allow-list, so their API calls fail CORS until you temporarily add that origin to `CLIENT_URL`.
+Test on the production URL, or add the preview origin when you need it.
+
+---
+
+## 7 · When free is no longer enough
+
+| Symptom | Fix |
+|---|---|
+| Cold starts are unacceptable during service | Render → API → plan `0.5c-512mb` (~$7/mo), or any always-on host |
+| Both apps need to be commercial | Vercel → Pro ($20/mo) |
+| Realtime must not depend on optional env | Set `SUPABASE_JWT_SECRET` and assert it with `npm run realtime:check` |
+
+Nothing in the codebase changes for any of these — the app was built for both hosting shapes
+(same-site and cross-site), which is why `CLIENT_URL`, `COOKIE_SAME_SITE` and `credentials: include`
+already exist.

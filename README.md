@@ -351,6 +351,7 @@ transform/opacity-only animations, and `useReducedMotion` respected everywhere.
 .
 ├── README.md                  ← you are here
 ├── .gitignore                 ← repo-wide: secrets, logs, build output, noise
+├── render.yaml                ← free hosting Blueprint for the API (docs/11-deploy.md)
 ├── .github/workflows/ci.yml   ← typecheck · lint · build + schema/contract suites
 ├── backend/                   ← Express REST API (owns all writes)
 │   ├── sql/
@@ -382,7 +383,7 @@ transform/opacity-only animations, and `useReducedMotion` respected everywhere.
 │   │   └── api/               ← offline demo store (fallback only)
 │   ├── .env.example
 │   └── package.json
-└── docs/                      ← 10 design + engineering documents (source of truth)
+└── docs/                      ← 11 design + engineering documents (source of truth)
 ```
 
 ---
@@ -447,6 +448,9 @@ cd frontend && npm run dev        # → http://localhost:3000
 | Kitchen board | <http://localhost:3000/kitchen> | `STAFF_PIN` (example `1234`) |
 | Floor view | <http://localhost:3000/floor> | `STAFF_PIN` |
 | API liveness | <http://localhost:4000/api/v1/health> | none |
+
+**Going live:** [`docs/11-deploy.md`](docs/11-deploy.md) walks the free path — Next.js on Vercel, the API on
+Render, Postgres on Supabase — with push-to-deploy on both apps. No code changes required.
 
 ---
 
@@ -652,6 +656,7 @@ Full engineering detail lives in the [docs index](#-documentation-index) — esp
 | [`docs/8-backend-report.md`](docs/8-backend-report.md) | Backend build + live endpoint verification |
 | [`docs/9-integration-report.md`](docs/9-integration-report.md) | Frontend ↔ API integration report, 18/18 smoke |
 | [`docs/10-db-report.md`](docs/10-db-report.md) | Senior-DB review: rules → constraints, indexes, hygiene audit |
+| [`docs/11-deploy.md`](docs/11-deploy.md) | Free deployment: Vercel + Render + Supabase, push-to-deploy, verification |
 
 ---
 
