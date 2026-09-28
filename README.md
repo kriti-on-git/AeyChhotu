@@ -24,8 +24,33 @@ hardening assertions, **69/69** contract checks, both apps green on typecheck ·
 
 ---
 
+## 🌍 Live deployment
+
+The free path is **deployed and verified** — Vercel + Render + Supabase, no code changes required.
+
+| Surface | URL | Credential |
+|---|---|---|
+| Diner menu · live shared cart | <https://aeychhotu.vercel.app/table/k7x2p> | none |
+| Order tracker | <https://aeychhotu.vercel.app/table/k7x2p/tracker> | none |
+| Kitchen board (KDS) | <https://aeychhotu.vercel.app/kitchen> | `STAFF_PIN` |
+| Floor view | <https://aeychhotu.vercel.app/floor> | `STAFF_PIN` |
+| REST API | <https://aeychhotu-api-bkp8.onrender.com> | — |
+
+> ⏰ **The free API sleeps — plan around it for a demo.** Render spins a Free web service down after
+> **15 minutes** with no inbound traffic (HTTP requests *or* WebSocket messages), and waking it takes
+> **~1 minute**. Both apps handle it: the client surfaces *"Serving line taking a moment to spin up,
+> please try again!"*, and the production demo-fallback gate means it will **not** quietly serve seeded
+> dishes instead. To keep the lights on, touch the app at least once every 15 minutes — or point a free
+> uptime pinger at `…/api/v1/ready` (see [`docs/11-deploy.md`](docs/11-deploy.md) §4).
+>
+> Note the budget: Render grants **750 Free instance hours per workspace per month**, and one always-on
+> service costs up to 744 h — so a pinger fits **only if that is the only Free web service you run**.
+
+---
+
 ## 📖 Table of contents
 
+- [Live deployment](#-live-deployment)
 - [The problem](#-the-problem)
 - [Core features](#-core-features)
 - [Who it is for](#-who-it-is-for)
@@ -449,8 +474,10 @@ cd frontend && npm run dev        # → http://localhost:3000
 | Floor view | <http://localhost:3000/floor> | `STAFF_PIN` |
 | API liveness | <http://localhost:4000/api/v1/health> | none |
 
-**Going live:** [`docs/11-deploy.md`](docs/11-deploy.md) walks the free path — Next.js on Vercel, the API on
-Render, Postgres on Supabase — with push-to-deploy on both apps. No code changes required.
+**Going live:** the free path (Next.js on Vercel · API on Render · Postgres on Supabase) is **already
+deployed** — see [Live deployment](#-live-deployment). [`docs/11-deploy.md`](docs/11-deploy.md) is the
+step-by-step record, including the CORS round-trip, the sleep/cold-start caveat and the verification
+commands. Both apps are push-to-deploy on `main`.
 
 ---
 
@@ -580,6 +607,7 @@ Everything below was run and is green on the current tree:
 | Production fallback gate | `next build && next start` | ✅ dev-only login route returns `404` in prod; pages serve `200` |
 | **Realtime end-to-end** | `cd frontend && npm run realtime:check` | ✅ **12/12** — token acceptance, delivery, RLS scoping, Presence |
 | **Floor view in a browser** | `cd frontend && npm run check:floor` | ✅ **11/11** — headless Chrome over CDP: gate holds, live board renders, allergy alert reaches the card |
+| **Deployed stack (live)** | CORS preflight + E1→E17 against Vercel + Render | ✅ **27/27** — the real diner→kitchen→tracker journey on the hosted URLs, incl. cross-site cookie flags and the Realtime token |
 | Suites are idempotent | `npm run smoke` twice in a row | ✅ **69/69** both times (pre-flight reset) |
 | CI | [`.github/workflows/ci.yml`](.github/workflows/ci.yml) | ✅ 3 jobs — typecheck · lint · build, schema verify + smoke against Postgres 17, and the browser E2E for the floor view |
 

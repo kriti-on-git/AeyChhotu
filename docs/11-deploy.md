@@ -9,6 +9,11 @@ frontend tweak goes live in about a minute.
 | Express API | **Render** | Free web service | Still card-free in 2026; supports a monorepo root directory and an HTTP health-check path |
 | Postgres + Realtime | **Supabase** | Free | Already set up (`npm run db:setup`) |
 
+> **✅ Live now.** This guide was followed end to end and the result was verified:</
+> frontend on <https://aeychhotu.vercel.app>, API on
+> <https://aeychhotu-api-bkp8.onrender.com>, Postgres on Supabase. §5 records exactly what was
+> checked and how.
+
 Two things this guide is honest about up front:
 
 - **The free API sleeps.** Render spins a free web service down after 15 minutes without traffic and
@@ -29,6 +34,11 @@ Two things this guide is honest about up front:
 3. Render reads [`render.yaml`](../render.yaml) and shows one service, `aeychhotu-api`. It prompts for
    the five `sync: false` values:
 
+   > **Naming note:** Render makes the `onrender.com` subdomain globally unique. If the plain name
+   > `aeychhotu-api` is already taken it appends a random suffix, so the *service name* and the
+   > *hostname* can differ — e.g. the live example below is `aeychhotu-api-bkp8.onrender.com`.
+   > Whatever the dashboard shows as the service URL is the one to use everywhere in this guide.
+
    | Key | Value |
    |---|---|
    | `CLIENT_URL` | `http://localhost:3000` for now — replaced in §3 (comma-separate to keep both) |
@@ -43,7 +53,8 @@ The deploy is only promoted to live after `GET /api/v1/ready` returns 200. That 
 `SELECT 1` against Postgres, so **a green deploy proves the database credentials work** — if it stays
 unhealthy, the `DATABASE_URL` is the thing to fix, not the app.
 
-Your API is now at `https://aeychhotu-api.onrender.com` (the name from the Blueprint).
+Your API is now at its Render URL — the Blueprint name gives `https://aeychhotu-api.onrender.com`,
+but a taken name yields a suffixed host instead (the live example: `https://aeychhotu-api-bkp8.onrender.com`).
 
 ### Why the Blueprint matters
 
@@ -67,7 +78,7 @@ It pins the four settings that are easy to get wrong by hand:
 
    | Key | Value |
    |---|---|
-   | `NEXT_PUBLIC_API_URL` | `https://aeychhotu-api.onrender.com` — no trailing slash |
+   | `NEXT_PUBLIC_API_URL` | your Render service URL, e.g. `https://aeychhotu-api-bkp8.onrender.com` — no trailing slash |
    | `NEXT_PUBLIC_SUPABASE_URL` | `https://aqqexhkvidoykdlthwfj.supabase.co` |
    | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | your public anon key |
 
@@ -80,7 +91,7 @@ It pins the four settings that are easy to get wrong by hand:
 
 ## 3 · Close the CORS loop (~30 s)
 
-Render → `aeychhotu-api` → **Environment** → set:
+Render → your service (`aeychhotu-api`, or the suffixed name Render assigned) → **Environment** → set:
 
 ```
 CLIENT_URL=https://<your-vercel-url>,http://localhost:3000
@@ -94,11 +105,17 @@ so a wildcard is impossible by design).
 
 ## 4 · Optional: keep the free API awake
 
+**The exact window is 15 minutes.** Render's docs: it "spins down a Free web service that goes **15
+minutes without receiving any inbound traffic**. This includes both HTTP requests and WebSocket
+messages from existing connections." Spinning back up "takes about one minute". So for a live demo
+you must generate *some* inbound request at least once every 15 minutes — budget for every 10 to
+absorb a slow poll or a delayed pinger.
+
 The cold start is mostly cosmetic — the client's "spin up" message covers it — but you can remove it
 for free with any uptime pinger (UptimeRobot's free tier, cron-job.org, …) pointed at:
 
 ```
-https://aeychhotu-api.onrender.com/api/v1/ready
+https://<your-render-service-url>/api/v1/ready
 ```
 
 every 5–10 minutes.
@@ -113,8 +130,8 @@ suspends all of them until the 1st.
 ## 5 · Verify
 
 ```bash
-API=https://aeychhotu-api.onrender.com
-WEB=https://<your-vercel-url>
+API=https://aeychhotu-api-bkp8.onrender.com
+WEB=https://aeychhotu.vercel.app
 
 curl -s $API/api/v1/health
 curl -s -o /dev/null -w '%{http_code}\n' $API/api/v1/ready          # 200
@@ -134,6 +151,27 @@ move it through `pending → preparing → ready`, and watch `$WEB/table/k7x2p/t
 
 If Realtime stays silent, check the three-way requirement: both `NEXT_PUBLIC_SUPABASE_*` in Vercel
 **and** `SUPABASE_JWT_SECRET` in Render. Missing either one degrades to REST + 5 s polling by design.
+
+### Verified on the live stack (27/27)
+
+Run against `https://aeychhotu-api-bkp8.onrender.com` with `Origin: https://aeychhotu.vercel.app`:
+
+| Area | Result |
+|---|---|
+| `GET /health` · `GET /ready` | ✅ `{"ok":true}` · `200` (proves the Supabase pooler credentials work) |
+| CORS preflight | ✅ `204` + `access-control-allow-origin: https://aeychhotu.vercel.app` + `allow-credentials: true` |
+| Cookie flags (E2) | ✅ `HttpOnly; Path=/; Max-Age=28800; SameSite=None; Secure` |
+| Frontend bundle | ✅ correct API host inlined; **no** `localhost:4000` leaked into the production chunks |
+| Realtime | ✅ `SUPABASE_JWT_SECRET` set — E1 issues a real 248-char `realtime_token` |
+| Journey E1→E17 | ✅ initialize → menu → cart → **fire 201** → duplicate **409** → KDS ticket (allergy note renders) → preparing → ready → `served` **400** → tracker `ready` → prune → history (frozen bill `total == qty × unit_price`) → floor |
+| Boundaries | ✅ E10 without a token → `401`; E15 with the wrong `table_token` → `404`; wrong PIN → `401` |
+
+> **Note on E5:** `POST /api/v1/cart/items` answers **`200`**, not `201` — the upsert route returns `200`
+> deliberately (`cart.ts`). Only E8 (fire) is a `201`.
+
+> **Preview deployments:** each Vercel preview gets a fresh generated URL that is *not* in the
+> allow-list, so its API calls fail CORS until you temporarily add that origin to `CLIENT_URL`. Test on
+> the production URL, or add the preview origin when you need it.
 
 ---
 
