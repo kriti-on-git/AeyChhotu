@@ -24,6 +24,31 @@ hardening assertions, **69/69** contract checks, both apps green on typecheck ·
 
 ---
 
+## 📖 Table of contents
+
+- [Live deployment](#-live-deployment)
+- [The problem](#-the-problem)
+- [Core features](#-core-features)
+- [Who it is for](#-who-it-is-for)
+- [System architecture](#-system-architecture)
+- [Order lifecycle](#-order-lifecycle)
+- [Data model](#-data-model)
+- [Backend architecture](#-backend-architecture)
+- [Frontend architecture](#-frontend-architecture)
+- [Realtime channels](#-realtime-channels)
+- [Tech stack](#-tech-stack)
+- [Repository layout](#-repository-layout)
+- [Quick start](#-quick-start)
+- [Environment variables](#-environment-variables)
+- [Database setup](#-database-setup)
+- [API reference](#-api-reference)
+- [Security model](#-security-model)
+- [Build & verification](#-build-verification)
+- [Project status](#-project-status)
+- [Documentation index](#-documentation-index)
+
+---
+
 ## 🌍 Live deployment
 
 The free path is **deployed and verified** — Vercel + Render + Supabase, no code changes required.
@@ -65,31 +90,6 @@ never touch Render.
 > Budget note: Render grants **750 Free instance hours per workspace per month**, and one always-on
 > service costs up to 744 h — so a 24/7 pinger leaves no margin and fits **only if that is the only Free
 > web service you run.** Full detail in [`docs/11-deploy.md`](docs/11-deploy.md) §4.
-
----
-
-## 📖 Table of contents
-
-- [Live deployment](#-live-deployment)
-- [The problem](#-the-problem)
-- [Core features](#-core-features)
-- [Who it is for](#-who-it-is-for)
-- [System architecture](#-system-architecture)
-- [Order lifecycle](#-order-lifecycle)
-- [Data model](#-data-model)
-- [Backend architecture](#-backend-architecture)
-- [Frontend architecture](#-frontend-architecture)
-- [Realtime channels](#-realtime-channels)
-- [Tech stack](#-tech-stack)
-- [Repository layout](#-repository-layout)
-- [Quick start](#-quick-start)
-- [Environment variables](#-environment-variables)
-- [Database setup](#-database-setup)
-- [API reference](#-api-reference)
-- [Security model](#-security-model)
-- [Build & verification](#-build-verification)
-- [Project status](#-project-status)
-- [Documentation index](#-documentation-index)
 
 ---
 
