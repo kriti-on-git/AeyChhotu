@@ -9,8 +9,9 @@
      the marketing page. A near-white ground keeps the photography and
      the food legible; warmth now lives in the accent, not the paper.
    * Ops (on [data-skin="ops"]) — the wall-mounted kitchen board and the
-     floor view. A dark console: high contrast, larger type, so a ticket
-     is readable from two metres in a bright kitchen.
+     floor view. Shares the Hospitality palette above; only the ticket type
+     is enlarged, so a ticket is readable from two metres in a bright
+     kitchen.
 
    Every value below is contrast-checked (see the ratios in the
    comments). Nothing in the product should hardcode a colour outside
@@ -165,63 +166,13 @@
 /* ============================================================
    OPS SKIN — kitchen board and floor view.
 
-   Declared outside @theme so it lands unlayered and therefore wins
-   over Tailwind's layered theme output regardless of source order.
-   Only the tokens that must change are listed; everything else is
-   inherited from the Hospitality skin above.
+   Deliberately colourless: a bright kitchen is a type-and-density
+   problem, not a colour one, so the board shares the Hospitality palette
+   rather than re-declaring it. It sits outside @theme and only enlarges
+   the ticket type, so a ticket stays legible from across the line.
    ============================================================ */
 [data-skin="ops"] {
-  --color-canvas: #14110f;
-  --color-surface: #201b17;
-  --color-surface-sunken: #0e0c0a;
-  --color-paper: #2a231c;
-
-  --color-line: #3a322a;
-  --color-line-strong: #524638;
-
-  --color-ink: #f7f2ea; /* 16.9:1 on ops canvas */
-  --color-ink-muted: #c6b9a8; /* 9.8:1 */
-  --color-ink-subtle: #a2947f; /* 6.3:1 */
-  --color-ink-inverse: #14110f;
-
-  /* Warm ramp re-tuned for a dark ground. */
-  --color-cream: #f7f2ea;
-  --color-beige: #3a322a;
-  --color-tan: #e8a25e;
-  --color-brown: #b99b7e;
-  --color-dark-brown: #2a231c;
-  --color-clay: #524638;
-  --color-sand: #2c2620;
-
-  /* Accent inverts: on a dark console the bright ember is the fill. */
-  --color-ember: #ee8047; /* 6.4:1 on ops surface */
-  --color-ember-strong: #ffa066; /* 9.4:1 on ops canvas */
-  --color-ember-soft: #33211a;
-  --color-on-ember: #21120a;
-
-  --color-pending: #b3a695;
-  --color-pending-surface: #2c2620;
-  --color-preparing: #f0b054;
-  --color-preparing-surface: #33260f;
-  --color-ready: #69c86e;
-  --color-ready-surface: #152a18;
-  --color-alert: #ff7a66;
-  --color-alert-surface: #3a1915;
-
-  --color-scrim: rgb(0 0 0 / 0.72);
-
-  /* Shadows carry no information on a dark ground; structure comes
-     from borders instead, so the shadows stay deep and tight. */
-  --shadow-xs: 0 1px 2px rgb(0 0 0 / 0.5);
-  --shadow-sm: 0 1px 3px rgb(0 0 0 / 0.55);
-  --shadow-md: 0 10px 28px -12px rgb(0 0 0 / 0.7);
-  --shadow-lg: 0 28px 60px -24px rgb(0 0 0 / 0.8);
-  --shadow-inset: inset 0 1px 0 rgb(255 255 255 / 0.04);
-  --shadow-glow: 0 0 90px 24px rgb(238 128 71 / 0.16);
-
   /* Ticket type is read standing up, from the line. */
-  --font-display: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
-
   --text-subheading: 1.375rem;
   --text-subheading--line-height: 1.25;
   --text-subheading--letter-spacing: -0.01em;
@@ -287,13 +238,6 @@
     text-wrap: pretty;
   }
 
-  /* The Ops skin lives on a wrapper inside <body>, so the document itself
-     still resolves the light canvas. Without this, overscroll and the
-     browser's own chrome flash cream behind a dark kitchen board. */
-  html:has([data-skin="ops"]) {
-    background-color: #14110f;
-    color-scheme: dark;
-  }
 
   @media (prefers-reduced-motion: reduce) {
     html {

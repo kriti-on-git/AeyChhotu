@@ -43,10 +43,10 @@ Every endpoint behavior from `docs/4-architectural-mapping.md` (session init, ca
 
 ## 4. Design System
 
-- **Tokens:** one `@theme` block in `app/globals.css` holds the Hospitality skin — near-white ground (`#FBF8F4`), white raised surface, espresso ink (`#1C1512`), the `#9E3E14` ember accent, status colors (pending/preparing/ready/alert), type scale, radii, shadows, motion timings. A second, unlayered `[data-skin="ops"]` block re-declares the same variable names for the dark kitchen/floor console, so one selector re-skins a whole surface. No hardcoded colors scattered across files.
+- **Tokens:** one `@theme` block in `app/globals.css` holds the Hospitality skin — near-white ground (`#FBF8F4`), white raised surface, espresso ink (`#1C1512`), the `#9E3E14` ember accent, status colors (pending/preparing/ready/alert), type scale, radii, shadows, motion timings. A second, unlayered `[data-skin="ops"]` block enlarges only the ticket type for the kitchen and floor boards, so one selector adapts a whole surface without forking the palette. No hardcoded colors scattered across files.
 - **Typography:** editorial clamp-based scale from display → label, wired through `next/font`.
 - **Primitives:** reusable components in `components/ui/` (Button, IconButton, Card, Badge, Input, Textarea, Select, Field, Modal, Drawer, Overlay, Tooltip, Toast, Spinner, LoadingState, EmptyState, Container, Section, Heading, Text, PageHeader, SectionHeader…). No duplicated markup between pages.
-- **Skins:** `data-skin="ops"` wraps the kitchen and floor surfaces (`kitchen-screen.tsx`, `floor-screen.tsx`). It swaps the ground to `#14110F`, brightens the accent to `#EE8047`, enlarges the ticket type and replaces the display serif with the sans. `html:has([data-skin="ops"])` also owns the document background so overscroll matches.
+- **Skins:** `data-skin="ops"` wraps the kitchen and floor surfaces (`kitchen-screen.tsx`, `floor-screen.tsx`). All surfaces share the one Hospitality palette; the ops wrapper only enlarges the ticket type so it reads at distance, and the viewports on both routes report the same light `themeColor`.
 - **Removed:** the `components/landscape/` set (LandscapeScene, Sun, OrganicShape, SectionDivider) was unmounted in the palette pass — the diner header and the landing hero were rebuilt around product mocks instead — and has now been deleted along with the unreferenced `public/hero.png`.
 
 ## 5. Motion & Parallax

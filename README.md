@@ -354,13 +354,13 @@ Business outcomes are **returned as `jsonb` codes rather than raised**, so an
 | Data runtimes | `hooks/use-live-table.ts`, `hooks/use-live-kds.ts` | Live-first with mock fallback + realtime + polling safety net |
 | API client | `lib/api-client/` | `apiClient` (20 s timeout, envelope parse, 401 guard), `endpoints` (1 fn per endpoint), `realtime`, `paginate`, `normalize` |
 | Offline demo store | `lib/api/` | Seeded store used **only** when the backend is unreachable |
-| Design tokens | `app/globals.css` | `@theme` block (Hospitality skin) + an unlayered `[data-skin="ops"]` block (dark kitchen/floor console) — palette, type scale, radii, shadows, motion timings |
+| Design tokens | `app/globals.css` | `@theme` block (Hospitality skin) + an unlayered `[data-skin="ops"]` block that enlarges the kitchen/floor ticket type — palette, type scale, radii, shadows, motion timings |
 
 **Motion:** entrance reveals (`components/motion/reveal.tsx`), status/overlay/card transitions,
 transform/opacity-only animations, and `useReducedMotion` respected everywhere.
 
-**Skins:** diner and marketing surfaces use the light Hospitality skin; `/kitchen` and `/floor` opt into
-`data-skin="ops"` for the high-contrast dark console read at ticket distance.
+**Skins:** every surface uses the one Hospitality skin; `/kitchen` and `/floor` add `data-skin="ops"`
+to enlarge the ticket type for reading at distance.
 
 ---
 
