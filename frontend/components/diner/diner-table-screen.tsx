@@ -1,15 +1,16 @@
 "use client";
 
 import { Flame, ShoppingBasket, Timer } from "lucide-react";
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
+import { BillDrawer, type BillScope } from "@/components/diner/bill-drawer";
 import { CartModal } from "@/components/diner/cart-modal";
 import { CartStrip } from "@/components/diner/cart-strip";
+import { DinerNavBar } from "@/components/diner/diner-nav-bar";
 import { InactiveTableState } from "@/components/diner/inactive-table-state";
 import { MenuBrowser } from "@/components/diner/menu-browser";
 import { TableCart } from "@/components/diner/table-cart";
-import { Button, buttonStyles } from "@/components/ui/button";
+import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Container } from "@/components/ui/container";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -25,21 +26,23 @@ export interface DinerTableScreenProps {
   tableToken: string;
 }
 
-/* The four moves this screen has to make obvious, in order. The first three
-   are what the guest does; the fourth is what the kitchen does about it. */
+/* The flow in three icons, one word each: browse, swipe, fire. */
 const sessionSteps = [
-  { icon: ShoppingBasket, title: "Browse", body: "Open a menu, then a section." },
-  { icon: Flame, title: "Swipe or tap", body: "Right to add, left to skip." },
-  { icon: Timer, title: "Fire once", body: "One grouped ticket to the kitchen." },
+  { icon: ShoppingBasket, title: "Browse" },
+  { icon: Flame, title: "Swipe" },
+  { icon: Timer, title: "Fire" },
 ];
 
 export function DinerTableScreen({ tableToken }: DinerTableScreenProps) {
   const router = useRouter();
   const { toast } = useToast();
   const live = useLiveTable(tableToken);
-  const { table, menu, quantities, totals, activeOrder, itemErrors } = live;
+  const { table, menu, quantities, totals, itemErrors } = live;
 
   const [cartOpen, setCartOpen] = useState(false);
+  // The bill drawer is open whenever a scope is set, so the icon that opened
+  // it also decides which slice shows first.
+  const [billScope, setBillScope] = useState<BillScope | null>(null);
   const [pendingItemId, setPendingItemId] = useState<string | null>(null);
   // The value is only ever rendered inside the cart modal, which opens after
   // hydration, so reading storage in the initialiser cannot mismatch the SSR HTML.
@@ -104,69 +107,48 @@ export function DinerTableScreen({ tableToken }: DinerTableScreenProps) {
 
   return (
     <main id="main" className="min-h-dvh pb-32">
-      {/* One row, no session chrome: the guest only needs the instruction, so
-          the page opens on "Ready to order?" beside the three moves. */}
+      {/* The diner's one band of chrome: identity and the three reach-for
+          icons, pinned while the menu scrolls beneath it. */}
+      <DinerNavBar
+        tableToken={tableToken}
+        live={live}
+        displayName={displayName}
+        onDisplayNameChange={handleDisplayNameChange}
+        onOpenBill={(scope) => setBillScope(scope)}
+      />
+
+      {/* One row, no further session chrome: the guest only needs the
+          instruction, so the page opens on "Ready to order?" beside the three
+          one-word moves that spell the flow. */}
       <div className="border-b border-line bg-surface">
         <Container className="flex flex-col gap-6 py-7 sm:py-8 lg:flex-row lg:items-center lg:justify-between lg:gap-12">
           {/* No table identifier: the token in the URL is the capability
               credential, so it must never be shown to the diner. */}
-          {/* The instruction is the whole reason the screen exists: scale it
-              to 2.5x so it dominates the first row before the three moves. */}
-          <Heading level="title" as="h1" className="font-bold text-ember text-[5.2rem] leading-[5.6rem]">
+          <Heading
+            level="title"
+            as="h1"
+            className="font-bold text-ember text-[2.6rem] leading-[2.8rem]"
+          >
             Ready to order?
           </Heading>
 
           <ol className="grid gap-4 sm:grid-cols-3 lg:max-w-xl lg:shrink-0">
-              {sessionSteps.map((step, index) => (
-                <li key={step.title} className="flex gap-3 sm:flex-col sm:gap-2">
-                  <span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-ember-soft text-ember">
-                    <step.icon className="size-4" aria-hidden />
-                  </span>
-                  <div>
-                    <p className="text-sm font-semibold text-ink">
-                      <span className="text-ink-subtle tabular-nums">
-                        {String(index + 1).padStart(2, "0")}
-                      </span>{" "}
-                      {step.title}
-                    </p>
-                    <p className="text-xs leading-snug text-ink-muted">{step.body}</p>
-                  </div>
-                </li>
-              ))}
+            {sessionSteps.map((step, index) => (
+              <li key={step.title} className="flex items-center gap-3 sm:flex-col sm:gap-2">
+                <span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-ember-soft text-ember">
+                  <step.icon className="size-4" aria-hidden />
+                </span>
+                <p className="text-sm font-semibold text-ink">
+                  <span className="text-ink-subtle tabular-nums">
+                    {String(index + 1).padStart(2, "0")}
+                  </span>{" "}
+                  {step.title}
+                </p>
+              </li>
+            ))}
           </ol>
         </Container>
       </div>
-
-      {/* An order already in the kitchen outranks everything below it, so it
-          gets one full-width line rather than a card in the column. */}
-      {activeOrder ? (
-        <div className="border-b border-line bg-ink text-ink-inverse">
-          <Container className="flex flex-wrap items-center justify-between gap-4 py-4">
-            <div className="flex items-center gap-3">
-              <span
-                aria-hidden
-                className="flex size-9 shrink-0 items-center justify-center rounded-md bg-ink-inverse/10"
-              >
-                <Flame className="size-4" />
-              </span>
-              <div>
-                <p className="text-sm font-semibold capitalize">
-                  Order {activeOrder.status} in the kitchen
-                </p>
-                <p className="text-xs text-ink-inverse/70">
-                  A second fire is blocked until this one is served.
-                </p>
-              </div>
-            </div>
-            <Link
-              href={`/table/${table.code}/tracker`}
-              className={buttonStyles({ variant: "ember", size: "sm" })}
-            >
-              Open live tracker
-            </Link>
-          </Container>
-        </div>
-      ) : null}
 
       <Container className="grid gap-12 py-12 lg:grid-cols-[minmax(0,1fr)_21rem] lg:items-start lg:gap-14">
         {menu.length === 0 ? (
@@ -190,6 +172,7 @@ export function DinerTableScreen({ tableToken }: DinerTableScreenProps) {
             onAdd={(item) => void handleAdd(item)}
             onReview={() => setCartOpen(true)}
             cartItemCount={totals.itemCount}
+            stickyTopClass="top-[var(--diner-nav-h,3.75rem)]"
           />
         )}
 
@@ -204,6 +187,15 @@ export function DinerTableScreen({ tableToken }: DinerTableScreenProps) {
         itemCount={totals.itemCount}
         total={totals.total}
         onView={() => setCartOpen(true)}
+      />
+
+      <BillDrawer
+        open={billScope !== null}
+        onClose={() => setBillScope(null)}
+        scope={billScope ?? "total"}
+        onScopeChange={(scope) => setBillScope(scope)}
+        live={live}
+        displayName={displayName}
       />
 
       <CartModal
@@ -232,6 +224,18 @@ export function DinerTableScreen({ tableToken }: DinerTableScreenProps) {
 function DinerSkeleton() {
   return (
     <main id="main" className="min-h-dvh pb-32">
+      <div className="border-b border-ink/40 bg-ink">
+        <Container className="flex items-center gap-3 py-3">
+          <Skeleton className="size-10 shrink-0 rounded-md" />
+          <Skeleton className="h-4 w-32" />
+          <div className="ml-auto flex items-center gap-1.5">
+            {Array.from({ length: 3 }).map((_, index) => (
+              <Skeleton key={index} className="size-10 rounded-md" />
+            ))}
+          </div>
+        </Container>
+      </div>
+
       <div className="border-b border-line bg-surface">
         <Container className="flex flex-col gap-6 py-7 sm:py-8 lg:flex-row lg:items-center lg:justify-between lg:gap-12">
           <Skeleton className="h-9 w-64 max-w-full" />

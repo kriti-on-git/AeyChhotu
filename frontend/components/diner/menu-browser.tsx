@@ -27,6 +27,8 @@ export interface MenuBrowserProps {
   onReview: () => void;
   /** Existing shared cart size, so the deck can offer the final step. */
   cartItemCount: number;
+  /** Sticky offset for the search bar — the diner nav band docks above it. */
+  stickyTopClass?: string;
 }
 
 /* Search is a filter over the whole menu rather than a place you navigate to,
@@ -52,6 +54,7 @@ export function MenuBrowser({
   onAdd,
   onReview,
   cartItemCount,
+  stickyTopClass = "top-0",
 }: MenuBrowserProps) {
   const [query, setQuery] = useState("");
   const [stage, setStage] = useState<Stage>({ level: "cuisines" });
@@ -120,7 +123,12 @@ export function MenuBrowser({
     <div className="flex flex-col gap-7">
       {/* Sticky so search and the view switch stay reachable on a phone while
           the guest scrolls a long section. */}
-      <div className="sticky top-0 z-20 -mx-1 rounded-lg bg-canvas/90 px-1 py-2 backdrop-blur-md">
+      <div
+        className={cn(
+          "sticky z-20 -mx-1 rounded-lg bg-canvas/90 px-1 py-2 backdrop-blur-md",
+          stickyTopClass,
+        )}
+      >
         <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
           <Input
             label="Search the menu"
