@@ -1,15 +1,16 @@
 "use client";
 
 import { AnimatePresence } from "motion/react";
-import { BellRing, ChefHat, EyeOff, Flame, Lock, Volume2 } from "lucide-react";
+import { BellRing, ChefHat, EyeOff, Flame, Lock, Volume2, VolumeX } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { KdsCard } from "@/components/staff/kds-card";
 import { MenuAvailabilityDrawer } from "@/components/staff/menu-availability-drawer";
-import { LiveIndicator, OpsBar } from "@/components/staff/ops-bar";
+import { OpsBar } from "@/components/staff/ops-bar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Container } from "@/components/ui/container";
 import { EmptyState, ErrorState } from "@/components/ui/empty-state";
+import { IconButton } from "@/components/ui/icon-button";
 import { Skeleton } from "@/components/ui/loading-state";
 import { useToast } from "@/components/ui/toast";
 import { useLiveKds } from "@/hooks/use-live-kds";
@@ -202,14 +203,16 @@ export function KdsBoard({ onLock }: KdsBoardProps) {
 
   return (
     <main id="main" className="min-h-dvh pb-16">
+      {/* The bar is icon-only and the Kitchen badge carries the surface's
+          identity, so the page heading lives here for assistive tech. */}
+      <h1 className="sr-only">Kitchen display</h1>
+
       <OpsBar
-        title="Kitchen display"
         prefix={
           <Badge tone="brand" size="md">
             Kitchen
           </Badge>
         }
-        status={<LiveIndicator live={source !== "demo"} />}
         actions={
           <>
             {/* E2b — the shift's own expiry, decoded from the bearer token.
@@ -221,32 +224,33 @@ export function KdsBoard({ onLock }: KdsBoardProps) {
               </Badge>
             ) : null}
 
-            <Button
-              variant={audioArmed ? "soft" : "ember"}
+            {/* Icon carries the state: a crossed speaker while the board is
+                silent, ember until it is armed. The label explains it. */}
+            <IconButton
+              label={audioArmed ? "Audio on" : "Enable audio"}
+              tone={audioArmed ? "soft" : "accent"}
               size="md"
               onClick={handleStartShift}
-              leftIcon={<Volume2 className="size-4" aria-hidden />}
             >
-              {audioArmed ? "Audio on" : "Enable audio"}
-            </Button>
+              {audioArmed ? (
+                <Volume2 className="size-4" aria-hidden />
+              ) : (
+                <VolumeX className="size-4" aria-hidden />
+              )}
+            </IconButton>
 
-            <Button
-              variant="outline"
+            <IconButton
+              label="Manage 86"
+              tone="outline"
               size="md"
               onClick={() => setAvailabilityOpen(true)}
-              leftIcon={<EyeOff className="size-4" aria-hidden />}
             >
-              Manage 86
-            </Button>
+              <EyeOff className="size-4" aria-hidden />
+            </IconButton>
 
-            <Button
-              variant="ghost"
-              size="md"
-              onClick={onLock}
-              leftIcon={<Lock className="size-4" aria-hidden />}
-            >
-              Lock board
-            </Button>
+            <IconButton label="Lock board" tone="ghost" size="md" onClick={onLock}>
+              <Lock className="size-4" aria-hidden />
+            </IconButton>
           </>
         }
       />

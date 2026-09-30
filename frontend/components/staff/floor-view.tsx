@@ -3,11 +3,12 @@
 import { Check, Clock, EyeOff, Lock, ShieldAlert, Users } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { LiveIndicator, OpsBar } from "@/components/staff/ops-bar";
+import { OpsBar } from "@/components/staff/ops-bar";
 import { MenuAvailabilityDrawer } from "@/components/staff/menu-availability-drawer";
 import { Button } from "@/components/ui/button";
 import { Container } from "@/components/ui/container";
 import { EmptyState, ErrorState } from "@/components/ui/empty-state";
+import { IconButton } from "@/components/ui/icon-button";
 import { Skeleton } from "@/components/ui/loading-state";
 import { useToast } from "@/components/ui/toast";
 import { useDb } from "@/hooks/use-db";
@@ -155,52 +156,36 @@ export function FloorView({ onLock }: FloorViewProps) {
     <main id="main" className="min-h-dvh pb-20">
       <OpsBar
         title="Floor operations"
-        status={<LiveIndicator live={source !== "demo"} />}
-        metrics={[
-          { label: "Orders today", value: String(ordersToday) },
-          { label: "Tables active", value: String(activeTables) },
-        ]}
         actions={
           <>
-            <Button
-              variant="soft"
+            <IconButton
+              label="Quick 86"
+              tone="soft"
               size="md"
               onClick={() => setAvailabilityOpen(true)}
-              leftIcon={<EyeOff className="size-4" aria-hidden />}
             >
-              Quick 86
-            </Button>
+              <EyeOff className="size-4" aria-hidden />
+            </IconButton>
 
-            <Button
-              variant="ghost"
-              size="md"
-              onClick={onLock}
-              leftIcon={<Lock className="size-4" aria-hidden />}
-            >
-              Lock board
-            </Button>
+            <IconButton label="Lock board" tone="ghost" size="md" onClick={onLock}>
+              <Lock className="size-4" aria-hidden />
+            </IconButton>
           </>
         }
       />
 
       <Container className="py-10 sm:py-12">
-        {/* ---- Concise heading + operational summary -------------------- */}
+        {/* ---- Operational summary: the room at a glance ---------------- */}
         {phase === "success" && ordered.length > 0 ? (
-          <header className="flex flex-col gap-7">
-            <h1 className="max-w-2xl font-display text-heading text-ink">
-              Know what needs attention before you reach the pass.
-            </h1>
-
-            <div className="flex flex-wrap items-end gap-x-12 gap-y-6">
-              <SummaryStat value={ordersToday} label="Orders today" />
-              <SummaryStat value={activeTables} label="Active tables" />
-              <SummaryStat
-                value={needAttention}
-                label="Need attention"
-                tone={needAttention > 0 ? "attention" : "default"}
-              />
-            </div>
-          </header>
+          <div className="flex flex-wrap items-end gap-x-12 gap-y-6">
+            <SummaryStat value={ordersToday} label="Orders today" />
+            <SummaryStat value={activeTables} label="Active tables" />
+            <SummaryStat
+              value={needAttention}
+              label="Need attention"
+              tone={needAttention > 0 ? "attention" : "default"}
+            />
+          </div>
         ) : null}
 
         {/* ---- State matrix: loading ---------------------------------- */}
