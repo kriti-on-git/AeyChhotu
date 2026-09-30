@@ -311,12 +311,21 @@ export default function LandingPage() {
       </Section>
 
       <Section id="innovations" spacing="lg" tone="ink" className="scroll-mt-20">
+        {/* Still charcoal, with a warm ember glow gathering through the lower
+            third — the ground starts warming up before the page ever reaches
+            the closing ramp. */}
+        <div
+          aria-hidden
+          className="pointer-events-none absolute inset-x-0 bottom-0 -z-10 h-2/3 bg-gradient-to-b from-ink/0 via-ember/5 to-ember/20"
+        />
         <Container>
           <SectionHeader align="center" size="heading" tone="inverse" title="What makes us different?" />
 
-          <div className="mt-14 grid items-center gap-14 lg:grid-cols-[1fr_1fr] lg:gap-16">
+          {/* The display carries the same weight as the deck beside it, so the
+              row reads as one composition rather than a mock and a card. */}
+          <div className="mt-14 grid items-center gap-14 lg:grid-cols-[minmax(0,1.05fr)_minmax(0,1fr)] lg:gap-16">
             <Reveal>
-              <TiltSurface className="w-fit mx-auto">
+              <TiltSurface className="mx-auto w-full max-w-xl lg:max-w-none">
                 <TicketPipeline />
               </TiltSurface>
             </Reveal>
@@ -382,10 +391,18 @@ export default function LandingPage() {
         </Container>
       </Section>
 
+      {/* The close. The card keeps its shape but drops from bright ember to a
+          muted ember gradient, and the section's own ground fades out of the
+          cream into the exact tone the footer opens on — so the page sinks
+          from charcoal to deep ember instead of stopping on an orange block. */}
       <Section spacing="lg" className="scroll-mt-20">
-        <Container>
+        <div
+          aria-hidden
+          className="pointer-events-none absolute inset-x-0 bottom-0 h-40 bg-gradient-to-b from-canvas/0 to-ember-dusk sm:h-52"
+        />
+        <Container className="relative">
           <Reveal>
-            <div className="relative isolate overflow-hidden rounded-2xl border border-ember/30 bg-ember px-7 py-14 text-on-ember sm:px-12 sm:py-16">
+            <div className="relative isolate overflow-hidden rounded-2xl border border-on-ember/15 bg-gradient-to-br from-ember-strong to-ember-dusk px-7 py-14 text-on-ember sm:px-12 sm:py-16">
               <span
                 aria-hidden
                 className="pointer-events-none absolute inset-0 opacity-15 [background-image:linear-gradient(to_right,currentColor_1px,transparent_1px),linear-gradient(to_bottom,currentColor_1px,transparent_1px)] [background-size:3rem_3rem]"
@@ -480,56 +497,58 @@ const miniTickets: MiniTicketProps[] = [
 
 function TicketPipeline() {
   return (
-    <div className="relative mx-auto w-full max-w-md">
-      <div className="relative overflow-hidden rounded-xl border border-line-strong bg-surface shadow-lg [transform-style:preserve-3d]">
-        <div className="flex items-center gap-2 border-b border-line bg-surface-sunken/70 px-4 py-3">
+    <div className="relative w-full">
+      {/* A panel, not a phone: it fills the column, and the width it gains is
+          spent on padding rather than on stretching the tickets inside it. */}
+      <div className="relative overflow-hidden rounded-2xl border border-line-strong bg-surface shadow-lg [transform-style:preserve-3d]">
+        <div className="flex items-center gap-2.5 border-b border-line bg-surface-sunken/70 px-5 py-4 sm:px-6 lg:px-7">
           <span className="flex gap-1.5" aria-hidden>
             <span className="size-2.5 rounded-pill bg-line-strong" />
             <span className="size-2.5 rounded-pill bg-line-strong" />
             <span className="size-2.5 rounded-pill bg-line-strong" />
           </span>
-          <span className="ml-1.5 text-[0.6875rem] font-semibold tracking-[0.14em] text-ink-subtle uppercase">
+          <span className="ml-2 text-[0.6875rem] font-semibold tracking-[0.14em] text-ink-subtle uppercase">
             Kitchen display
           </span>
-          <span className="ml-auto inline-flex items-center gap-1.5 rounded-pill bg-ready-surface px-2.5 py-1 text-[0.6875rem] font-semibold tracking-wide text-ready uppercase">
+          <span className="ml-auto inline-flex items-center gap-1.5 rounded-pill bg-ready-surface px-3 py-1.5 text-[0.6875rem] font-semibold tracking-wide text-ready uppercase">
             <span aria-hidden className="size-1.5 rounded-pill bg-ready" />
             Live
           </span>
         </div>
 
-        <div className="flex flex-col gap-3 bg-canvas p-3.5 sm:p-4">
+        <div className="flex flex-col gap-4 bg-canvas p-4 sm:gap-5 sm:p-6 lg:p-7">
           {miniTickets.map((ticket) => (
             <div
               key={ticket.table}
-              className="relative overflow-hidden rounded-lg border border-line bg-paper p-4 shadow-sm"
+              className="relative overflow-hidden rounded-xl border border-line bg-paper p-5 shadow-sm sm:p-6"
             >
-              <span aria-hidden className={`absolute inset-y-0 left-0 w-1 ${ticket.rail}`} />
+              <span aria-hidden className={`absolute inset-y-0 left-0 w-1.5 ${ticket.rail}`} />
 
-              <div className="flex items-center justify-between gap-3 pl-1.5">
-                <span className="font-display text-sm font-semibold text-ink">{ticket.table}</span>
-                <span className="flex items-center gap-2">
-                  <span className="font-mono text-[0.6875rem] text-ink-subtle">{ticket.elapsed}</span>
+              <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 pl-2">
+                <span className="font-display text-base font-semibold text-ink">{ticket.table}</span>
+                <span className="flex items-center gap-3">
+                  <span className="font-mono text-xs text-ink-subtle">{ticket.elapsed}</span>
                   <Badge tone={ticket.tone}>{ticket.status}</Badge>
                 </span>
               </div>
 
-              <ul className="mt-3 flex flex-col gap-1 pl-1.5">
+              <ul className="mt-4 flex flex-col gap-2 pl-2">
                 {ticket.lines.map((line) => (
-                  <li key={line} className="text-sm text-ink-muted">
+                  <li key={line} className="text-sm leading-relaxed text-ink-muted">
                     {line}
                   </li>
                 ))}
               </ul>
 
               {ticket.allergy ? (
-                <p className="mt-3 ml-1.5 flex items-center gap-1.5 rounded-md border border-alert/40 bg-alert-surface px-2.5 py-1.5 text-xs font-bold tracking-wide text-alert uppercase">
+                <p className="mt-5 ml-2 flex items-center gap-2 rounded-lg border border-alert/40 bg-alert-surface px-3 py-2 text-xs font-bold tracking-wide text-alert uppercase">
                   <ShieldAlert className="size-3.5 shrink-0" aria-hidden />
                   {ticket.allergy}
                 </p>
               ) : null}
 
               <span
-                className={`mt-3.5 ml-1.5 flex h-9 items-center justify-center rounded-md text-sm font-semibold ${ticket.actionClass}`}
+                className={`mt-5 ml-2 flex h-11 items-center justify-center rounded-lg px-5 text-sm font-semibold ${ticket.actionClass}`}
               >
                 {ticket.action}
               </span>

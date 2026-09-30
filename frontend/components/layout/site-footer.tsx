@@ -4,26 +4,26 @@ import { Container } from "@/components/ui/container";
 import { marketingNav, productLinks } from "@/lib/site";
 
 /* The footer used to be a flat charcoal block with grey links — the one place
-   on the page with no colour at all. It is now built on the ember accent the
-   rest of the product uses, so the page closes on the brand colour instead of
-   fading out. Nothing hardcodes a hex: the gradient and every text tone come
-   from the token set, and each tone clears AA on the lighter end of the
-   gradient (white 6.7:1, 85% 5.3:1, 80% 4.9:1). */
+   on the page with no colour at all. It is now the floor of the page's closing
+   ramp: it opens on the exact tone the call-to-action above it fades down to
+   (ember-dusk) and sinks to ember-night, so the seam between the two bands is
+   invisible instead of a hard orange edge. Nothing hardcodes a hex: every stop
+   and text tone comes from the token set, and white clears 16.7:1 at the
+   darkest end. */
 export function SiteFooter() {
   const pills = ["Zero download", "No login", "No hardware"];
 
   return (
-    <footer className="relative isolate overflow-hidden bg-ember-strong text-on-ember">
+    <footer className="relative isolate overflow-hidden bg-ember-dusk text-on-ember">
       <div
         aria-hidden
-        className="absolute inset-0 bg-gradient-to-br from-ember via-ember to-ember-strong"
+        className="absolute inset-0 bg-gradient-to-b from-ember-dusk via-ember-dusk to-ember-night"
       />
       <div
         aria-hidden
-        className="pointer-events-none absolute -top-32 left-1/3 size-[28rem] rounded-pill bg-on-ember/10 blur-3xl"
+        className="pointer-events-none absolute -top-32 left-1/3 size-[28rem] rounded-pill bg-on-ember/8 blur-3xl"
       />
       <LogoWatermark className="absolute -top-16 right-[6%] h-56 w-auto opacity-10" />
-      <span aria-hidden className="absolute inset-x-0 top-0 h-1 bg-ember-strong/60" />
 
       <Container className="relative pt-16 pb-10">
         <div className="grid gap-12 lg:grid-cols-[1.5fr_1fr_1fr]">

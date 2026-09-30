@@ -63,6 +63,14 @@
   --color-ember: #9e3e14; /* 6.3:1 on canvas */
   --color-ember-strong: #85320d;
   --color-ember-soft: #fbebe2;
+
+  /* --- The close: charcoal → warm brown → deep ember. Extends the ember
+     ramp downward so the last two bands of the page (the call to action
+     and the footer) are stops on one continuum instead of two separate
+     blocks of orange. White clears 12.3:1 on dusk and 16.7:1 on night, so
+     every on-ember tone used above still passes down here. --- */
+  --color-ember-dusk: #5c2308;
+  --color-ember-night: #35150a;
   --color-on-ember: #ffffff; /* 6.7:1 on ember */
 
   /* --- Operational status. Reserved: never decorative. --- */
