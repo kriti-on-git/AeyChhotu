@@ -668,7 +668,7 @@ Everything below was run and is green on the current tree:
 | Degradation path | `db:setup` on `wal_level=replica` | ✅ reports and skips; app runs REST + 5 s polling |
 | Production fallback gate | `next build && next start` | ✅ dev-only login route returns `404` in prod; pages serve `200` |
 | **Realtime end-to-end** | `cd frontend && npm run realtime:check` | ✅ **12/12** — token acceptance, delivery, RLS scoping, Presence |
-| **Floor view in a browser** | `cd frontend && npm run check:floor` | ✅ **11/11** — headless Chrome over CDP: gate holds, live board renders, allergy alert reaches the card |
+| **Floor view in a browser** | `cd frontend && npm run check:floor` | ✅ **12/12** — headless Chrome over CDP: gate holds, E17 carries the QR code server-side, live board renders the fixture table by name, allergy alert reaches the card |
 | **Deployed stack (live)** | CORS preflight + E1→E17 against Vercel + Render | ✅ **27/27** — the real diner→kitchen→tracker journey on the hosted URLs, incl. cross-site cookie flags and the Realtime token |
 | Suites are idempotent | `npm run smoke` twice in a row | ✅ **69/69** both times (pre-flight reset) |
 | CI | [`.github/workflows/ci.yml`](.github/workflows/ci.yml) | ✅ 3 jobs — typecheck · lint · build, schema verify + smoke against Postgres 17, and the browser E2E for the floor view |

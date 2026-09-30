@@ -265,6 +265,23 @@ try {
   staffToken = login.body?.data?.token ?? null;
   check("staff login for the browser session", Boolean(staffToken), `HTTP ${login.status}`);
 
+  /* The QR token and the live/demo source are API facts: the card labels a
+     table by its human name and prints no source pill (the token is a
+     credential — see 1f61888). So E17 is where the code is asserted, and the
+     browser waits on the name E17 itself returns. */
+  /* E17's wire rows are flat — { table_id, code, name, status, active_order,
+     cart_line_count } — the nested `table` object only exists after the
+     client's toFloorSummary normalizes it. */
+  const e17 = await api("/api/v1/floor/tables?limit=100", { token: staffToken });
+  const fixtureRow = (e17.body?.data ?? []).find((row) => row?.code === TABLE_TOKEN);
+  const fixtureName = fixtureRow?.name ?? null;
+  check(
+    "E17 carries the fixture table's code (server-side)",
+    Boolean(fixtureName),
+    `HTTP ${e17.status}`,
+  );
+  const boardNeedle = fixtureName ?? "Table";
+
   // Idempotent: a leftover ticket from an interrupted run must not fail this.
   const preflight = await resetDemoTable(staffToken);
   if (preflight.length > 0) {
@@ -295,7 +312,11 @@ try {
 
   const lockedText = await waitForText("Enter floor staff PIN", 15_000);
   check("floor shows the PIN wall when locked", Boolean(lockedText));
-  check("board content is NOT rendered while locked", !(lockedText ?? "").includes("Floor"));
+  check(
+    "board content is NOT rendered while locked",
+    Boolean(fixtureName) && !(lockedText ?? "").includes(fixtureName),
+    "the PIN wall must not render table content",
+  );
 
   // ----------------------------------------------------------- unlocked state
   section("2. Unlocked — the live board renders");
@@ -308,15 +329,23 @@ try {
   );
   await goto(`${WEB}/floor`);
 
-  // The card needs: the header, a seeded table code, and the allergy alert.
-  const boardText = await waitForText("Floor", 20_000);
+  // The card needs: the header (the table's human name), the status word,
+  // and the allergy alert.
+  const boardText = await waitForText(boardNeedle, 20_000);
   check("floor board renders after unlocking", Boolean(boardText));
 
-  const withTable = await waitForText("k7x2p", 20_000);
-  check("live table code appears on a card", Boolean(withTable));
+  const withTable = await waitForText(boardNeedle, 20_000);
+  check("live fixture table appears on a card (by name)", Boolean(withTable));
 
-  check("board reports the Live source (not Demo data)", Boolean(withTable?.includes("Live")));
-  check("demo badge is absent", !(withTable ?? "").includes("Demo data"));
+  /* The source pill left the UI with the navbar reduction, so a live board
+     is proved by what a demo board would instead announce: its offline
+     banner and its "Demo data" badge. */
+  const pageText = (await bodyText().catch(() => "")) ?? "";
+  check(
+    "board reports the Live source (not Demo data)",
+    !pageText.includes("Offline demo floor"),
+  );
+  check("demo badge is absent", !pageText.includes("Demo data"));
 
 
   const withStatus = await waitForText("Pending", 20_000);
