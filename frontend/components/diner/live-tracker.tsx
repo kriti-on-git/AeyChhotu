@@ -2,6 +2,7 @@
 
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import {
+  ArrowLeft,
   BellRing,
   Check,
   ChefHat,
@@ -21,9 +22,7 @@ import { LogoMark } from "@/components/brand/logo";
 import { Button, buttonStyles } from "@/components/ui/button";
 import { Container } from "@/components/ui/container";
 import { EmptyState, ErrorState } from "@/components/ui/empty-state";
-import { Heading } from "@/components/ui/heading";
 import { Skeleton } from "@/components/ui/loading-state";
-import { Text } from "@/components/ui/text";
 import { useNow } from "@/hooks/use-now";
 import { usePresence } from "@/hooks/use-presence";
 import { useLiveTable } from "@/hooks/use-live-table";
@@ -33,14 +32,14 @@ import { formatElapsed, formatIstTime } from "@/lib/format";
 import { transitionBase } from "@/lib/motion";
 import { cn } from "@/lib/utils";
 
-/* The tracker answers one question — where is my food — so the current status
-   is the page's single dominant object, and nothing below it repeats the
-   word. Everything else (the journey, the estimate, the ticket, the activity
-   line) supports that one statement instead of restating it. */
+/* The tracker answers one question — where is my food — so the emblem is the
+   page's single dominant object and nothing repeats its name in words. The
+   journey names the stage, the activity line supplies the colour copy, and
+   the estimate and ticket follow. The status label survives only as the
+   screen-reader heading. */
 
 interface StatusMeta {
   label: string;
-  message: string;
   Icon: LucideIcon;
   emblem: string;
   halo: string;
@@ -49,28 +48,24 @@ interface StatusMeta {
 const statusMeta: Record<OrderStatus, StatusMeta> = {
   pending: {
     label: "Pending",
-    message: "Your ticket is at the pass, waiting for a free burner.",
     Icon: Clock,
     emblem: "border-line-strong bg-surface text-pending",
     halo: "border-transparent",
   },
   preparing: {
     label: "Preparing",
-    message: "The line is cooking your table's order right now.",
     Icon: ChefHat,
     emblem: "border-preparing/40 bg-preparing-surface text-preparing",
     halo: "animate-pulse-soft border-preparing/30",
   },
   ready: {
     label: "Ready",
-    message: "Everything is plated — it's on its way to your table.",
     Icon: BellRing,
     emblem: "border-ready/45 bg-ready-surface text-ready",
     halo: "border-ready/30",
   },
   served: {
     label: "Served",
-    message: "That round is done. Fire another whenever you're ready.",
     Icon: CircleCheck,
     emblem: "border-ready/45 bg-ready-surface text-ready",
     halo: "border-ready/30",
@@ -159,11 +154,15 @@ export function LiveTracker({ tableToken }: LiveTrackerProps) {
 
         <div className="flex items-center gap-3">
           <ActiveDinersBadge tableToken={table.code} />
+          {/* Minimal icon rather than a labelled button: the guest is one tap
+              from the menu, and the screen stays quiet. */}
           <Link
             href={`/table/${table.code}`}
-            className={buttonStyles({ variant: "outline", size: "sm" })}
+            aria-label="Back to the menu"
+            title="Back to the menu"
+            className="inline-flex size-9 items-center justify-center rounded-md text-ink-muted transition-colors duration-[var(--duration-fast)] ease-gentle hover:bg-sand hover:text-ink"
           >
-            Back to menu
+            <ArrowLeft className="size-4" aria-hidden />
           </Link>
         </div>
       </Container>
@@ -212,20 +211,16 @@ export function LiveTracker({ tableToken }: LiveTrackerProps) {
         size="narrow"
         className="flex flex-col items-center gap-10 py-12 sm:gap-12 sm:py-16"
       >
-        {/* ---- Status hero: one statement, said once ------------------- */}
-        <div className="flex flex-col items-center gap-7 text-center" aria-live="polite">
+        {/* ---- Status hero: the emblem says it, nothing repeats it ------- */}
+        <div className="flex flex-col items-center gap-6 text-center" aria-live="polite">
           <span className="text-label text-ink-subtle uppercase">Live order</span>
 
           <StatusEmblem status={order.status} />
 
-          <div className="flex flex-col items-center gap-3">
-            <Heading level="display" as="h1" className="uppercase">
-              {meta.label}
-            </Heading>
-            <Text variant="lead" tone="muted" className="max-w-xl">
-              {meta.message}
-            </Text>
-          </div>
+          {/* The status word and its sentence were removed on purpose — the
+              emblem colour, the journey and the activity line carry the
+              meaning. The heading stays for assistive tech only. */}
+          <h1 className="sr-only">Order status: {meta.label}</h1>
 
           <ActivityLine status={order.status} />
         </div>
@@ -245,15 +240,16 @@ export function LiveTracker({ tableToken }: LiveTrackerProps) {
           </p>
         ) : null}
 
-        <Link
-          href={`/table/${table.code}`}
-          className={buttonStyles({
-            variant: order.status === "served" ? "ember" : "outline",
-            size: "lg",
-          })}
-        >
-          {order.status === "served" ? "Start a new round" : "Back to the menu"}
-        </Link>
+        {/* A finished round is the only case that still needs a real button:
+            ordering again is the point. Everything else is one icon away. */}
+        {order.status === "served" ? (
+          <Link
+            href={`/table/${table.code}`}
+            className={buttonStyles({ variant: "ember", size: "lg" })}
+          >
+            Start a new round
+          </Link>
+        ) : null}
 
         <JokeLine />
       </Container>
@@ -261,9 +257,9 @@ export function LiveTracker({ tableToken }: LiveTrackerProps) {
   );
 }
 
-/* The single largest object on the page. The icon is the hero; the status
-   word below it names it. A soft halo — pulsing only while the food is
-   actually being cooked — is the one piece of motion allowed up here. */
+/* The single largest object on the page: the icon IS the status. A soft halo
+   — pulsing only while the food is actually being cooked — is the one piece
+   of motion allowed up here. */
 function StatusEmblem({ status }: { status: OrderStatus }) {
   const meta = statusMeta[status];
   const reduceMotion = useReducedMotion();
