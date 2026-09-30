@@ -15,6 +15,11 @@ graph TD
     K -->|KDS Status: Pending| M[Display Grey Screen]
     K -->|KDS Status: Preparing| N[Display Amber Screen]
     K -->|KDS Status: Ready| O[Flash Green Screen Alert]
+    O --> P[Tap 'Get bill now' Receipt Icon<br/>Beside Review & Fire]
+    P -->|Idempotent Request| Q[Bill Request Shows on Floor Board]
+    Q --> R[Server Takes Payment]
+    R --> S[Full-Screen 'Thank You!']
+    S -->|After 3.6s| T[Request Acknowledged & Dropped<br/>Table Cleared for Next Guests]
 ```
 
 2. Chef (Mr. Baawarchi) Workflow
@@ -50,5 +55,7 @@ graph TD
     H[Chef Signals Ingredient Shortage] --> I[Access Quick Inventory Panel]
     I --> J[Toggle Quick Item Hide Button]
     J -->|Instant Database Update| K[Dish Greyed Out on All Active Menus]
+    L[Table Card Shows 'Bill Requested'] --> M[Tap to Take Payment]
+    M -->|settleBill + settleTable| N[Table Session Erased<br/>Cart and Orders Cleared]
 
 ```

@@ -917,6 +917,7 @@ Clients subscribe from the browser using only the public `anon` key; `postgres_c
 | 13. Screen Flash & Sounds | E13 (+ channel B) |
 | 14. Quick Menu Hide (86ing) | E14 |
 | Extension: Floor View screen | E17 |
+| Extension: Call for the bill (request → settle → clear) | **none yet** — browser channel `frontend/lib/api/bill.ts`; see §7 |
 
 ---
 
@@ -960,3 +961,25 @@ The API above is field-exact against `docs/2` **except** for the following colum
 | `order_items` | snapshot `item_price` at fire time | `unit_price numeric(10,2) not null default 0` | ✅ **applied** — `004_hardening.sql` writes it from `menu_items.price` inside `fire_order()`, and freezes `orders.total` with it (returned by E10/E16/E17). `item_name` is deliberately **not** snapshotted: a rename showing through on an old ticket is harmless, whereas a re-price is not. |
 
 Enum casing note: `docs/7` v1 used `Pending/Preparing/Ready/Served`. The blueprint (`docs/2`) and the shipped frontend (`lib/api/types.ts`) both use lowercase — v2 standardizes on lowercase everywhere, including `active/empty`.
+
+---
+
+## 7. Not yet in the contract — the bill request channel
+
+The **“Get bill now”** handoff (diner asks → floor takes payment → table clears) is shipped as a
+**client-side prototype**, deliberately outside this contract:
+
+| | |
+|---|---|
+| **Where** | `frontend/lib/api/bill.ts` (all rules) · `frontend/hooks/use-bills.ts` (React view) |
+| **Transport** | `localStorage` key `aeychhotu.bills.v1`, mirrored over `BroadcastChannel` with a `storage`-event fallback — two tabs on one machine sync instantly |
+| **Operations** | `requestBill(code)` (idempotent) · `settleBill(code)` (keeps `requested_at`, stamps `settled_at`) · `acknowledgeSettlement(code)` (drops the event once the diner has read the thank-you) |
+| **Staleness** | a request nobody settles is pruned after **15 minutes** |
+| **Table clear** | `settleTable(code)` in `frontend/lib/api/index.ts` erases the table’s staged cart + orders — **demo store only**, because no live endpoint exists |
+| **Why not E18** | a diner’s phone and a separate floor tablet only share this state while they run in the same browser profile |
+
+**The gap to close (candidate E18):** a `bill_requests` table (`table_id` FK, `requested_at`,
+`settled_at`, unique on the open request per table) with `POST /api/v1/tables/:table_token/bill`,
+`PATCH /api/v1/floor/bill/:table_code/settle` (staff) and a `postgres_changes` channel mirroring
+channel A — plus a real settle that drains the table server-side. Because every rule already lives
+behind `lib/api/bill.ts`, the swap replaces that one file and nothing in the UI.

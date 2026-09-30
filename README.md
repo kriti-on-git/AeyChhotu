@@ -32,6 +32,7 @@ hardening assertions, **69/69** contract checks, both apps green on typecheck ·
 - [Who it is for](#-who-it-is-for)
 - [System architecture](#-system-architecture)
 - [Order lifecycle](#-order-lifecycle)
+- [Calling for the bill](#-calling-for-the-bill)
 - [Data model](#-data-model)
 - [Backend architecture](#-backend-architecture)
 - [Frontend architecture](#-frontend-architecture)
@@ -127,6 +128,7 @@ unavoidably on the KDS, and a live `pending → preparing → ready → served` 
 | 13 | Screen flash & audio chime (“Start shift”) | `E13` + `lib/sound.ts` | ✅ |
 | 14 | Quick item hide / 86ing | `E14` | ✅ |
 | 15 | Floor view pacing board (S6) | `E17` + `floor-view` | ✅ live, PIN-gated |
+| 16 | **“Get bill now”** — diner calls for the bill, floor takes payment, table clears | `lib/api/bill` + `use-bills` + `floor-view` | ✅ browser channel |
 
 ---
 
@@ -185,7 +187,7 @@ Every claim above is a command anyone can re-run:
 | Command | Where | What it proves |
 |---|---|---|
 | `npm run db:setup` | `backend/` | applies all SQL (idempotent) |
-| `npm test` | both apps | isolated unit tests: schemas, JWT, state machine (47) · normalizers, fallback gate (10) |
+| `npm test` | both apps | isolated unit tests: schemas, JWT, state machine (47) · normalizers, fallback gate, menu atlas, bill handoff (40) |
 | `npm run db:verify` | `backend/` | 51 assertions: schema, RLS on, 24 policies, indexes, claim-scoping, privileges, hardening |
 | `npm run smoke` | `backend/` | 69 contract checks across diner → kitchen → floor |
 | `npm run realtime:check` | `frontend/` | Realtime auth, delivery, RLS scoping, Presence |
@@ -226,6 +228,42 @@ stateDiagram-v2
 
 **Key rule:** a `served` order **falls out** of the partial unique index, so a closed round
 never blocks the table’s next fire — the “cancelled booking must not block re-booking” requirement.
+
+---
+
+## 🧾 Calling for the bill
+
+The last mile of the meal: the diner asks, the floor answers, the table clears.
+
+```mermaid
+sequenceDiagram
+    participant D as 📱 Diner · table cart
+    participant B as 📦 lib/api/bill<br/>(localStorage + BroadcastChannel)
+    participant F as 📟 Floor board
+
+    D->>B: tap the receipt glyph — requestBill(code)
+    Note over B: idempotent · one request per table
+    B-->>F: useBills() re-renders the card
+    F->>B: server taps “Take the bill” — settleBill(code)
+    B-->>D: settled_at set → full-screen “Thank you!”
+    Note over F: settleTable(code) erases the table’s<br/>staged cart + orders — next guests start clean
+    D->>B: 3.6 s later, acknowledgeSettlement(code)
+    Note over B: event dropped · board is clear again
+```
+
+| Step | Where it lives |
+|---|---|
+| **Request** — a wordless receipt glyph beside *Review & fire*, tooltip “Get bill now”; disabled once asked | `components/diner/table-cart.tsx` |
+| **Read** — one shared view of every table’s bill state, through `useSyncExternalStore` | `hooks/use-bills.ts` → `lib/api/bill.ts` |
+| **Settle** — the floor card grows an ember “Bill requested → tap to take payment” row | `components/staff/floor-view.tsx` |
+| **Clear** — `settleTable()` erases that table’s staged cart and orders; `use-live-table` drops its local frame so the diner’s screen comes back empty | `lib/api/index.ts`, `hooks/use-live-table.ts` |
+| **Thank** — full-screen “Thank you!” for 3.6 s, then the event is acknowledged and dropped | `components/diner/diner-table-screen.tsx` |
+
+> **Scope — deliberately client-side.** The signal is a browser channel (`localStorage` +
+> `BroadcastChannel`), not an endpoint: two tabs on one machine see each other instantly, but a diner’s
+> phone and a separate floor tablet only sync once this moves into the API — [`docs/7`](docs/7-api-contract.md)
+> ends at **E17**. Every rule lives behind **`frontend/lib/api/bill.ts`**, so that swap replaces one file.
+> A request nobody settles goes stale after **15 minutes**. Pinned by `frontend/test/bill.test.mjs`.
 
 ---
 
@@ -425,10 +463,10 @@ to enlarge the ticket type for reading at distance.
 ├── frontend/                  ← Next.js 16 app
 │   ├── app/                   ← routes, layout, globals.css, error/not-found
 │   ├── components/            ← ui/ · diner/ · staff/ · motion/ · layout/ · brand/
-│   ├── hooks/                 ← use-live-table · use-live-kds · use-db · use-presence · use-now
+│   ├── hooks/                 ← use-live-table · use-live-kds · use-bills · use-db · use-presence · use-now
 │   ├── lib/
 │   │   ├── api-client/        ← apiClient · endpoints · realtime · paginate · normalize · types
-│   │   └── api/               ← offline demo store (fallback only)
+│   │   └── api/               ← offline demo store (fallback only) · bill.ts (request/settle channel)
 │   ├── .env.example
 │   └── package.json
 └── docs/                      ← 11 design + engineering documents (source of truth)
@@ -623,7 +661,7 @@ Everything below was run and is green on the current tree:
 | Frontend types | `cd frontend && npm run typecheck` | ✅ 0 errors |
 | Frontend lint | `cd frontend && npm run lint` | ✅ 0 errors |
 | Frontend build | `cd frontend && npm run build` | ✅ 7 routes compiled |
-| **Frontend unit tests** | `cd frontend && npm test` | ✅ **10/10** — normalizers incl. the fire-time price snapshot, production demo-fallback gate |
+| **Frontend unit tests** | `cd frontend && npm test` | ✅ **40/40** — normalizers incl. the fire-time price snapshot, production demo-fallback gate, menu atlas/photos, and the bill request → settle → clear handoff |
 | **Schema + RLS assertions** | `cd backend && npm run db:verify` | ✅ **51/51** — tables, RLS on, 24 policies, indexes, RLS claim-scoping, privileges, hardening (004) |
 | **Contract smoke (live server)** | `cd backend && npm run smoke` | ✅ **69/69** — every endpoint in the real diner → kitchen → floor journey, incl. the frozen bill |
 | Realtime wiring | `db:setup` on `wal_level=logical` | ✅ publication created, `REPLICA IDENTITY FULL` set |
@@ -678,6 +716,7 @@ typecheck/lint/build on both apps — and, verified end-to-end against a live Su
 | **Repo hygiene** | Root `.gitignore` (covers `.env`, logs, `.pgdata`, editor noise); `dev.log` can no longer be committed |
 | **Ops hardening** | helmet security headers (backend + `next.config.ts`), two-tier rate limiting (10 *failed* PIN attempts / 10 min on `kds-login` — correct PINs never consume budget), ndjson structured logs with `X-Request-Id` correlation (upstream ids honoured), `/api/v1/ready` readiness probe with a cached real Postgres ping, and bounded graceful shutdown on SIGTERM (drain → close pool) — verified live: brute-force gets 429 after 10 tries, SIGTERM drains and exits cleanly |
 | **Unit tests** | First slice on `node:test` (zero test deps): backend 47 (schemas/JWT/transitions/util), frontend 10 (normalizers + fallback gate), both wired into CI |
+| **Bill handoff** | “Get bill now” on the diner cart → ember row on the floor card → settle clears the table’s session → timed thank-you. Client-side by design (`lib/api/bill.ts` + `use-bills`, idempotent, 15-min staleness, `BroadcastChannel` between tabs), with 8 unit tests in `frontend/test/bill.test.mjs` — the API endpoint is the one open piece |
 | **Docs** | `README.md` with architecture, ER, state-machine and sequence diagrams |
 
 **Still open:**
@@ -688,6 +727,7 @@ typecheck/lint/build on both apps — and, verified end-to-end against a live Su
 | **Licence** | No LICENSE file (deliberate, for now) |
 | **CSP** | `Content-Security-Policy` not yet set on either app — needs nonce plumbing with Next inlines; the rest of the header set is in place |
 | **Secrets rotation** | `KDS_TOKEN_SECRET`/`STAFF_PIN` rotation is manual (restart with new values); no dual-secret overlap window |
+| **Bill endpoint** | “Get bill now” syncs inside one browser only (`localStorage` + `BroadcastChannel`). A `bill_requests` table + endpoint would let a diner’s phone and a floor tablet see it across devices — sketched in [`docs/7`](docs/7-api-contract.md) §7 |
 
 Full engineering detail lives in the [docs index](#-documentation-index) — especially
 [`docs/10-db-report.md`](docs/10-db-report.md) §4 and [`docs/9-integration-report.md`](docs/9-integration-report.md).

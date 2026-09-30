@@ -6,7 +6,7 @@ Every single MVP feature is mapped directly to a dedicated interface layout or s
 
 | Screen | Route | Features Mapped |
 |---|---|---|
-| Screen 1: Diner Menu & Shared Cart View | `/table/[random_token]` | QR-Table Link, Shared Table Cart, Quick Item Hide (86ing) |
+| Screen 1: Diner Menu & Shared Cart View | `/table/[random_token]` | QR-Table Link, Shared Table Cart, Quick Item Hide (86ing), “Get bill now” request |
 | Screen 2: Diner Checkout Confirmation Modal | *(triggered by cart button)* | "Review & Fire" Button, Red Allergy Text Input |
 | Screen 3: Diner Live Progress Tracker Screen | — | Live Guest Tracker, Screen Flash Alert |
 | Screen 4: Kitchen Authentication Wall | `/kitchen` | Staff PIN Gatekeep |
@@ -47,6 +47,7 @@ Every single MVP feature is mapped directly to a dedicated interface layout or s
 
 - **ActiveDinersBadge:** Visual counter showing how many active phones are synced to the same room.
 - **StickyBottomCartStrip:** A persistent screen footer aggregating the shared total order value.
+- **GetBillButton:** A wordless receipt glyph beside **Review & fire** (desktop cart; tooltip carries the name, `aria-label` “Get bill now”), disabled once asked. It raises the bill request the floor board answers with a **Take payment** row — see [`docs/3`](3-user-workflow.md) and §7 of [`docs/7`](7-api-contract.md).
 
 ### Screen 2: Diner Checkout Confirmation Modal (Triggered by Cart Button)
 

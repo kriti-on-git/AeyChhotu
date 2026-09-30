@@ -37,6 +37,7 @@ No additional frameworks; no Bootstrap/MUI/UI kits.
 | Diner: live guest tracker (grey → amber → green flash) | `/table/[token]/tracker` | ✅ |
 | Chef: PIN gate → KDS kanban (Pending/Preparing/Ready) | `/kitchen` + `POST /api/v1/auth/kds-login` | ✅ |
 | Server: floor view, active table tags, quick 86ing panel | `/floor` | ✅ |
+| Diner calls for the bill → floor takes payment → thank-you + table clear | `/table/[token]` + `/floor` | ✅ client-side channel |
 | Error / not-found states | `app/error.tsx`, `app/not-found.tsx` | ✅ |
 
 Every endpoint behavior from `docs/4-architectural-mapping.md` (session init, cart add/remove, fire with inventory check, anti-duplicate guardrail, KDS status machine, ticket pruning, availability toggle) is represented in the service layer.
@@ -58,7 +59,8 @@ The diner screen is a staged discovery flow over the same single cart: **menus �
 - **`lib/diner/food-photos.ts`** is the imagery layer. The menu contract has no image column and the schema is not ours to change, so photos are resolved frontend-side from a curated dish → photo map with a category fallback. Only `images.unsplash.com` is allowed through `next/image` (`next.config.ts`); a dish with no photo, or a failed load offline, degrades to a palette tile rather than a broken frame.
 - **Swipe to order:** `dish-card` owns its drag (motion's `drag="x"`, distance + velocity thresholds) and its exit animation; `dish-deck` walks the section one dish at a time, tracks progress and keeps skipped dishes recoverable. Every gesture has a plain **Add / Skip** button beside it and an `aria-live` announcement, so the gesture is the delightful path, never the only path. Reduced motion keeps the drag but drops the rotation and the exit slide.
 - **Cart:** `table-cart` is the desktop sticky column and `cart-strip` the phone's compact bottom bar; both open the existing review modal. `quantity-stepper` is shared by the panel and the modal so the `quantity_delta` intent path has one implementation.
-- **Tests:** `test/menu-atlas.test.mjs` pins the atlas grouping, its degradation behaviour and the photo resolver's host restriction (`npm test`).
+- **Bill:** `table-cart` puts a wordless receipt glyph beside *Review & fire* (tooltip “Get bill now”, disabled once asked) that raises a bill request; `floor-view` reads the same state and grows an ember “Bill requested → tap to take payment” row, which settles the bill **and** calls `settleTable()` so the table’s staged cart and orders are erased. The diner then gets a 3.6 s full-screen “Thank you!” before the event is acknowledged and dropped. All of it reads through `hooks/use-bills.ts` (`useSyncExternalStore` over `lib/api/bill.ts`, a `localStorage` + `BroadcastChannel` channel — prototype scope, one file to swap for an API endpoint); `use-live-table` clears its local frame on a settle so the diner’s screen comes back empty.
+- **Tests:** `test/menu-atlas.test.mjs` pins the atlas grouping, its degradation behaviour and the photo resolver's host restriction; `test/bill.test.mjs` pins the bill handoff — request idempotency, subscriber lifecycle, settle keeping the original request, acknowledgement leaving neighbouring tables untouched, and `settleTable()` erasing one table without touching its neighbour (`npm test`).
 
 ## 5. Motion & Parallax
 
