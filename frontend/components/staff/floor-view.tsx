@@ -360,13 +360,12 @@ function TableCard({
             <h2 className="font-display text-subheading text-ink">{table.name}</h2>
           </div>
 
+          {/* The word stays visible, not just the count: an allergy alert is
+              the one thing on this card a server must not have to decode. */}
           {allergyLines > 0 ? (
-            <span
-              title={`${allergyLines} ${allergyLines === 1 ? "allergy" : "allergies"} on this ticket`}
-              className="flex items-center gap-1.5 rounded-pill bg-alert-surface px-2.5 py-1 text-label text-alert uppercase"
-            >
+            <span className="flex items-center gap-1.5 rounded-pill bg-alert-surface px-2.5 py-1 text-label text-alert uppercase">
               <ShieldAlert className="size-3.5 shrink-0" aria-hidden />
-              {allergyLines}
+              {allergyLines} {allergyLines === 1 ? "allergy" : "allergies"}
             </span>
           ) : null}
         </header>

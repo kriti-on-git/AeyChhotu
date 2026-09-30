@@ -232,11 +232,22 @@ export function trackTablePresence(
   if (!client) return NOOP_DETACH;
 
   const channel = client.channel(`table_presence:${tableToken}`);
+
+  /* Order matters: a presence channel must be JOINED before it can carry a
+     track() payload. Tracking first rejects with "tried to push 'presence'
+     … before joining", the socket never registers this device, and — since
+     the sync handler only fires on a subscribed channel — ActiveDinersBadge
+     sat on "Syncing" forever. Subscribe, then track once per join (the
+     callback re-fires on every reconnect, so the device stays registered). */
   channel
     .on("presence", { event: "sync" }, () => {
       onCount(Object.keys(channel.presenceState()).length);
     })
-    .track({ device_id: deviceId, table_token: tableToken });
+    .subscribe((status) => {
+      if (status === "SUBSCRIBED") {
+        void channel.track({ device_id: deviceId, table_token: tableToken });
+      }
+    });
 
   return () => {
     void client.removeChannel(channel);
