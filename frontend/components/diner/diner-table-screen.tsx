@@ -110,7 +110,9 @@ export function DinerTableScreen({ tableToken }: DinerTableScreenProps) {
         <Container className="flex flex-col gap-6 py-7 sm:py-8 lg:flex-row lg:items-center lg:justify-between lg:gap-12">
           {/* No table identifier: the token in the URL is the capability
               credential, so it must never be shown to the diner. */}
-          <Heading level="title" as="h1" className="font-bold text-ember">
+          {/* The instruction is the whole reason the screen exists: scale it
+              to 2.5x so it dominates the first row before the three moves. */}
+          <Heading level="title" as="h1" className="font-bold text-ember text-[5.2rem] leading-[5.6rem]">
             Ready to order?
           </Heading>
 
