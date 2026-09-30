@@ -47,7 +47,9 @@ export function Logo({ className, tone = "default", showMark = true }: LogoProps
         )}
       >
         AeyChhotu
-        <span className="text-ember">!</span>
+        {/* On the saturated ember ground the ember accent disappears, so the
+            inverse lockup uses cream instead. */}
+        <span className={tone === "inverse" ? "text-cream" : "text-ember"}>!</span>
       </span>
     </span>
   );

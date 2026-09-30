@@ -1,49 +1,94 @@
 import Link from "next/link";
 import { Logo, LogoMark } from "@/components/brand/logo";
 import { Container } from "@/components/ui/container";
-import { Text } from "@/components/ui/text";
 import { marketingNav, productLinks } from "@/lib/site";
 
+/* The footer used to be a flat charcoal block with grey links — the one place
+   on the page with no colour at all. It is now built on the ember accent the
+   rest of the product uses, so the page closes on the brand colour instead of
+   fading out. Nothing hardcodes a hex: the gradient and every text tone come
+   from the token set, and each tone clears AA on the lighter end of the
+   gradient (white 6.7:1, 85% 5.3:1, 80% 4.9:1). */
 export function SiteFooter() {
-  return (
-    <footer className="relative isolate overflow-hidden bg-ink pt-16 pb-10 text-ink-inverse">
-      <LogoMark className="pointer-events-none absolute -top-10 right-[6%] size-40 opacity-10" />
+  const pills = ["Zero download", "No login", "No hardware"];
 
-      <Container className="relative">
-        <div className="grid gap-12 lg:grid-cols-[1.4fr_1fr_1fr]">
-          <div className="flex flex-col gap-4">
+  return (
+    <footer className="relative isolate overflow-hidden bg-ember-strong text-on-ember">
+      <div
+        aria-hidden
+        className="absolute inset-0 bg-gradient-to-br from-ember via-ember to-ember-strong"
+      />
+      <div
+        aria-hidden
+        className="pointer-events-none absolute -top-32 left-1/3 size-[28rem] rounded-pill bg-on-ember/10 blur-3xl"
+      />
+      <LogoMark
+        tone="inverse"
+        className="pointer-events-none absolute -top-16 right-[6%] size-56 opacity-10"
+      />
+      <span aria-hidden className="absolute inset-x-0 top-0 h-1 bg-ember-strong/60" />
+
+      <Container className="relative pt-16 pb-10">
+        <div className="grid gap-12 lg:grid-cols-[1.5fr_1fr_1fr]">
+          <div className="flex flex-col gap-5">
             <Logo tone="inverse" />
-            <Text variant="small" tone="inverseMuted" className="max-w-sm">
+            <p className="max-w-sm text-sm leading-relaxed text-on-ember/85">
               A zero-download, real-time operational bridge that groups individual table requests
               into one unified cart and streams live status between diners and the kitchen.
-            </Text>
+            </p>
+            <div className="flex flex-wrap gap-2">
+              {pills.map((pill) => (
+                <span
+                  key={pill}
+                  className="rounded-pill border border-on-ember/25 bg-on-ember/10 px-3 py-1 text-xs font-semibold text-on-ember"
+                >
+                  {pill}
+                </span>
+              ))}
+            </div>
           </div>
 
           <nav aria-label="Sections" className="flex flex-col gap-3">
-            <p className="text-label text-ember uppercase">Sections</p>
+            <p className="text-label text-on-ember/80 uppercase">Sections</p>
             {marketingNav.map((link) => (
               <a
                 key={link.href}
                 href={link.href}
-                className="text-sm text-ink-inverse/75 transition-colors duration-[var(--duration-fast)] hover:text-ink-inverse"
+                className="group inline-flex w-fit items-center gap-2 text-sm text-on-ember/85 transition-colors duration-[var(--duration-fast)] hover:text-on-ember"
               >
+                {/* A rule that grows out of the label on hover. */}
+                <span
+                  aria-hidden
+                  className="h-px w-0 bg-on-ember transition-[width] duration-[var(--duration-fast)] group-hover:w-3"
+                />
                 {link.label}
               </a>
             ))}
           </nav>
 
           <nav aria-label="Live screens" className="flex flex-col gap-3">
-            <p className="text-label text-ember uppercase">Live screens</p>
+            <p className="text-label text-on-ember/80 uppercase">Live screens</p>
             {productLinks.map((link) => (
               <Link
                 key={link.href}
                 href={link.href}
-                className="text-sm text-ink-inverse/75 transition-colors duration-[var(--duration-fast)] hover:text-ink-inverse"
+                className="group inline-flex w-fit items-center gap-2 text-sm text-on-ember/85 transition-colors duration-[var(--duration-fast)] hover:text-on-ember"
               >
+                <span
+                  aria-hidden
+                  className="h-px w-0 bg-on-ember transition-[width] duration-[var(--duration-fast)] group-hover:w-3"
+                />
                 {link.label}
               </Link>
             ))}
           </nav>
+        </div>
+
+        <div className="mt-14 flex flex-col items-start justify-between gap-3 border-t border-on-ember/25 pt-6 sm:flex-row sm:items-center">
+          <p className="text-xs text-on-ember/80">
+            AeyChhotu! · one table, one order, live from the kitchen.
+          </p>
+          <p className="text-xs text-on-ember/80">Built with Next.js, Express and Postgres.</p>
         </div>
       </Container>
     </footer>

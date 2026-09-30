@@ -1,5 +1,3 @@
-import { existsSync } from "node:fs";
-import { join } from "node:path";
 import {
   BellRing,
   ChefHat,
@@ -18,11 +16,13 @@ import {
 } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
+import { LogoMark } from "@/components/brand/logo";
+import { ExpandableCard } from "@/components/marketing/expandable-card";
 import { InnovationDeck } from "@/components/marketing/innovation-deck";
+import { WorkflowTimeline } from "@/components/marketing/workflow-timeline";
 import { Reveal } from "@/components/motion/reveal";
 import { Badge, type BadgeTone } from "@/components/ui/badge";
 import { buttonStyles } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
 import { Container } from "@/components/ui/container";
 import { Section } from "@/components/ui/section";
 import { SectionHeader } from "@/components/ui/section-header";
@@ -184,15 +184,6 @@ const heroStats = [
   { value: "0", label: "downloads, logins or hardware" },
 ];
 
-/* The hero photograph is an operator-supplied asset. It is checked at build
-   time so a deployment without it renders a token-built panel instead of a
-   broken image — the page never ships a 404ing <img>. Both the app-root and
-   repo-root layouts are probed so the check survives either build cwd. */
-const hasHeroImage = [
-  join(process.cwd(), "public", "hero-dish.png"),
-  join(process.cwd(), "frontend", "public", "hero-dish.png"),
-].some(existsSync);
-
 export default function LandingPage() {
   return (
     <>
@@ -277,7 +268,7 @@ export default function LandingPage() {
             </div>
 
             <Reveal delay={0.16} className="lg:order-1">
-              <HeroVisual hasImage={hasHeroImage} />
+              <HeroVisual />
             </Reveal>
           </div>
         </Container>
@@ -285,25 +276,21 @@ export default function LandingPage() {
 
       <Section id="problem" spacing="lg" tone="surface" className="scroll-mt-20">
         <Container>
-          <SectionHeader
-            eyebrow="Gap analysis"
-            title="QR ordering removed the typing errors and created three new ones"
-            description="Toast, Square, me&u and Mr Yum all stop manual order entry. These are the gaps they leave behind in a rush."
-          />
+          <SectionHeader title="What gaps are we bridging?" />
 
           <div className="mt-14 grid gap-5 md:grid-cols-3">
             {gaps.map((gap, index) => (
               <Reveal key={gap.title} delay={index * 0.08}>
-                <Card className="flex h-full flex-col">
-                  <span className="font-display text-4xl font-semibold leading-none text-line-strong">
-                    {String(index + 1).padStart(2, "0")}
-                  </span>
-                  <h3 className="mt-5 font-display text-subheading text-ink">{gap.title}</h3>
-                  <p className="mt-3 text-sm leading-relaxed text-ink-muted">{gap.friction}</p>
-                  <p className="mt-5 border-t border-line pt-5 text-sm leading-relaxed font-medium text-alert">
+                <ExpandableCard
+                  meta={String(index + 1).padStart(2, "0")}
+                  title={gap.title}
+                  teaser="Tap to see what breaks in a rush"
+                >
+                  <p className="text-sm leading-relaxed text-ink-muted">{gap.friction}</p>
+                  <p className="mt-4 border-t border-line pt-4 text-sm leading-relaxed font-medium text-alert">
                     {gap.complaint}
                   </p>
-                </Card>
+                </ExpandableCard>
               </Reveal>
             ))}
           </div>
@@ -312,46 +299,19 @@ export default function LandingPage() {
 
       <Section id="how-it-works" spacing="lg" className="scroll-mt-20">
         <Container>
-          <SectionHeader
-            eyebrow="The workflow"
-            title="From the first scan to a green screen"
-            description="One table session spans three surfaces: the diner's browser, the kitchen board and the floor view."
-          />
+          <SectionHeader title="How do we work?" />
 
-          <ol className="mt-14 grid gap-x-6 gap-y-10 sm:grid-cols-2 lg:grid-cols-5">
-            {steps.map((step, index) => (
-              <Reveal key={step.title} delay={index * 0.06}>
-                <li className="relative flex h-full flex-col">
-                  {/* Connector rail: a hairline that ties the five stages into
-                      one pipeline instead of five unrelated cards. */}
-                  <div className="flex items-center gap-3">
-                    <span className="flex size-9 shrink-0 items-center justify-center rounded-md bg-ember font-display text-sm font-semibold text-on-ember shadow-xs">
-                      {index + 1}
-                    </span>
-                    <span
-                      aria-hidden
-                      className="hidden h-px flex-1 bg-line-strong lg:block"
-                    />
-                  </div>
-                  <h3 className="mt-5 font-display text-base font-semibold text-ink">
-                    {step.title}
-                  </h3>
-                  <p className="mt-2 text-sm leading-relaxed text-ink-muted">{step.body}</p>
-                </li>
-              </Reveal>
-            ))}
-          </ol>
+          <div className="mt-14">
+            <Reveal>
+              <WorkflowTimeline steps={steps} />
+            </Reveal>
+          </div>
         </Container>
       </Section>
 
       <Section id="innovations" spacing="lg" tone="ink" className="scroll-mt-20">
         <Container>
-          <SectionHeader
-            tone="inverse"
-            eyebrow="Why it is different"
-            title="Three things the incumbents do not do"
-            description="Flip through the deck — the board on the left moves the same three ideas through the line."
-          />
+          <SectionHeader tone="inverse" title="What makes us different?" />
 
           <div className="mt-14 grid items-center gap-14 lg:grid-cols-[1fr_1fr] lg:gap-16">
             <Reveal>
@@ -367,24 +327,17 @@ export default function LandingPage() {
 
       <Section id="features" spacing="lg" className="scroll-mt-20">
         <Container>
-          <SectionHeader
-            eyebrow="Features"
-            title="What ships, feature by feature"
-            description="Ten capabilities, all of them built around protecting kitchen pacing and keeping guests informed."
-          />
+          <SectionHeader title="What do we actually ship?" />
 
           <div className="mt-14 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {features.map((feature, index) => (
               <Reveal key={feature.title} delay={(index % 3) * 0.06}>
-                <Card interactive className="h-full p-5">
-                  <span className="inline-flex size-10 items-center justify-center rounded-md bg-ember-soft text-ember">
-                    <feature.icon className="size-5" aria-hidden />
-                  </span>
-                  <h3 className="mt-4 font-display text-base font-semibold text-ink">
-                    {feature.title}
-                  </h3>
-                  <p className="mt-2 text-sm leading-relaxed text-ink-muted">{feature.body}</p>
-                </Card>
+                <ExpandableCard
+                  icon={<feature.icon className="size-5" aria-hidden />}
+                  title={feature.title}
+                >
+                  <p className="text-sm leading-relaxed text-ink-muted">{feature.body}</p>
+                </ExpandableCard>
               </Reveal>
             ))}
           </div>
@@ -393,31 +346,18 @@ export default function LandingPage() {
 
       <Section id="personas" spacing="lg" tone="surface" className="scroll-mt-20">
         <Container>
-          <SectionHeader
-            eyebrow="Who it is for"
-            title="Three people, one live pipeline"
-            description="Each role gets an interface shaped around its own bottleneck — not a generic dashboard."
-          />
+          <SectionHeader title="Who is this for?" />
 
           <div className="mt-14 grid gap-5 lg:grid-cols-3">
             {personas.map((persona, index) => (
               <Reveal key={persona.role} delay={index * 0.08}>
-                <Card className="flex h-full flex-col" marked>
-                  <div className="flex items-center gap-3">
-                    <span className="flex size-10 items-center justify-center rounded-md bg-ink text-ink-inverse">
-                      <persona.icon className="size-5" aria-hidden />
-                    </span>
-                    <div>
-                      <p className="text-label text-ember uppercase">{persona.role}</p>
-                      <p className="font-display text-base font-semibold text-ink">{persona.name}</p>
-                    </div>
-                  </div>
-
-                  <p className="mt-5 text-xs font-medium tracking-wide text-ink-subtle uppercase">
-                    {persona.interface}
-                  </p>
-
-                  <dl className="mt-5 flex flex-1 flex-col gap-4 border-t border-line pt-5">
+                <ExpandableCard
+                  icon={<persona.icon className="size-5" aria-hidden />}
+                  meta={persona.role}
+                  title={persona.name}
+                  teaser={persona.interface}
+                >
+                  <dl className="flex flex-col gap-4">
                     {[
                       ["Goal", persona.goal],
                       ["Biggest pain", persona.pain],
@@ -431,40 +371,54 @@ export default function LandingPage() {
                       </div>
                     ))}
                   </dl>
-                </Card>
+                </ExpandableCard>
               </Reveal>
             ))}
           </div>
         </Container>
       </Section>
 
-      <Section spacing="lg" tone="ink">
+      <Section spacing="lg" className="scroll-mt-20">
         <Container>
-          <div className="grid gap-12 lg:grid-cols-[1.1fr_1fr] lg:items-center">
-            <SectionHeader
-              tone="inverse"
-              eyebrow="No payments, no accounts"
-              title="Three live surfaces, ready to open"
-              description="The diner view is bound to a table token. The kitchen and floor boards sit behind the staff PIN."
-            />
+          <Reveal>
+            <div className="relative isolate overflow-hidden rounded-2xl border border-ember/30 bg-ember px-7 py-14 text-on-ember sm:px-12 sm:py-16">
+              <span
+                aria-hidden
+                className="pointer-events-none absolute inset-0 opacity-15 [background-image:linear-gradient(to_right,currentColor_1px,transparent_1px),linear-gradient(to_bottom,currentColor_1px,transparent_1px)] [background-size:3rem_3rem]"
+              />
+              <span
+                aria-hidden
+                className="pointer-events-none absolute -top-24 -right-16 size-80 rounded-pill bg-on-ember/10 blur-3xl"
+              />
+              <LogoMark
+                tone="inverse"
+                className="pointer-events-none absolute -right-10 -bottom-14 size-64 opacity-10"
+              />
 
-            <div className="flex flex-col gap-3">
-              {productLinks.map((link) => (
-                <Link
-                  key={link.href}
-                  href={link.href}
-                  className="group flex items-center justify-between gap-4 rounded-lg border border-ink-inverse/15 bg-ink-inverse/5 px-5 py-4 transition-colors duration-[var(--duration-fast)] hover:border-ember hover:bg-ink-inverse/10"
-                >
-                  <span className="font-display text-base font-semibold text-ink-inverse">
-                    {link.label}
-                  </span>
-                  <span className="text-sm text-ember transition-transform duration-[var(--duration-fast)] group-hover:translate-x-1">
-                    →
-                  </span>
-                </Link>
-              ))}
+              <div className="relative max-w-2xl">
+                <h2 className="text-title font-display font-semibold text-balance">Ready to open?</h2>
+                <p className="mt-4 text-lead text-on-ember/85">
+                  Three live surfaces, no signup. Open the diner view, then watch the ticket land on
+                  the kitchen board and the floor.
+                </p>
+              </div>
+
+              <div className="relative mt-10 grid gap-3 sm:grid-cols-3">
+                {productLinks.map((link) => (
+                  <Link
+                    key={link.href}
+                    href={link.href}
+                    className="group flex items-center justify-between gap-3 rounded-lg border border-on-ember/25 bg-on-ember/10 px-5 py-4 transition-[transform,background-color,border-color] duration-[var(--duration-base)] ease-organic hover:-translate-y-0.5 hover:border-on-ember/50 hover:bg-on-ember/20"
+                  >
+                    <span className="font-display text-base font-semibold">{link.label}</span>
+                    <span aria-hidden className="transition-transform duration-[var(--duration-fast)] group-hover:translate-x-1">
+                      →
+                    </span>
+                  </Link>
+                ))}
+              </div>
             </div>
-          </div>
+          </Reveal>
         </Container>
       </Section>
     </>
@@ -472,68 +426,38 @@ export default function LandingPage() {
 }
 
 /* ---------------------------------------------------------------
-   Hero visual: an operator-supplied photograph, tilted in 3D so it reads
-   as an object rather than a flat banner, and straightened on hover. Falls
-   back to a token-built panel when the asset is absent, so the page never
-   renders a broken image.
+   Hero visual: the cut-out illustration, tilted in 3D so it reads as an
+   object in the room rather than a flat banner, and straightened on hover.
+   The status chips are built from the same tokens the real board paints.
    --------------------------------------------------------------- */
 
-function HeroVisual({ hasImage }: { hasImage: boolean }) {
+function HeroVisual() {
   return (
-    <div className="relative mx-auto w-full max-w-xl [perspective:1500px]">
+    <div className="relative mx-auto w-full max-w-2xl [perspective:1500px]">
       <div
         aria-hidden
-        className="pointer-events-none absolute -inset-10 rounded-[2.5rem] bg-ember/10 blur-3xl"
+        className="pointer-events-none absolute inset-x-8 top-1/4 h-3/4 rounded-pill bg-ember/12 blur-3xl"
       />
 
-      <div className="group relative transition-transform duration-700 ease-gentle will-change-transform [transform:rotateY(-13deg)_rotateX(6deg)] hover:[transform:rotateY(-4deg)_rotateX(2deg)]">
-        {/* Offset plate: depth without a heavy shadow. */}
-        <div
-          aria-hidden
-          className="absolute inset-x-5 -bottom-5 h-full rounded-2xl border border-line bg-surface-sunken"
+      <div className="group relative transition-transform duration-700 ease-gentle will-change-transform [transform:rotateY(-12deg)_rotateX(5deg)] hover:[transform:rotateY(-3deg)_rotateX(1deg)]">
+        <Image
+          src="/ref.png"
+          alt="Mr. Baawarchi watching live tickets on the kitchen tablet"
+          width={1672}
+          height={941}
+          priority
+          sizes="(min-width: 1024px) 44rem, 100vw"
+          className="relative h-auto w-full [filter:drop-shadow(0_34px_44px_rgb(28_21_18/0.26))]"
         />
 
-        <div className="relative aspect-[4/3] overflow-hidden rounded-2xl border border-line-strong bg-surface shadow-lg">
-          {hasImage ? (
-            <Image
-              src="/hero-dish.png"
-              alt="A diner scanning the table's QR code and adding dishes to the shared cart"
-              fill
-              priority
-              sizes="(min-width: 1024px) 40rem, 100vw"
-              className="object-cover"
-            />
-          ) : (
-            <HeroVisualFallback />
-          )}
-
-          {/* Glass sheen so the panel reads as a lit surface. */}
-          <span
-            aria-hidden
-            className="pointer-events-none absolute inset-0 rounded-2xl bg-gradient-to-tr from-transparent via-white/5 to-white/25"
-          />
-        </div>
-      </div>
-
-      <div aria-hidden className="mx-auto mt-10 h-5 w-3/4 rounded-pill bg-ink/15 blur-2xl" />
-    </div>
-  );
-}
-
-function HeroVisualFallback() {
-  return (
-    <div className="relative flex h-full w-full items-center justify-center bg-canvas">
-      <div aria-hidden className="absolute -top-16 -right-10 size-72 rounded-pill bg-ember/15 blur-3xl" />
-      <div aria-hidden className="absolute -bottom-16 -left-10 size-64 rounded-pill bg-tan/25 blur-3xl" />
-
-      <div className="relative flex flex-col items-center gap-4 px-8 text-center">
-        <span className="flex size-14 items-center justify-center rounded-xl bg-ember text-on-ember shadow-xs">
-          <QrCode className="size-7" aria-hidden />
+        <span className="absolute top-1 left-0 hidden items-center gap-2 rounded-pill border border-line bg-surface px-3 py-1.5 text-xs font-semibold text-ink shadow-sm sm:flex">
+          <span aria-hidden className="size-2 rounded-pill bg-ready" />
+          Ticket ready
         </span>
-        <p className="font-display text-subheading text-ink">Scan. Share. Fire once.</p>
-        <p className="max-w-xs text-sm leading-relaxed text-ink-muted">
-          One QR per table, one shared cart, one ticket to the kitchen.
-        </p>
+        <span className="absolute right-2 bottom-10 hidden items-center gap-2 rounded-pill border border-line bg-surface px-3 py-1.5 text-xs font-semibold text-ink shadow-sm sm:flex">
+          <span aria-hidden className="size-2 rounded-pill bg-preparing" />
+          3 tables live
+        </span>
       </div>
     </div>
   );
