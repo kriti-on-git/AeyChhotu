@@ -1,6 +1,6 @@
 "use client";
 
-import { Clock, EyeOff, Hash, Lock, ShieldAlert, Users } from "lucide-react";
+import { Clock, EyeOff, Lock, ShieldAlert, Users } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { MenuAvailabilityDrawer } from "@/components/staff/menu-availability-drawer";
 import { Badge, type BadgeTone } from "@/components/ui/badge";
@@ -18,7 +18,7 @@ import { usePresence } from "@/hooks/use-presence";
 import { useStaffMenuCatalog } from "@/hooks/use-staff-menu-catalog";
 import { countActiveDiners } from "@/lib/api/store";
 import type { FloorTableSummary, OrderStatus } from "@/lib/api/types";
-import { formatElapsed, formatTableLabel } from "@/lib/format";
+import { formatElapsed } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 const statusLabels: Record<OrderStatus, { label: string; badge: BadgeTone }> = {
@@ -234,8 +234,10 @@ function TableCard({
 
         <div className="flex items-start justify-between gap-3">
           <div className="flex flex-col gap-1">
+            {/* Staff see the human table name, never the QR token — the
+                token is the diner's capability credential. */}
             <span className="text-label text-ink-subtle uppercase">
-              {formatTableLabel(table.code)}
+              Table
             </span>
             <p className="font-display text-subheading text-ink">{table.name}</p>
           </div>
@@ -245,11 +247,6 @@ function TableCard({
         </div>
 
         <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-ink-muted">
-          <span className="flex items-center gap-1.5">
-            <Hash className="size-3.5" aria-hidden />
-            {table.code}
-          </span>
-
           {order ? (
             <span className="flex items-center gap-1.5">
               <Clock className="size-3.5" aria-hidden />

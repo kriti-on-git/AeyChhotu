@@ -6,7 +6,6 @@ import { Badge } from "@/components/ui/badge";
 import { buttonStyles } from "@/components/ui/button";
 import { Container } from "@/components/ui/container";
 import type { RestaurantTable } from "@/lib/api/types";
-import { formatTableLabel } from "@/lib/format";
 
 export interface TableSessionHeaderProps {
   table: RestaurantTable;
@@ -18,10 +17,14 @@ export function TableSessionHeader({ table, hasActiveOrder }: TableSessionHeader
     <div className="sticky top-0 z-30 border-b border-line bg-canvas/88 backdrop-blur-md">
       <Container className="flex flex-wrap items-center justify-between gap-3 py-3.5">
         <div className="flex items-center gap-3">
+          {/* The QR token IS this table's capability credential, so it is
+              never rendered on a diner surface — not the code, and not the
+              associated name either. The diner only needs to know the cart
+              is shared. */}
           <Badge tone="brand" size="md">
-            {formatTableLabel(table.code)}
+            Your table
           </Badge>
-          <span className="text-sm font-medium text-ink-muted">{table.name}</span>
+          <span className="text-sm font-medium text-ink-muted">Shared cart</span>
         </div>
 
         <div className="flex items-center gap-3">

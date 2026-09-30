@@ -120,8 +120,10 @@ export function DinerTableScreen({ tableToken }: DinerTableScreenProps) {
               <Text variant="label" tone="accent">
                 Scan-to-order session
               </Text>
+              {/* No table identifier: the token in the URL is the capability
+                  credential, so it must never be shown to the diner. */}
               <Heading level="title" as="h1" className="mt-3">
-                {table.name}
+                Your table
               </Heading>
               <Text variant="lead" tone="muted" className="mt-4">
                 Add what you want to the shared cart. Nothing reaches the kitchen until someone at

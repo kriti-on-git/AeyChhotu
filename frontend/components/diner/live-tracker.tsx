@@ -25,7 +25,7 @@ import { useNow } from "@/hooks/use-now";
 import { usePresence } from "@/hooks/use-presence";
 import { useLiveTable } from "@/hooks/use-live-table";
 import type { Order, OrderStatus } from "@/lib/api/types";
-import { formatElapsed, formatIstTime, formatTableLabel } from "@/lib/format";
+import { formatElapsed, formatIstTime } from "@/lib/format";
 import { transitionBase } from "@/lib/motion";
 import { cn } from "@/lib/utils";
 
@@ -147,7 +147,7 @@ export function LiveTracker({ tableToken }: LiveTrackerProps) {
     <div className="sticky top-0 z-30 border-b border-line bg-canvas/88 backdrop-blur-md">
       <Container className="flex flex-wrap items-center justify-between gap-3 py-3.5">
         <div className="flex items-center gap-3">
-          <Badge tone="brand" size="md">{formatTableLabel(table.code)}</Badge>
+          <Badge tone="brand" size="md">Your table</Badge>
           <span className="text-sm text-ink-muted">Live status tracker</span>
         </div>
 
@@ -213,7 +213,7 @@ export function LiveTracker({ tableToken }: LiveTrackerProps) {
       <Container size="narrow" className="flex flex-col items-center gap-10 py-12 sm:py-16">
         <div className="flex flex-col items-center gap-4 text-center" aria-live="polite">
           <Text variant="label" tone="subtle">
-            {formatTableLabel(table.code)} · status tracker
+            Live status tracker
           </Text>
 
           <StatusCircle status={order.status} />

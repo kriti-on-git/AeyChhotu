@@ -47,6 +47,7 @@ Every endpoint behavior from `docs/4-architectural-mapping.md` (session init, ca
 - **Typography:** editorial clamp-based scale from display → label, wired through `next/font`.
 - **Primitives:** reusable components in `components/ui/` (Button, IconButton, Card, Badge, Input, Textarea, Select, Field, Modal, Drawer, Overlay, Tooltip, Toast, Spinner, LoadingState, EmptyState, Container, Section, Heading, Text, PageHeader, SectionHeader…). No duplicated markup between pages.
 - **Skins:** `data-skin="ops"` wraps the kitchen and floor surfaces (`kitchen-screen.tsx`, `floor-screen.tsx`). All surfaces share the one Hospitality palette; the ops wrapper only enlarges the ticket type so it reads at distance, and the viewports on both routes report the same light `themeColor`.
+- **Token hygiene:** the QR table token (`restaurant_tables.code`) is a capability credential, so no diner surface renders it — the diner sees only generic copy ("Your table", "Live status tracker"). Staff surfaces label a table by its human `name`; only the PIN-gated kitchen board shows the code.
 - **Removed:** the `components/landscape/` set (LandscapeScene, Sun, OrganicShape, SectionDivider) was unmounted in the palette pass — the diner header and the landing hero were rebuilt around product mocks instead — and has now been deleted along with the unreferenced `public/hero.png`.
 
 ## 5. Motion & Parallax

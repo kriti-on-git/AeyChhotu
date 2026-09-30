@@ -601,6 +601,7 @@ It is **revoked from `anon`/`authenticated`** — only the backend’s service p
 | Concern | Mitigation |
 |---|---|
 | **No login for diners** | The random QR token (`^[a-z0-9]{4,16}$`) **is** the capability credential; it is unguessable and maps to one table |
+| **Token never displayed** | The code is a credential, so no diner surface renders it (generic copy only); staff label tables by their human `name`, and only the PIN-gated kitchen board shows the code |
 | **Cross-table data leaks** | Three layers: `table_token` resolved server-side, every SQL write re-asserts `AND table_id = $2`, and RLS SELECT policies are claim-scoped (`table_token` claim for diners, `staff` claim for the kitchen) |
 | **No token ⇒ no rows** | A browser with only the public `anon` key reads nothing — the old `USING (true)` hole is closed in `002_review_fixes.sql` |
 | **Kitchen is PIN-gated** | `STAFF_PIN` compared with `timingSafeEqual`; token is an 8-hour HS256 JWT with an explicit `role: "kitchen"` claim; `requireAuth` → 401, `requireRole` → 403 |

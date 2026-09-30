@@ -9,7 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Modal } from "@/components/ui/modal";
 import { Text } from "@/components/ui/text";
 import type { FireFailure, LiveTableValue } from "@/hooks/use-live-table";
-import { formatPrice, formatTableLabel } from "@/lib/format";
+import { formatPrice } from "@/lib/format";
 import type { CartLine } from "@/lib/api/types";
 
 export interface CartModalProps {
@@ -89,9 +89,7 @@ export function CartModal({
       size="lg"
       title="Review table cart"
       description={
-        table
-          ? `${formatTableLabel(table.code)} fires as one grouped ticket for the kitchen.`
-          : undefined
+        table ? "This table's order fires as one grouped ticket for the kitchen." : undefined
       }
       footer={
         cart.length > 0 ? (
