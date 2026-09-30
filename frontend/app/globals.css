@@ -339,24 +339,26 @@
 
 /* The ambient field: three overlapping falls of different sizes and centres
    rather than one disc, so it never reads as a spotlight or as a shape that
-   traces the artwork. It sits behind the image and drifts a few pixels with
-   the pointer — see hero-visual.tsx, which writes --gx / --gy / --gi onto
-   the wrapper and nothing else. */
+   traces the artwork. All three are lit in ember — the middle fall used to be
+   tan and read as a dark smudge behind the server rather than warmth. It sits
+   behind the image and drifts a few pixels with the pointer — see
+   hero-visual.tsx, which writes --gx / --gy / --gi onto the wrapper and
+   nothing else. */
 .hero-glow {
   position: absolute;
   inset: -16% -20% -12% -20%;
   z-index: 0;
   pointer-events: none;
-  filter: blur(44px);
+  filter: blur(68px);
   background-image:
     radial-gradient(
       52% 42% at 40% 44%,
-      color-mix(in srgb, var(--color-ember) 15%, transparent) 0%,
+      color-mix(in srgb, var(--color-ember) 12%, transparent) 0%,
       transparent 68%
     ),
     radial-gradient(
       64% 52% at 60% 62%,
-      color-mix(in srgb, var(--color-tan) 28%, transparent) 0%,
+      color-mix(in srgb, var(--color-ember) 11%, transparent) 0%,
       transparent 72%
     ),
     radial-gradient(
@@ -364,7 +366,7 @@
       color-mix(in srgb, var(--color-cream) 85%, transparent) 0%,
       transparent 76%
     );
-  opacity: calc(0.9 + var(--gi, 0) * 0.1);
+  opacity: calc(0.78 + var(--gi, 0) * 0.1);
   transform: translate3d(calc(var(--gx, 0) * 14px), calc(var(--gy, 0) * 11px), 0)
     scale(calc(1 + var(--gi, 0) * 0.04));
   /* The pointer writes the variables; this is what makes the light glide to
