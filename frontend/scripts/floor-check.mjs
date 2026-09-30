@@ -295,7 +295,7 @@ try {
 
   const lockedText = await waitForText("Enter floor staff PIN", 15_000);
   check("floor shows the PIN wall when locked", Boolean(lockedText));
-  check("board content is NOT rendered while locked", !(lockedText ?? "").includes("Floor operations"));
+  check("board content is NOT rendered while locked", !(lockedText ?? "").includes("Floor"));
 
   // ----------------------------------------------------------- unlocked state
   section("2. Unlocked — the live board renders");
@@ -309,7 +309,7 @@ try {
   await goto(`${WEB}/floor`);
 
   // The card needs: the header, a seeded table code, and the allergy alert.
-  const boardText = await waitForText("Floor operations", 20_000);
+  const boardText = await waitForText("Floor", 20_000);
   check("floor board renders after unlocking", Boolean(boardText));
 
   const withTable = await waitForText("k7x2p", 20_000);

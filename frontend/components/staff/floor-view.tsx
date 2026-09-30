@@ -5,6 +5,7 @@ import { AnimatePresence, motion } from "motion/react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { OpsBar } from "@/components/staff/ops-bar";
 import { MenuAvailabilityDrawer } from "@/components/staff/menu-availability-drawer";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Container } from "@/components/ui/container";
 import { EmptyState, ErrorState } from "@/components/ui/empty-state";
@@ -175,8 +176,16 @@ export function FloorView({ onLock }: FloorViewProps) {
 
   return (
     <main id="main" className="min-h-dvh pb-20">
+      {/* Same identity treatment as /kitchen: the badge carries the surface's
+          name, so the page heading itself lives here for assistive tech. */}
+      <h1 className="sr-only">Floor operations</h1>
+
       <OpsBar
-        title="Floor operations"
+        prefix={
+          <Badge tone="brand" size="md">
+            Floor
+          </Badge>
+        }
         actions={
           <>
             <IconButton
