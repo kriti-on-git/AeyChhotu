@@ -27,7 +27,9 @@ export function SiteHeader() {
     <header
       className={cn(
         "sticky top-0 z-40 w-full transition-colors duration-[var(--duration-base)] ease-gentle",
-        scrolled ? "border-b border-line/70 bg-cream/85 backdrop-blur-md" : "border-b border-transparent",
+        scrolled
+          ? "border-b border-line bg-canvas/85 backdrop-blur-md"
+          : "border-b border-transparent",
       )}
     >
       <Container className="flex h-18 items-center justify-between gap-6">
@@ -35,12 +37,12 @@ export function SiteHeader() {
           <Logo />
         </Link>
 
-        <nav aria-label="Sections" className="hidden items-center gap-8 lg:flex">
+        <nav aria-label="Sections" className="hidden items-center gap-7 lg:flex">
           {marketingNav.map((link) => (
             <a
               key={link.href}
               href={link.href}
-              className="text-sm font-medium text-ink-muted transition-colors duration-[var(--duration-fast)] hover:text-ink"
+              className="text-sm font-medium text-ink-muted transition-colors duration-[var(--duration-fast)] hover:text-ember"
             >
               {link.label}
             </a>
@@ -51,7 +53,7 @@ export function SiteHeader() {
           <Link href="/kitchen" className={buttonStyles({ variant: "ghost", size: "sm" })}>
             Kitchen board
           </Link>
-          <Link href="/table/k7x2p" className={buttonStyles({ variant: "primary", size: "sm" })}>
+          <Link href="/table/k7x2p" className={buttonStyles({ variant: "ember", size: "sm" })}>
             Open a table
           </Link>
         </div>
@@ -79,7 +81,7 @@ export function SiteHeader() {
                 <a
                   href={link.href}
                   onClick={() => setMenuOpen(false)}
-                  className="block rounded-md px-3 py-3 text-base font-medium text-ink transition-colors duration-[var(--duration-fast)] hover:bg-beige/50"
+                  className="block rounded-md px-3 py-3 text-base font-medium text-ink transition-colors duration-[var(--duration-fast)] hover:bg-sand"
                 >
                   {link.label}
                 </a>
@@ -88,13 +90,13 @@ export function SiteHeader() {
           </ul>
 
           <div className="flex flex-col gap-3 border-t border-line pt-6">
-            <p className="text-label text-ink-muted uppercase">Live screens</p>
+            <p className="text-label text-ember uppercase">Live screens</p>
             {productLinks.map((link) => (
               <Link
                 key={link.href}
                 href={link.href}
                 onClick={() => setMenuOpen(false)}
-                className={buttonStyles({ variant: "outline", size: "md", fullWidth: true })}
+                className={buttonStyles({ variant: "soft", size: "md", fullWidth: true })}
               >
                 {link.label}
               </Link>

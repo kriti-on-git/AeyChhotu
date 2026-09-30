@@ -9,7 +9,7 @@ What has been built and verified in the AeyChhotu frontend.
 ├── docs/        # All project documentation (source of truth)
 └── frontend/    # Complete Next.js application
     ├── app/           # App Router pages, layouts, API route
-    ├── components/    # ui/ layout/ landscape/ motion/ diner/ staff/ brand/
+    ├── components/    # ui/ layout/ motion/ diner/ staff/ brand/
     ├── hooks/         # use-db, use-presence, use-table-data, use-now, scroll lock
     ├── lib/           # api/ service layer, fonts, format, motion, site, sound, utils
     └── configs        # package.json, tsconfig, next/postcss/eslint configs, .gitignore
@@ -43,15 +43,16 @@ Every endpoint behavior from `docs/4-architectural-mapping.md` (session init, ca
 
 ## 4. Design System
 
-- **Tokens:** single `@theme` block in `app/globals.css` — documented palette (`#F7EAD7`, `#E1C8A8`, `#C7A27D`, `#9A7354`, `#3A2A1E`) plus derived warm neutrals, semantic surfaces, status colors (pending/preparing/ready/alert), type scale, radii, shadows, motion timings. No hardcoded colors scattered across files.
+- **Tokens:** one `@theme` block in `app/globals.css` holds the Hospitality skin — near-white ground (`#FBF8F4`), white raised surface, espresso ink (`#1C1512`), the `#9E3E14` ember accent, status colors (pending/preparing/ready/alert), type scale, radii, shadows, motion timings. A second, unlayered `[data-skin="ops"]` block re-declares the same variable names for the dark kitchen/floor console, so one selector re-skins a whole surface. No hardcoded colors scattered across files.
 - **Typography:** editorial clamp-based scale from display → label, wired through `next/font`.
-- **Primitives:** 24 reusable components in `components/ui/` (Button, IconButton, Card, Badge, Input, Textarea, Select, Field, Modal, Drawer, Overlay, Tooltip, Toast, Spinner, LoadingState, EmptyState, Container, Section, Heading, Text, PageHeader, SectionHeader…). No duplicated markup between pages.
-- **Landscape/parallax system:** `components/landscape/` (LandscapeScene, Sun, OrganicShape, SectionDivider) — SVG/CSS shapes, `pointer-events-none`, responsive, no horizontal overflow.
+- **Primitives:** reusable components in `components/ui/` (Button, IconButton, Card, Badge, Input, Textarea, Select, Field, Modal, Drawer, Overlay, Tooltip, Toast, Spinner, LoadingState, EmptyState, Container, Section, Heading, Text, PageHeader, SectionHeader…). No duplicated markup between pages.
+- **Skins:** `data-skin="ops"` wraps the kitchen and floor surfaces (`kitchen-screen.tsx`, `floor-screen.tsx`). It swaps the ground to `#14110F`, brightens the accent to `#EE8047`, enlarges the ticket type and replaces the display serif with the sans. `html:has([data-skin="ops"])` also owns the document background so overscroll matches.
+- **Removed:** the `components/landscape/` set (LandscapeScene, Sun, OrganicShape, SectionDivider) was unmounted in the palette pass — the diner header and the landing hero were rebuilt around product mocks instead — and has now been deleted along with the unreferenced `public/hero.png`.
 
 ## 5. Motion & Parallax
 
-- Scroll-driven layered parallax in `landscape-scene.tsx` (sky → hills → sun at differing rates); entrance reveals via `components/motion/reveal.tsx`.
-- `useReducedMotion` respected in every animated component (landscape, reveals, KDS cards, tracker, overlays) — verified in-browser with emulated `prefers-reduced-motion`.
+- Entrance reveals via `components/motion/reveal.tsx`, plus status/overlay/card transitions.
+- `useReducedMotion` respected in every animated component (reveals, KDS cards, tracker, overlays) — verified in-browser with emulated `prefers-reduced-motion`.
 - Transform/opacity-based animation only; no layout-shift effects, no scroll hijacking.
 
 ## 6. Data & API Layer

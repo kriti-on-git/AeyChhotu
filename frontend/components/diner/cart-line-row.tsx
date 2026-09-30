@@ -31,7 +31,7 @@ export function CartLineRow({
   const unavailable = item ? !item.is_available : false;
 
   return (
-    <li className="rounded-md border border-line bg-canvas p-4">
+    <li className="rounded-md border border-line bg-surface-sunken/60 p-4">
       <div className="flex items-start justify-between gap-4">
         <div className="flex flex-col gap-1">
           <p className="font-display text-base text-ink">{item?.name ?? "Removed item"}</p>
@@ -60,7 +60,7 @@ export function CartLineRow({
             )}
           </IconButton>
 
-          <span className="min-w-6 text-center text-sm font-medium text-ink" aria-live="polite">
+          <span className="min-w-6 text-center text-sm font-semibold text-ink" aria-live="polite">
             {line.quantity}
           </span>
 
@@ -81,7 +81,7 @@ export function CartLineRow({
           type="button"
           onClick={() => setNotesOpen((open) => !open)}
           aria-expanded={notesOpen}
-          className="flex cursor-pointer items-center gap-1.5 rounded-sm text-sm text-ink-muted transition-colors duration-[var(--duration-fast)] hover:text-ink"
+          className="flex cursor-pointer items-center gap-1.5 rounded-sm text-sm font-medium text-ink-muted transition-colors duration-[var(--duration-fast)] hover:text-ember"
         >
           <ChevronDown
             className={cn("size-4 transition-transform duration-[var(--duration-fast)]", notesOpen && "rotate-180")}
@@ -94,7 +94,7 @@ export function CartLineRow({
           type="button"
           onClick={onRemove}
           disabled={busy}
-          className="cursor-pointer rounded-sm text-sm text-ink-subtle transition-colors duration-[var(--duration-fast)] hover:text-alert disabled:opacity-50"
+          className="cursor-pointer rounded-sm text-sm font-medium text-ink-subtle transition-colors duration-[var(--duration-fast)] hover:text-alert disabled:opacity-50"
         >
           Remove
         </button>

@@ -5,7 +5,6 @@ import { useMemo, useState } from "react";
 import { MenuItemRow } from "@/components/diner/menu-item-row";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Input } from "@/components/ui/input";
-import { Text } from "@/components/ui/text";
 import type { MenuItem } from "@/lib/api/types";
 
 export interface MenuListProps {
@@ -42,14 +41,18 @@ export function MenuList({ menu, quantities, pendingItemId, itemErrors, onAdd }:
   }, [menu, query]);
 
   return (
-    <div className="flex flex-col gap-8">
-      <Input
-        label="Search the menu"
-        placeholder="Dosa, biryani, chai…"
-        value={query}
-        onChange={(event) => setQuery(event.target.value)}
-        leadingIcon={<Search className="size-4" aria-hidden />}
-      />
+    <div className="flex flex-col gap-9">
+      {/* Sticky so the search stays reachable while the table scrolls
+          through a long menu on a phone. */}
+      <div className="sticky top-[4.25rem] z-20 -mx-1 rounded-lg bg-canvas/90 px-1 py-2 backdrop-blur-md">
+        <Input
+          label="Search the menu"
+          placeholder="Dosa, biryani, chai…"
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          leadingIcon={<Search className="size-4" aria-hidden />}
+        />
+      </div>
 
       {groups.length === 0 ? (
         <EmptyState
@@ -59,11 +62,12 @@ export function MenuList({ menu, quantities, pendingItemId, itemErrors, onAdd }:
       ) : (
         groups.map(([category, items]) => (
           <section key={category} className="flex flex-col gap-2">
-            <div className="flex items-baseline justify-between gap-4 border-b-2 border-dark-brown/15 pb-3">
+            <div className="relative flex items-baseline justify-between gap-4 border-b border-line pb-3">
               <h2 className="font-display text-heading text-ink">{category}</h2>
-              <Text variant="caption" tone="subtle">
+              <span className="text-xs font-semibold tracking-[0.08em] text-ink-subtle uppercase">
                 {items.length} {items.length === 1 ? "dish" : "dishes"}
-              </Text>
+              </span>
+              <span aria-hidden className="absolute -bottom-px left-0 h-0.5 w-12 bg-ember" />
             </div>
 
             <ul className="flex flex-col">

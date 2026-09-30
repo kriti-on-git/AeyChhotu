@@ -5,6 +5,7 @@ import { cn } from "@/lib/utils";
 
 export type HeaderAlign = "left" | "center";
 export type HeaderSize = "section" | "page";
+export type HeaderTone = "default" | "inverse";
 
 const aligns: Record<HeaderAlign, string> = {
   left: "items-start text-left",
@@ -21,6 +22,8 @@ export interface SectionHeaderProps {
   title: string;
   description?: string;
   align?: HeaderAlign;
+  /** Sets the title and description colour; `inverse` is for dark sections. */
+  tone?: HeaderTone;
   size?: HeaderSize;
   actions?: ReactNode;
   as?: ElementType;
@@ -32,11 +35,14 @@ export function SectionHeader({
   title,
   description,
   align = "left",
+  tone = "default",
   size = "section",
   actions,
   as: Component = "div",
   className,
 }: SectionHeaderProps) {
+  const inverse = tone === "inverse";
+
   return (
     <Component
       className={cn(
@@ -48,18 +54,31 @@ export function SectionHeader({
       )}
     >
       {eyebrow ? (
-        <Text variant="label" tone="subtle" as="span" className="flex items-center gap-2.5">
-          <span aria-hidden className="h-px w-6 bg-line-strong" />
+        <Text
+          variant="label"
+          tone={inverse ? "inverseMuted" : "accent"}
+          as="span"
+          className="flex items-center gap-2.5"
+        >
+          <span aria-hidden className="h-px w-6 bg-ember" />
           {eyebrow}
         </Text>
       ) : null}
 
-      <Heading level={size === "page" ? "title" : "heading"} as={size === "page" ? "h1" : "h2"}>
+      <Heading
+        level={size === "page" ? "title" : "heading"}
+        tone={inverse ? "inverse" : "default"}
+        as={size === "page" ? "h1" : "h2"}
+      >
         {title}
       </Heading>
 
       {description ? (
-        <Text variant="lead" tone="muted" className={cn(align === "center" && "mx-auto")}>
+        <Text
+          variant="lead"
+          tone={inverse ? "inverseMuted" : "muted"}
+          className={cn(align === "center" && "mx-auto")}
+        >
           {description}
         </Text>
       ) : null}

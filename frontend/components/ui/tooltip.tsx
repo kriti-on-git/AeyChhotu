@@ -40,7 +40,7 @@ export function Tooltip({ label, side = "top", className, children }: TooltipPro
         role="tooltip"
         aria-hidden={!visible}
         className={cn(
-          "pointer-events-none absolute z-40 max-w-56 rounded-sm bg-dark-brown px-3 py-1.5 text-center text-xs leading-snug text-cream shadow-md transition-opacity duration-[var(--duration-fast)]",
+          "pointer-events-none absolute z-40 max-w-56 rounded-md bg-ink px-3 py-1.5 text-center text-xs leading-snug text-ink-inverse shadow-md transition-opacity duration-[var(--duration-fast)]",
           sides[side],
           visible ? "opacity-100" : "invisible opacity-0",
           className,

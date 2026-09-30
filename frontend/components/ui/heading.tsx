@@ -2,7 +2,7 @@ import type { ElementType, HTMLAttributes } from "react";
 import { cn } from "@/lib/utils";
 
 export type HeadingLevel = "display" | "title" | "heading" | "subheading";
-export type HeadingTone = "default" | "muted" | "inverse";
+export type HeadingTone = "default" | "muted" | "inverse" | "accent";
 
 const levels: Record<HeadingLevel, string> = {
   display: "text-display",
@@ -14,7 +14,8 @@ const levels: Record<HeadingLevel, string> = {
 const tones: Record<HeadingTone, string> = {
   default: "text-ink",
   muted: "text-ink-muted",
-  inverse: "text-cream",
+  inverse: "text-ink-inverse",
+  accent: "text-ember",
 };
 
 const tags: Record<HeadingLevel, ElementType> = {

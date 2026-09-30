@@ -44,7 +44,7 @@ const statusMeta: Record<OrderStatus, StatusMeta> = {
     message: "Your ticket is with the kitchen and waiting to start.",
     Icon: Clock,
     circle: "border-pending/45 bg-paper text-pending",
-    surface: "bg-surface",
+    surface: "bg-canvas",
     badge: "pending",
   },
   preparing: {
@@ -52,7 +52,7 @@ const statusMeta: Record<OrderStatus, StatusMeta> = {
     message: "The chef is cooking your table's order right now.",
     Icon: ChefHat,
     circle: "border-preparing/50 bg-paper text-preparing",
-    surface: "bg-preparing/10",
+    surface: "bg-preparing-surface",
     badge: "preparing",
   },
   ready: {
@@ -144,10 +144,10 @@ export function LiveTracker({ tableToken }: LiveTrackerProps) {
   if (!table) return <InactiveTableState />;
 
   const header = (
-    <div className="sticky top-0 z-30 border-b border-line/70 bg-cream/85 backdrop-blur-md">
+    <div className="sticky top-0 z-30 border-b border-line bg-canvas/88 backdrop-blur-md">
       <Container className="flex flex-wrap items-center justify-between gap-3 py-3.5">
         <div className="flex items-center gap-3">
-          <Badge tone="brand">{formatTableLabel(table.code)}</Badge>
+          <Badge tone="brand" size="md">{formatTableLabel(table.code)}</Badge>
           <span className="text-sm text-ink-muted">Live status tracker</span>
         </div>
 
@@ -229,7 +229,7 @@ export function LiveTracker({ tableToken }: LiveTrackerProps) {
 
         <ProgressSteps status={order.status} />
 
-        <Card tone="canvas" className="w-full">
+        <Card tone="surface" className="w-full">
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line pb-4">
             <div className="flex items-center gap-3">
               <Badge tone={meta.badge}>{meta.label}</Badge>
@@ -247,7 +247,7 @@ export function LiveTracker({ tableToken }: LiveTrackerProps) {
             {order.items.map((item) => (
               <li
                 key={item.id}
-                className="flex flex-col gap-1 border-b border-line/70 pb-3 last:border-0 last:pb-0"
+                className="flex flex-col gap-1 border-b border-line pb-3 last:border-0 last:pb-0"
               >
                 <p className="flex flex-wrap items-baseline gap-2 text-sm font-medium text-ink">
                   <span className="font-display text-base">{item.quantity}×</span>
@@ -348,13 +348,13 @@ function ProgressSteps({ status }: { status: OrderStatus }) {
               aria-hidden
               className={cn(
                 "h-1.5 w-full rounded-pill transition-colors duration-[var(--duration-base)]",
-                done || active ? "bg-dark-brown" : "bg-line",
+                active ? "bg-ember" : done ? "bg-ink" : "bg-line-strong",
               )}
             />
             <span
               className={cn(
                 "text-label uppercase",
-                active ? "text-ink" : done ? "text-ink-muted" : "text-ink-subtle/70",
+                active ? "text-ember" : done ? "text-ink" : "text-ink-subtle",
               )}
             >
               {step.label}

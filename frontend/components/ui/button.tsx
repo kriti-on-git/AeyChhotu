@@ -4,31 +4,35 @@ import { cn } from "@/lib/utils";
 
 export type ButtonVariant =
   | "primary"
+  | "ember"
   | "secondary"
+  | "soft"
   | "outline"
   | "ghost"
-  | "danger"
-  | "ember";
+  | "danger";
 
 export type ButtonSize = "sm" | "md" | "lg" | "xl";
 
 const base =
-  "relative inline-flex shrink-0 cursor-pointer items-center justify-center gap-2 rounded-pill font-sans font-medium whitespace-nowrap transition-[background-color,color,border-color,box-shadow,transform] duration-[var(--duration-fast)] ease-gentle select-none disabled:pointer-events-none disabled:opacity-45";
+  "relative inline-flex shrink-0 cursor-pointer items-center justify-center gap-2 rounded-md font-sans font-semibold whitespace-nowrap transition-[background-color,color,border-color,box-shadow,transform] duration-[var(--duration-fast)] ease-gentle select-none disabled:pointer-events-none disabled:opacity-45";
 
+/* Hierarchy is carried by fill, not by hue: one ink action, one ember
+   action, then progressively lighter chrome. A screen should never have
+   two competing ember buttons on it. */
 const variants: Record<ButtonVariant, string> = {
-  primary:
-    "bg-dark-brown text-cream shadow-sm hover:bg-clay hover:shadow-md active:translate-y-px",
-  secondary: "bg-beige text-dark-brown hover:bg-tan active:translate-y-px",
+  primary: "bg-ink text-ink-inverse shadow-xs hover:bg-clay active:translate-y-px",
+  ember: "bg-ember text-on-ember shadow-xs hover:bg-ember-strong active:translate-y-px",
+  secondary: "bg-beige text-ink hover:bg-tan active:translate-y-px",
+  soft: "border border-line-strong bg-sand text-ink hover:border-ink-subtle hover:bg-beige active:translate-y-px",
   outline:
-    "border border-dark-brown/25 bg-transparent text-dark-brown hover:border-dark-brown/50 hover:bg-beige/40 active:translate-y-px",
-  ghost: "bg-transparent text-ink-muted hover:bg-beige/45 hover:text-ink",
-  danger: "bg-alert text-cream shadow-sm hover:brightness-110 active:translate-y-px",
-  ember: "bg-ember text-cream shadow-sm hover:brightness-110 active:translate-y-px",
+    "border border-line-strong bg-transparent text-ink hover:border-ink-subtle hover:bg-sand active:translate-y-px",
+  ghost: "bg-transparent text-ink-muted hover:bg-sand hover:text-ink",
+  danger: "bg-alert text-ink-inverse shadow-xs hover:brightness-110 active:translate-y-px",
 };
 
 const sizes: Record<ButtonSize, string> = {
-  sm: "h-9 px-4 text-sm",
-  md: "h-11 px-5 text-sm",
+  sm: "h-9 px-3.5 text-sm",
+  md: "h-11 px-4 text-sm",
   lg: "h-13 px-6 text-base",
   xl: "h-15 px-8 text-base",
 };

@@ -23,10 +23,10 @@ export function useFieldControl({ id, hint, error }: FieldControlOptions) {
 export function controlStyles({ invalid = false }: { invalid?: boolean } = {}) {
   return cn(
     "w-full rounded-md border bg-paper px-4 text-base text-ink transition-[border-color,box-shadow] duration-[var(--duration-fast)] ease-gentle",
-    "placeholder:text-ink-subtle/85 focus:outline-none focus:ring-4 disabled:cursor-not-allowed disabled:opacity-60",
+    "placeholder:text-ink-subtle focus:outline-none focus:ring-4 disabled:cursor-not-allowed disabled:opacity-60",
     invalid
       ? "border-alert focus:border-alert focus:ring-alert/20"
-      : "border-line focus:border-brown focus:ring-beige/55",
+      : "border-line-strong focus:border-ember focus:ring-ember/15",
   );
 }
 
@@ -65,7 +65,7 @@ export function FieldShell({
       {children}
 
       {error ? (
-        <p id={`${id}-error`} role="alert" className="text-sm text-alert">
+        <p id={`${id}-error`} role="alert" className="text-sm font-medium text-alert">
           {error}
         </p>
       ) : hint ? (

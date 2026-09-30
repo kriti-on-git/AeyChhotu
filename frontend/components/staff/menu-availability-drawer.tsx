@@ -75,7 +75,7 @@ export function MenuAvailabilityDrawer({
       description="Toggling a dish off greys it out instantly on every active menu at the table."
     >
       {groups.length === 0 ? (
-        <p className="rounded-md border border-line bg-paper px-4 py-6 text-center text-sm text-ink-muted">
+        <p className="rounded-md border border-line bg-surface-sunken px-4 py-6 text-center text-sm text-ink-muted">
           No catalog loaded yet. Once the menu is reachable it appears here and you can 86 any dish.
         </p>
       ) : (
@@ -93,7 +93,7 @@ export function MenuAvailabilityDrawer({
                       <div className="flex min-w-0 flex-col">
                         <span
                           className={cn(
-                            "truncate text-sm font-medium",
+                            "truncate text-sm font-semibold",
                             available ? "text-ink" : "text-ink-subtle line-through",
                           )}
                         >
@@ -111,13 +111,13 @@ export function MenuAvailabilityDrawer({
                         onClick={() => void toggle(item)}
                         className={cn(
                           "relative h-7 w-12 shrink-0 cursor-pointer rounded-pill transition-colors duration-[var(--duration-base)] ease-gentle disabled:opacity-60",
-                          available ? "bg-ready" : "bg-sand",
+                          available ? "bg-ready" : "bg-line-strong",
                         )}
                       >
                         <span
                           aria-hidden
                           className={cn(
-                            "absolute top-0.5 left-0.5 size-6 rounded-pill bg-paper shadow-sm transition-transform duration-[var(--duration-base)] ease-gentle",
+                            "absolute top-0.5 left-0.5 size-6 rounded-pill bg-surface shadow-sm transition-transform duration-[var(--duration-base)] ease-gentle",
                             available ? "translate-x-5" : "translate-x-0",
                           )}
                         />

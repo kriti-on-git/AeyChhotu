@@ -5,7 +5,7 @@ import { cn } from "@/lib/utils";
 export type StateTone = "neutral" | "alert";
 
 const tones: Record<StateTone, string> = {
-  neutral: "bg-beige/45 text-brown",
+  neutral: "bg-sand text-ink-muted",
   alert: "bg-alert-surface text-alert",
 };
 
@@ -32,7 +32,7 @@ export function EmptyState({
   return (
     <div
       className={cn(
-        "flex flex-col items-center justify-center gap-4 rounded-lg border border-dashed border-line px-6 py-14 text-center",
+        "flex flex-col items-center justify-center gap-4 rounded-lg border border-dashed border-line-strong bg-surface/60 px-6 py-14 text-center",
         className,
       )}
     >

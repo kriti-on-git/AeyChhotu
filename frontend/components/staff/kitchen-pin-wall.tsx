@@ -13,6 +13,11 @@ import { cn } from "@/lib/utils";
 
 const keys = ["1", "2", "3", "4", "5", "6", "7", "8", "9"];
 
+/* Touch targets here are sized for a thumb on a wall-mounted tablet, not a
+   mouse: every key is 4rem tall with a visible press state. */
+const keyClass =
+  "flex h-16 cursor-pointer items-center justify-center rounded-md border border-line-strong bg-paper font-display text-2xl font-semibold text-ink transition-colors duration-[var(--duration-fast)] hover:border-ember hover:bg-ember-soft active:translate-y-px disabled:pointer-events-none disabled:opacity-45";
+
 export interface KitchenPinWallProps {
   onSuccess: () => void;
   /** Which back-of-house surface is asking, e.g. "kitchen" or "floor".
@@ -83,12 +88,12 @@ export function KitchenPinWall({ onSuccess, surface = "kitchen" }: KitchenPinWal
 
         <form
           onSubmit={handleSubmit}
-          className="flex w-full max-w-sm flex-col gap-5 rounded-xl border border-line bg-surface p-6 shadow-md sm:p-8"
+          className="flex w-full max-w-sm flex-col gap-6 rounded-xl border border-line-strong bg-surface p-6 shadow-lg sm:p-8"
           noValidate
         >
-          <div className="flex flex-col items-center gap-2 text-center">
-            <span className="flex size-11 items-center justify-center rounded-pill bg-dark-brown text-cream">
-              <KeyRound className="size-5" aria-hidden />
+          <div className="flex flex-col items-center gap-3 text-center">
+            <span className="flex size-12 items-center justify-center rounded-md bg-ember text-on-ember">
+              <KeyRound className="size-6" aria-hidden />
             </span>
             <h1 className="font-display text-subheading text-ink">Enter {surface} staff PIN</h1>
             <p className="text-sm text-ink-muted">The board stays hidden until the PIN matches.</p>
@@ -112,20 +117,14 @@ export function KitchenPinWall({ onSuccess, surface = "kitchen" }: KitchenPinWal
               placeholder="••••"
               className={cn(
                 controlStyles({ invalid }),
-                "h-14 text-center font-display text-2xl tracking-[0.4em]",
+                "h-16 text-center font-display text-3xl tracking-[0.4em]",
               )}
             />
           </FieldShell>
 
-          <div className="grid grid-cols-3 gap-2.5" role="group" aria-label="PIN keypad">
+          <div className="grid grid-cols-3 gap-3" role="group" aria-label="PIN keypad">
             {keys.map((key) => (
-              <button
-                key={key}
-                type="button"
-                disabled={busy}
-                onClick={() => append(key)}
-                className="flex h-14 cursor-pointer items-center justify-center rounded-md border border-line bg-paper font-display text-xl text-ink transition-colors duration-[var(--duration-fast)] hover:border-line-strong hover:bg-beige/60 active:bg-beige disabled:pointer-events-none disabled:opacity-45"
-              >
+              <button key={key} type="button" disabled={busy} onClick={() => append(key)} className={keyClass}>
                 {key}
               </button>
             ))}
@@ -135,31 +134,26 @@ export function KitchenPinWall({ onSuccess, surface = "kitchen" }: KitchenPinWal
               disabled={busy}
               aria-label="Delete last digit"
               onClick={() => setPin((current) => current.slice(0, -1))}
-              className="flex h-14 cursor-pointer items-center justify-center rounded-md border border-line bg-paper text-ink-muted transition-colors duration-[var(--duration-fast)] hover:bg-beige/60 disabled:pointer-events-none disabled:opacity-45"
+              className={cn(keyClass, "text-ink-muted")}
             >
-              <Delete className="size-5" aria-hidden />
+              <Delete className="size-6" aria-hidden />
+            </button>
+
+            <button type="button" disabled={busy} onClick={() => append("0")} className={keyClass}>
+              0
             </button>
 
             <button
               type="button"
               disabled={busy}
-              onClick={() => append("0")}
-              className="flex h-14 cursor-pointer items-center justify-center rounded-md border border-line bg-paper font-display text-xl text-ink transition-colors duration-[var(--duration-fast)] hover:border-line-strong hover:bg-beige/60 active:bg-beige disabled:pointer-events-none disabled:opacity-45"
-            >
-              0
-            </button>
-
-            <button
-              type="submit"
-              disabled={busy}
               aria-label="Unlock board"
-              className="flex h-14 cursor-pointer items-center justify-center rounded-md bg-dark-brown text-cream transition-colors duration-[var(--duration-fast)] hover:bg-clay disabled:pointer-events-none disabled:opacity-45"
+              className="flex h-16 cursor-pointer items-center justify-center rounded-md bg-ember text-on-ember transition-colors duration-[var(--duration-fast)] hover:bg-ember-strong active:translate-y-px disabled:pointer-events-none disabled:opacity-45"
             >
-              {busy ? <Spinner size="sm" label="Checking PIN" /> : <LogIn className="size-5" aria-hidden />}
+              {busy ? <Spinner size="sm" label="Checking PIN" /> : <LogIn className="size-6" aria-hidden />}
             </button>
           </div>
 
-          <Button type="submit" size="lg" fullWidth loading={busy}>
+          <Button type="submit" variant="ember" size="lg" fullWidth loading={busy}>
             Unlock board
           </Button>
         </form>

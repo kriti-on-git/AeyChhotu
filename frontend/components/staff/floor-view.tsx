@@ -35,6 +35,13 @@ const guidance: Record<OrderStatus, string> = {
   served: "Order complete.",
 };
 
+const statusRail: Record<OrderStatus, string> = {
+  pending: "bg-pending",
+  preparing: "bg-preparing",
+  ready: "bg-ready",
+  served: "bg-line-strong",
+};
+
 const urgencyRank: Record<OrderStatus, number> = {
   served: 0,
   pending: 2,
@@ -105,7 +112,7 @@ export function FloorView({ onLock }: FloorViewProps) {
               </Badge>
 
               <Button
-                variant="outline"
+                variant="soft"
                 onClick={() => setAvailabilityOpen(true)}
                 leftIcon={<EyeOff className="size-4" aria-hidden />}
               >
@@ -127,7 +134,7 @@ export function FloorView({ onLock }: FloorViewProps) {
         {phase === "loading" ? (
           <div className="mt-10 grid gap-5 sm:grid-cols-2 xl:grid-cols-3" aria-busy="true">
             {Array.from({ length: 6 }).map((_, index) => (
-              <Skeleton key={index} className="h-44 rounded-xl" />
+              <Skeleton key={index} className="h-44 rounded-lg" />
             ))}
           </div>
         ) : phase === "error" ? (
@@ -204,7 +211,15 @@ function TableCard({
       ? { label: "Staged", badge: "outline" as BadgeTone }
       : { label: "Idle", badge: "neutral" as BadgeTone };
 
-  const cardTone = status === "ready" ? "border-ready/55 bg-ready-surface" : undefined;
+  const cardTone = status === "ready" ? "border-ready/60 bg-ready-surface" : undefined;
+
+  /* A colour rail on the card edge lets a server triage the whole room by
+     scanning the left margin, without reading a single label. */
+  const rail = status
+    ? statusRail[status]
+    : cart_line_count > 0
+      ? "bg-line-strong"
+      : "bg-line";
 
   const detail = status
     ? guidance[status]
@@ -214,10 +229,14 @@ function TableCard({
 
   return (
     <li>
-      <Card className={cn("h-full", cardTone)}>
+      <Card className={cn("h-full pt-5", cardTone)}>
+        <span aria-hidden className={cn("absolute inset-x-0 top-0 h-1", rail)} />
+
         <div className="flex items-start justify-between gap-3">
           <div className="flex flex-col gap-1">
-            <span className="text-label text-ink-muted uppercase">{formatTableLabel(table.code)}</span>
+            <span className="text-label text-ink-subtle uppercase">
+              {formatTableLabel(table.code)}
+            </span>
             <p className="font-display text-subheading text-ink">{table.name}</p>
           </div>
           <Badge tone={badge.badge} size="md">
@@ -250,13 +269,16 @@ function TableCard({
             </span>
           ) : null}
 
-          {allergyLines > 0 ? (
-            <span className="flex items-center gap-1.5 font-bold uppercase tracking-wide text-alert">
-              <ShieldAlert className="size-3.5" aria-hidden />
-              {allergyLines} {allergyLines === 1 ? "allergy" : "allergies"}
-            </span>
-          ) : null}
         </div>
+
+        {/* Allergies are the reason this card exists, so they get their own
+            block rather than a line inside the metadata row. */}
+        {allergyLines > 0 ? (
+          <p className="mt-3 flex items-center gap-2 rounded-md border border-alert/45 bg-alert-surface px-3 py-2 text-xs font-bold tracking-wide text-alert uppercase">
+            <ShieldAlert className="size-3.5 shrink-0" aria-hidden />
+            {allergyLines} {allergyLines === 1 ? "allergy" : "allergies"} on this ticket
+          </p>
+        ) : null}
 
         <p
           className={cn(

@@ -110,10 +110,7 @@ export function Overlay({
             exit={{ opacity: 0 }}
             transition={{ duration: 0.2, ease: easeGentle }}
             onClick={closeOnBackdrop ? onClose : undefined}
-            className={cn(
-              "absolute inset-0 h-full w-full cursor-default bg-scrim",
-              !closeOnBackdrop && "cursor-default",
-            )}
+            className="absolute inset-0 h-full w-full cursor-default bg-scrim"
           />
 
           <div
@@ -143,8 +140,8 @@ export function Overlay({
               }
               transition={transitionBase}
               className={cn(
-                "pointer-events-auto relative flex max-h-full w-full flex-col overflow-hidden border border-line bg-surface shadow-lg outline-none",
-                position === "center" ? "rounded-t-2xl sm:rounded-2xl" : "h-full rounded-none",
+                "pointer-events-auto relative flex max-h-full w-full flex-col overflow-hidden border border-line-strong bg-surface shadow-lg outline-none",
+                position === "center" ? "rounded-t-2xl sm:rounded-xl" : "h-full rounded-none",
                 className,
               )}
             >
@@ -177,7 +174,7 @@ export function OverlayHeader({
   return (
     <header
       className={cn(
-        "flex items-start justify-between gap-4 border-b border-line px-6 py-5",
+        "flex items-start justify-between gap-4 border-b border-line bg-surface-sunken/60 px-6 py-5",
         className,
       )}
     >
@@ -202,7 +199,7 @@ export function OverlayFooter({ className, ...props }: HTMLAttributes<HTMLDivEle
   return (
     <div
       className={cn(
-        "flex flex-col gap-3 border-t border-line px-6 py-5 [&>*]:w-full sm:flex-row sm:justify-end sm:[&>*]:w-auto",
+        "flex flex-col gap-3 border-t border-line bg-surface-sunken/60 px-6 py-5 [&>*]:w-full sm:flex-row sm:justify-end sm:[&>*]:w-auto",
         className,
       )}
       {...props}

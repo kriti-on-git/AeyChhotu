@@ -354,10 +354,13 @@ Business outcomes are **returned as `jsonb` codes rather than raised**, so an
 | Data runtimes | `hooks/use-live-table.ts`, `hooks/use-live-kds.ts` | Live-first with mock fallback + realtime + polling safety net |
 | API client | `lib/api-client/` | `apiClient` (20 s timeout, envelope parse, 401 guard), `endpoints` (1 fn per endpoint), `realtime`, `paginate`, `normalize` |
 | Offline demo store | `lib/api/` | Seeded store used **only** when the backend is unreachable |
-| Design tokens | `app/globals.css` | Single `@theme` block — palette, type scale, radii, shadows, motion timings |
+| Design tokens | `app/globals.css` | `@theme` block (Hospitality skin) + an unlayered `[data-skin="ops"]` block (dark kitchen/floor console) — palette, type scale, radii, shadows, motion timings |
 
-**Motion:** scroll-driven parallax (`components/landscape/`), entrance reveals (`components/motion/reveal.tsx`),
+**Motion:** entrance reveals (`components/motion/reveal.tsx`), status/overlay/card transitions,
 transform/opacity-only animations, and `useReducedMotion` respected everywhere.
+
+**Skins:** diner and marketing surfaces use the light Hospitality skin; `/kitchen` and `/floor` opt into
+`data-skin="ops"` for the high-contrast dark console read at ticket distance.
 
 ---
 
@@ -421,7 +424,7 @@ transform/opacity-only animations, and `useReducedMotion` respected everywhere.
 │   └── package.json
 ├── frontend/                  ← Next.js 16 app
 │   ├── app/                   ← routes, layout, globals.css, error/not-found
-│   ├── components/            ← ui/ · diner/ · staff/ · landscape/ · motion/ · layout/ · brand/
+│   ├── components/            ← ui/ · diner/ · staff/ · motion/ · layout/ · brand/
 │   ├── hooks/                 ← use-live-table · use-live-kds · use-db · use-presence · use-now
 │   ├── lib/
 │   │   ├── api-client/        ← apiClient · endpoints · realtime · paginate · normalize · types

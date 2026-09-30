@@ -20,10 +20,20 @@ export type ToastTone = "info" | "success" | "error";
 
 const defaultDuration = 5000;
 
-const tones: Record<ToastTone, { classes: string; icon: LucideIcon }> = {
-  info: { classes: "border-line bg-surface text-ink", icon: Info },
-  success: { classes: "border-ready/30 bg-ready-surface text-ink", icon: CircleCheck },
-  error: { classes: "border-alert/30 bg-alert-surface text-ink", icon: CircleAlert },
+/* Each tone carries a solid accent rail so the toast's state is readable
+   from its edge, before the copy is parsed. */
+const tones: Record<ToastTone, { classes: string; rail: string; icon: LucideIcon }> = {
+  info: { classes: "border-line-strong bg-surface text-ink", rail: "bg-ink-subtle", icon: Info },
+  success: {
+    classes: "border-ready/35 bg-ready-surface text-ink",
+    rail: "bg-ready",
+    icon: CircleCheck,
+  },
+  error: {
+    classes: "border-alert/35 bg-alert-surface text-ink",
+    rail: "bg-alert",
+    icon: CircleAlert,
+  },
 };
 
 export interface Toast {
@@ -106,7 +116,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
 
 function ToastCard({ toast, onDismiss }: { toast: Toast; onDismiss: (id: string) => void }) {
   const { id, title, description, tone, duration } = toast;
-  const { classes, icon: Icon } = tones[tone];
+  const { classes, rail, icon: Icon } = tones[tone];
 
   useEffect(() => {
     const timer = window.setTimeout(() => onDismiss(id), duration);
@@ -122,10 +132,11 @@ function ToastCard({ toast, onDismiss }: { toast: Toast; onDismiss: (id: string)
       exit={{ opacity: 0, y: 8, scale: 0.98, transition: { duration: 0.16, ease: easeGentle } }}
       transition={transitionBase}
       className={cn(
-        "pointer-events-auto flex w-full items-start gap-3 rounded-md border px-4 py-3.5 shadow-md sm:max-w-sm",
+        "pointer-events-auto relative flex w-full items-start gap-3 overflow-hidden rounded-md border px-4 py-3.5 pl-5 shadow-md sm:max-w-sm",
         classes,
       )}
     >
+      <span aria-hidden className={cn("absolute inset-y-0 left-0 w-1", rail)} />
       <Icon className="mt-0.5 size-4 shrink-0" aria-hidden />
       <div className="flex-1">
         <p className="text-sm font-medium">{title}</p>

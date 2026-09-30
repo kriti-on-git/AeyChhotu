@@ -1,15 +1,24 @@
 import { Loader2 } from "lucide-react";
 import type { ButtonHTMLAttributes } from "react";
-import { buttonIconClass, buttonStyles, type ButtonSize, type ButtonVariant } from "@/components/ui/button";
+import {
+  buttonIconClass,
+  buttonStyles,
+  type ButtonSize,
+  type ButtonVariant,
+} from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
-export type IconButtonTone = "solid" | "soft" | "ghost" | "outline";
+export type IconButtonTone = "solid" | "accent" | "soft" | "ghost" | "outline";
 
-const tones: Record<IconButtonTone, string> = {
-  solid: "bg-dark-brown text-cream hover:bg-clay",
-  soft: "bg-beige text-dark-brown hover:bg-tan",
-  ghost: "bg-transparent text-ink-muted hover:bg-beige/50 hover:text-ink",
-  outline: "border border-dark-brown/25 text-dark-brown hover:bg-beige/40",
+/* Tones map straight onto button variants — styling is never applied twice,
+   which is what previously let an outline IconButton drift away from the
+   outline Button it sat next to. */
+const variantMap: Record<IconButtonTone, ButtonVariant> = {
+  solid: "primary",
+  accent: "ember",
+  soft: "soft",
+  ghost: "ghost",
+  outline: "outline",
 };
 
 const squareSizes: Record<ButtonSize, string> = {
@@ -37,13 +46,6 @@ export function IconButton({
   children,
   ...props
 }: IconButtonProps) {
-  const variantMap: Record<IconButtonTone, ButtonVariant> = {
-    solid: "primary",
-    soft: "secondary",
-    ghost: "ghost",
-    outline: "outline",
-  };
-
   return (
     <button
       type={type}
@@ -55,7 +57,6 @@ export function IconButton({
         buttonStyles({ variant: variantMap[tone], size }),
         "aspect-square gap-0 p-0",
         squareSizes[size],
-        tones[tone],
         className,
       )}
       {...props}

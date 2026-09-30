@@ -25,13 +25,17 @@ import { cn } from "@/lib/utils";
 
 type ColumnStatus = Exclude<OrderStatus, "served">;
 
+/* Every class a lane needs is written out literally so Tailwind can see it
+   at build time — a template-built `bg-${status}` would never be generated. */
 interface Column {
   status: ColumnStatus;
   title: string;
   hint: string;
-  dot: string;
+  rail: string;
+  iconTile: string;
+  count: string;
   badge: BadgeTone;
-  icon: typeof Flame;
+  Icon: typeof Flame;
   empty: string;
 }
 
@@ -40,27 +44,33 @@ const columns: Column[] = [
     status: "pending",
     title: "Pending",
     hint: "Waiting to start",
-    dot: "bg-pending",
+    rail: "bg-pending",
+    iconTile: "bg-pending-surface text-pending",
+    count: "text-pending",
     badge: "pending",
-    icon: Flame,
+    Icon: Flame,
     empty: "No tickets waiting",
   },
   {
     status: "preparing",
     title: "Preparing",
     hint: "On the line",
-    dot: "bg-preparing",
+    rail: "bg-preparing",
+    iconTile: "bg-preparing-surface text-preparing",
+    count: "text-preparing",
     badge: "preparing",
-    icon: ChefHat,
+    Icon: ChefHat,
     empty: "Nothing is cooking",
   },
   {
     status: "ready",
     title: "Ready",
     hint: "At the pass",
-    dot: "bg-ready",
+    rail: "bg-ready",
+    iconTile: "bg-ready-surface text-ready",
+    count: "text-ready",
     badge: "ready",
-    icon: BellRing,
+    Icon: BellRing,
     empty: "Nothing at the pass",
   },
 ];
@@ -182,7 +192,7 @@ export function KdsBoard({ onLock }: KdsBoardProps) {
 
   return (
     <main id="main" className="min-h-dvh pb-16">
-      <header className="sticky top-0 z-30 border-b border-line bg-cream/90 backdrop-blur-md">
+      <header className="sticky top-0 z-30 border-b border-line-strong bg-surface/95 backdrop-blur-md">
         <Container className="flex flex-wrap items-center justify-between gap-4 py-4">
           <div className="flex items-center gap-3">
             <Badge tone="brand" size="md">
@@ -211,7 +221,7 @@ export function KdsBoard({ onLock }: KdsBoardProps) {
             ) : null}
 
             <Button
-              variant={audioArmed ? "secondary" : "primary"}
+              variant={audioArmed ? "soft" : "ember"}
               size="md"
               onClick={handleStartShift}
               leftIcon={<Volume2 className="size-4" aria-hidden />}
@@ -263,17 +273,38 @@ export function KdsBoard({ onLock }: KdsBoardProps) {
               <section
                 key={column.status}
                 aria-label={`${column.title} tickets`}
-                className="flex flex-col gap-4 rounded-xl border border-line bg-surface p-4 sm:p-5"
+                className="relative flex flex-col gap-4 overflow-hidden rounded-lg border border-line-strong bg-surface p-4 pt-5 sm:p-5 sm:pt-6"
               >
-                <header className="flex items-center justify-between gap-3 border-b border-line pb-3">
+                {/* The lane's own colour runs across its top edge so the three
+                    columns are separable at a glance across the whole board. */}
+                <span aria-hidden className={cn("absolute inset-x-0 top-0 h-1", column.rail)} />
+
+                <header className="flex items-center justify-between gap-3">
                   <span className="flex items-center gap-2.5">
-                    <span aria-hidden className={cn("size-2.5 rounded-pill", column.dot)} />
-                    <h2 className="font-display text-subheading text-ink">{column.title}</h2>
+                    <span
+                      className={cn(
+                        "flex size-9 shrink-0 items-center justify-center rounded-md",
+                        column.iconTile,
+                      )}
+                    >
+                      <column.Icon className="size-5" aria-hidden />
+                    </span>
+                    <span className="flex flex-col">
+                      <h2 className="font-display text-subheading leading-none text-ink">
+                        {column.title}
+                      </h2>
+                      <span className="mt-1 text-xs text-ink-subtle">{column.hint}</span>
+                    </span>
                   </span>
 
-                  <span className="flex items-center gap-2">
-                    <span className="text-xs text-ink-subtle">{column.hint}</span>
-                    <Badge tone={column.badge}>{list.length}</Badge>
+                  <span
+                    aria-label={`${list.length} ${column.title} tickets`}
+                    className={cn(
+                      "font-display text-3xl leading-none font-semibold tabular-nums",
+                      column.count,
+                    )}
+                  >
+                    {list.length}
                   </span>
                 </header>
 
@@ -283,7 +314,7 @@ export function KdsBoard({ onLock }: KdsBoardProps) {
                     {[0, 1].map((row) => (
                       <li
                         key={row}
-                        className="flex flex-col gap-4 rounded-lg border border-line bg-paper p-4"
+                        className="flex flex-col gap-4 rounded-lg border border-line-strong bg-paper p-4"
                       >
                         <div className="flex items-center justify-between gap-2">
                           <Skeleton className="h-6 w-24 rounded-pill" />
@@ -298,7 +329,7 @@ export function KdsBoard({ onLock }: KdsBoardProps) {
                 ) : list.length === 0 ? (
                   /* ---- State matrix: empty — contextual copy + CTA ------- */
                   <EmptyState
-                    icon={column.icon}
+                    icon={column.Icon}
                     title={column.empty}
                     description={
                       boardEmpty

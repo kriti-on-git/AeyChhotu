@@ -15,14 +15,11 @@ import {
   Users,
   type LucideIcon,
 } from "lucide-react";
-import Image from "next/image";
 import Link from "next/link";
-import { OrganicShape } from "@/components/landscape/organic-shape";
-import { SectionDivider } from "@/components/landscape/section-divider";
 import { Reveal } from "@/components/motion/reveal";
-import { Badge } from "@/components/ui/badge";
+import { Badge, type BadgeTone } from "@/components/ui/badge";
 import { buttonStyles } from "@/components/ui/button";
-import { Card, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card } from "@/components/ui/card";
 import { Container } from "@/components/ui/container";
 import { Section } from "@/components/ui/section";
 import { SectionHeader } from "@/components/ui/section-header";
@@ -212,67 +209,99 @@ const personas: Persona[] = [
   },
 ];
 
+const heroStats = [
+  { value: "1", label: "ticket per table, not per phone" },
+  { value: "3", label: "live status tags streamed to the guest" },
+  { value: "0", label: "downloads, logins or hardware" },
+];
+
 export default function LandingPage() {
   return (
     <>
-      <section className="relative isolate overflow-hidden">
-        {/* Hero photo: image1.png, served from /public. A cream veil keeps the
-            dark ink text readable over the mid-tone image; the gentle gradient
-            melts the photo into the page below so the reveal doesn't end on a
-            hard edge. */}
-        <div aria-hidden className="absolute inset-0">
-          <Image
-            src="/hero.png"
-            alt=""
-            fill
-            priority
-            sizes="100vw"
-            className="object-cover object-center"
-          />
-          <div className="absolute inset-0 bg-cream/70" />
-          <div className="absolute inset-x-0 bottom-0 h-40 bg-gradient-to-b from-transparent to-canvas" />
-          <div className="absolute inset-x-0 top-0 h-24 bg-gradient-to-b from-cream/60 to-transparent" />
-        </div>
+      {/* ============================ HERO ============================
+          The old hero stretched a flat mid-tone photo across the whole
+          viewport and then veiled it in cream, which left the page with no
+          focal point at all. The visual is now a mock of the actual product:
+          three live tickets in the states the kitchen moves them through. */}
+      <section className="relative isolate overflow-hidden border-b border-line bg-canvas">
+        <div
+          aria-hidden
+          className="hairline-grid pointer-events-none absolute inset-0 opacity-60 [mask-image:radial-gradient(ellipse_60%_50%_at_50%_0%,black,transparent)]"
+        />
+        <div
+          aria-hidden
+          className="pointer-events-none absolute -top-48 -right-32 size-[36rem] rounded-pill bg-ember/10 blur-3xl"
+        />
+        <div
+          aria-hidden
+          className="pointer-events-none absolute -bottom-40 -left-32 size-[30rem] rounded-pill bg-tan/25 blur-3xl"
+        />
 
-        <Container className="relative z-10 flex min-h-[88svh] flex-col justify-center pt-16 pb-44 sm:pb-40">
-          <Reveal className="max-w-3xl">
-            <Badge tone="outline" className="bg-cream/70">
-              Zero download · no logins · live updates
-            </Badge>
-          </Reveal>
+        <Container className="relative py-20 lg:py-28">
+          <div className="grid items-center gap-16 lg:grid-cols-[1.05fr_1fr] lg:gap-20">
+            <div>
+              <Reveal>
+                <Badge tone="accent" size="md">
+                  Zero download · no logins · live updates
+                </Badge>
+              </Reveal>
 
-          <Reveal delay={0.06} className="mt-6 max-w-3xl">
-            <h1 className="text-display font-display font-semibold text-balance text-ink">
-              Every phone at the table.
-              <br className="hidden sm:block" /> One ticket for the kitchen.
-            </h1>
-          </Reveal>
+              <Reveal delay={0.06}>
+                <h1 className="mt-7 text-display font-display font-semibold text-balance text-ink">
+                  Every phone at the table.
+                  <br className="hidden sm:block" />{" "}
+                  <span className="text-ember">One ticket</span> for the kitchen.
+                </h1>
+              </Reveal>
 
-          <Reveal delay={0.12} className="mt-6 max-w-2xl">
-            <Text variant="lead" tone="muted">
-              AeyChhotu is a zero-download, real-time operational bridge that groups individual
-              table requests into a single unified cart and provides two-way live status updates
-              between diners and the kitchen.
-            </Text>
-          </Reveal>
+              <Reveal delay={0.12}>
+                <Text variant="lead" tone="muted" className="mt-6 max-w-xl">
+                  AeyChhotu is the real-time bridge between the floor and the line. Individual
+                  table requests merge into a single unified cart, and every prep milestone
+                  streams back to the guest who is waiting for it.
+                </Text>
+              </Reveal>
 
-          <Reveal delay={0.18} className="mt-10">
-            <div className="flex flex-wrap items-center gap-3">
-              <Link
-                href={`/table/${demoTableToken}`}
-                className={buttonStyles({ variant: "primary", size: "lg" })}
-              >
-                Open the diner view
-              </Link>
-              <Link href="/kitchen" className={buttonStyles({ variant: "secondary", size: "lg" })}>
-                Kitchen board
-              </Link>
-              <a href="#how-it-works" className={buttonStyles({ variant: "ghost", size: "lg" })}>
-                How it works
-              </a>
+              <Reveal delay={0.18}>
+                <div className="mt-9 flex flex-wrap items-center gap-3">
+                  <Link
+                    href={`/table/${demoTableToken}`}
+                    className={buttonStyles({ variant: "ember", size: "lg" })}
+                  >
+                    Open the diner view
+                  </Link>
+                  <Link
+                    href="/kitchen"
+                    className={buttonStyles({ variant: "soft", size: "lg" })}
+                  >
+                    Kitchen board
+                  </Link>
+                  <a href="#how-it-works" className={buttonStyles({ variant: "ghost", size: "lg" })}>
+                    How it works
+                  </a>
+                </div>
+              </Reveal>
+
+              <Reveal delay={0.24}>
+                <dl className="mt-12 grid max-w-lg grid-cols-3 gap-6 border-t border-line pt-8">
+                  {heroStats.map((stat) => (
+                    <div key={stat.label}>
+                      <dt className="font-display text-3xl font-semibold text-ember">
+                        {stat.value}
+                      </dt>
+                      <dd className="mt-1.5 text-xs leading-snug text-ink-muted">
+                        {stat.label}
+                      </dd>
+                    </div>
+                  ))}
+                </dl>
+              </Reveal>
             </div>
-          </Reveal>
 
+            <Reveal delay={0.16}>
+              <TicketPipeline />
+            </Reveal>
+          </div>
         </Container>
       </section>
 
@@ -284,18 +313,18 @@ export default function LandingPage() {
             description="Toast, Square, me&u and Mr Yum all stop manual order entry. These are the gaps they leave behind in a rush."
           />
 
-          <div className="mt-14 grid gap-6 md:grid-cols-3">
+          <div className="mt-14 grid gap-5 md:grid-cols-3">
             {gaps.map((gap, index) => (
               <Reveal key={gap.title} delay={index * 0.08}>
-                <Card tone="canvas" className="h-full">
-                  <CardHeader>
-                    <Badge tone="pending">Gap {index + 1}</Badge>
-                    <CardTitle className="mt-3">{gap.title}</CardTitle>
-                    <CardDescription>{gap.friction}</CardDescription>
-                  </CardHeader>
-                  <Text variant="small" tone="alert" className="mt-5 border-t border-line pt-5">
+                <Card className="flex h-full flex-col">
+                  <span className="font-display text-4xl font-semibold leading-none text-line-strong">
+                    {String(index + 1).padStart(2, "0")}
+                  </span>
+                  <h3 className="mt-5 font-display text-subheading text-ink">{gap.title}</h3>
+                  <p className="mt-3 text-sm leading-relaxed text-ink-muted">{gap.friction}</p>
+                  <p className="mt-5 border-t border-line pt-5 text-sm leading-relaxed font-medium text-alert">
                     {gap.complaint}
-                  </Text>
+                  </p>
                 </Card>
               </Reveal>
             ))}
@@ -303,31 +332,33 @@ export default function LandingPage() {
         </Container>
       </Section>
 
-      <Section id="how-it-works" spacing="lg" className="relative scroll-mt-20 overflow-hidden">
-        <OrganicShape
-          variant="blob"
-          className="absolute -top-24 -left-32 h-80 w-80 text-beige/60"
-        />
-        <Container className="relative">
+      <Section id="how-it-works" spacing="lg" className="scroll-mt-20">
+        <Container>
           <SectionHeader
             eyebrow="The workflow"
             title="From the first scan to a green screen"
             description="One table session spans three surfaces: the diner's browser, the kitchen board and the floor view."
           />
 
-          <ol className="mt-14 flex flex-col gap-4">
+          <ol className="mt-14 grid gap-x-6 gap-y-10 sm:grid-cols-2 lg:grid-cols-5">
             {steps.map((step, index) => (
               <Reveal key={step.title} delay={index * 0.06}>
-                <li className="grid gap-4 rounded-lg border border-line bg-surface p-6 sm:grid-cols-[auto_1fr] sm:items-start sm:gap-6">
-                  <span className="flex size-11 items-center justify-center rounded-pill bg-dark-brown font-display text-lg text-cream">
-                    {index + 1}
-                  </span>
-                  <div className="flex flex-col gap-2">
-                    <h3 className="font-display text-subheading text-ink">{step.title}</h3>
-                    <Text variant="small" tone="muted" className="max-w-2xl">
-                      {step.body}
-                    </Text>
+                <li className="relative flex h-full flex-col">
+                  {/* Connector rail: a hairline that ties the five stages into
+                      one pipeline instead of five unrelated cards. */}
+                  <div className="flex items-center gap-3">
+                    <span className="flex size-9 shrink-0 items-center justify-center rounded-md bg-ember font-display text-sm font-semibold text-on-ember shadow-xs">
+                      {index + 1}
+                    </span>
+                    <span
+                      aria-hidden
+                      className="hidden h-px flex-1 bg-line-strong lg:block"
+                    />
                   </div>
+                  <h3 className="mt-5 font-display text-base font-semibold text-ink">
+                    {step.title}
+                  </h3>
+                  <p className="mt-2 text-sm leading-relaxed text-ink-muted">{step.body}</p>
                 </li>
               </Reveal>
             ))}
@@ -335,35 +366,36 @@ export default function LandingPage() {
         </Container>
       </Section>
 
-      <SectionDivider fill="text-dark-brown" />
-
       <Section id="innovations" spacing="lg" tone="ink" className="scroll-mt-20">
         <Container>
           <SectionHeader
+            tone="inverse"
             eyebrow="Why it is different"
             title="Three things the incumbents do not do"
           />
 
-          <div className="mt-14 grid gap-6 lg:grid-cols-3">
+          <div className="mt-14 grid gap-5 lg:grid-cols-3">
             {innovations.map((item, index) => (
               <Reveal key={item.title} delay={index * 0.08}>
-                <Card tone="outline" className="h-full border-cream/20 bg-cream/5 text-cream">
-                  <item.icon className="size-6 text-tan" aria-hidden />
-                  <h3 className="mt-5 font-display text-subheading text-cream">{item.title}</h3>
-                  <Text variant="small" tone="inverse" className="mt-3 opacity-85">
+                <div className="flex h-full flex-col rounded-lg border border-ink-inverse/15 bg-ink-inverse/5 p-6">
+                  <span className="flex size-10 items-center justify-center rounded-md bg-ember text-on-ember">
+                    <item.icon className="size-5" aria-hidden />
+                  </span>
+                  <h3 className="mt-5 font-display text-subheading text-ink-inverse">
+                    {item.title}
+                  </h3>
+                  <p className="mt-3 text-sm leading-relaxed text-ink-inverse/80">
                     {item.innovation}
-                  </Text>
-                  <Text variant="small" tone="inverse" className="mt-4 border-t border-cream/15 pt-4 opacity-70">
+                  </p>
+                  <p className="mt-5 border-t border-ink-inverse/15 pt-5 text-sm leading-relaxed text-ink-inverse/65">
                     {item.impact}
-                  </Text>
-                </Card>
+                  </p>
+                </div>
               </Reveal>
             ))}
           </div>
         </Container>
       </Section>
-
-      <SectionDivider fill="text-canvas" />
 
       <Section id="features" spacing="lg" className="scroll-mt-20">
         <Container>
@@ -373,17 +405,17 @@ export default function LandingPage() {
             description="Ten capabilities, all of them built around protecting kitchen pacing and keeping guests informed."
           />
 
-          <div className="mt-14 grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
+          <div className="mt-14 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {features.map((feature, index) => (
               <Reveal key={feature.title} delay={(index % 3) * 0.06}>
-                <Card interactive className="h-full">
-                  <span className="flex size-10 items-center justify-center rounded-md bg-beige/70 text-brown">
+                <Card interactive className="h-full p-5">
+                  <span className="inline-flex size-10 items-center justify-center rounded-md bg-ember-soft text-ember">
                     <feature.icon className="size-5" aria-hidden />
                   </span>
-                  <h3 className="mt-5 font-display text-subheading text-ink">{feature.title}</h3>
-                  <Text variant="small" tone="muted" className="mt-2">
-                    {feature.body}
-                  </Text>
+                  <h3 className="mt-4 font-display text-base font-semibold text-ink">
+                    {feature.title}
+                  </h3>
+                  <p className="mt-2 text-sm leading-relaxed text-ink-muted">{feature.body}</p>
                 </Card>
               </Reveal>
             ))}
@@ -399,25 +431,25 @@ export default function LandingPage() {
             description="Each role gets an interface shaped around its own bottleneck — not a generic dashboard."
           />
 
-          <div className="mt-14 grid gap-6 lg:grid-cols-3">
+          <div className="mt-14 grid gap-5 lg:grid-cols-3">
             {personas.map((persona, index) => (
               <Reveal key={persona.role} delay={index * 0.08}>
-                <Card tone="canvas" className="h-full">
+                <Card className="flex h-full flex-col" marked>
                   <div className="flex items-center gap-3">
-                    <span className="flex size-10 items-center justify-center rounded-pill bg-dark-brown text-cream">
+                    <span className="flex size-10 items-center justify-center rounded-md bg-ink text-ink-inverse">
                       <persona.icon className="size-5" aria-hidden />
                     </span>
                     <div>
-                      <p className="text-label text-ink-muted uppercase">{persona.role}</p>
-                      <p className="font-display text-base text-ink">{persona.name}</p>
+                      <p className="text-label text-ember uppercase">{persona.role}</p>
+                      <p className="font-display text-base font-semibold text-ink">{persona.name}</p>
                     </div>
                   </div>
 
-                  <Badge tone="outline" className="mt-5">
+                  <p className="mt-5 text-xs font-medium tracking-wide text-ink-subtle uppercase">
                     {persona.interface}
-                  </Badge>
+                  </p>
 
-                  <dl className="mt-5 flex flex-col gap-4 border-t border-line pt-5">
+                  <dl className="mt-5 flex flex-1 flex-col gap-4 border-t border-line pt-5">
                     {[
                       ["Goal", persona.goal],
                       ["Biggest pain", persona.pain],
@@ -425,7 +457,9 @@ export default function LandingPage() {
                     ].map(([term, description]) => (
                       <div key={term}>
                         <dt className="text-label text-ink-subtle uppercase">{term}</dt>
-                        <dd className="mt-1 text-sm leading-relaxed text-ink-muted">{description}</dd>
+                        <dd className="mt-1.5 text-sm leading-relaxed text-ink-muted">
+                          {description}
+                        </dd>
                       </div>
                     ))}
                   </dl>
@@ -436,35 +470,156 @@ export default function LandingPage() {
         </Container>
       </Section>
 
-      <Section spacing="lg" className="relative overflow-hidden">
-        <Container className="relative">
-          <div className="rounded-2xl border border-line bg-surface p-8 sm:p-12 lg:p-16">
-            <div className="grid gap-10 lg:grid-cols-[1.2fr_1fr] lg:items-center">
-              <div className="flex flex-col gap-5">
-                <SectionHeader
-                  title="No payments. No accounts."
-                />
-              </div>
+      <Section spacing="lg" tone="ink">
+        <Container>
+          <div className="grid gap-12 lg:grid-cols-[1.1fr_1fr] lg:items-center">
+            <SectionHeader
+              tone="inverse"
+              eyebrow="No payments, no accounts"
+              title="Three live surfaces, ready to open"
+              description="The diner view is bound to a table token. The kitchen and floor boards sit behind the staff PIN."
+            />
 
-              <div className="flex flex-col gap-3">
-                {productLinks.map((link) => (
-                  <Link
-                    key={link.href}
-                    href={link.href}
-                    className={buttonStyles({
-                      variant: link.href === "/kitchen" ? "outline" : "primary",
-                      size: "lg",
-                      fullWidth: true,
-                    })}
-                  >
+            <div className="flex flex-col gap-3">
+              {productLinks.map((link) => (
+                <Link
+                  key={link.href}
+                  href={link.href}
+                  className="group flex items-center justify-between gap-4 rounded-lg border border-ink-inverse/15 bg-ink-inverse/5 px-5 py-4 transition-colors duration-[var(--duration-fast)] hover:border-ember hover:bg-ink-inverse/10"
+                >
+                  <span className="font-display text-base font-semibold text-ink-inverse">
                     {link.label}
-                  </Link>
-                ))}
-              </div>
+                  </span>
+                  <span className="text-sm text-ember transition-transform duration-[var(--duration-fast)] group-hover:translate-x-1">
+                    →
+                  </span>
+                </Link>
+              ))}
             </div>
           </div>
         </Container>
       </Section>
     </>
+  );
+}
+
+/* ---------------------------------------------------------------
+   Hero visual: the kitchen board, rendered from the same status
+   tokens the real board uses. Because it is built from tokens rather
+   than a screenshot, it can never drift away from the product.
+   --------------------------------------------------------------- */
+
+interface MiniTicketProps {
+  table: string;
+  elapsed: string;
+  status: string;
+  tone: BadgeTone;
+  rail: string;
+  lines: string[];
+  allergy?: string;
+  action: string;
+  actionClass: string;
+}
+
+const miniTickets: MiniTicketProps[] = [
+  {
+    table: "Table 04",
+    elapsed: "0:42",
+    status: "Pending",
+    tone: "pending",
+    rail: "bg-pending",
+    lines: ["2× Masala Dosa", "1× Filter Coffee"],
+    action: "Cook",
+    actionClass: "bg-ember text-on-ember",
+  },
+  {
+    table: "Table 07",
+    elapsed: "4:15",
+    status: "Preparing",
+    tone: "preparing",
+    rail: "bg-preparing",
+    lines: ["1× Paneer Butter Masala", "2× Butter Naan"],
+    allergy: "NO PEANUTS",
+    action: "Ready",
+    actionClass: "bg-ink text-ink-inverse",
+  },
+  {
+    table: "Table 02",
+    elapsed: "6:03",
+    status: "Ready",
+    tone: "ready",
+    rail: "bg-ready",
+    lines: ["3× Veg Noodles"],
+    action: "Mark served",
+    actionClass: "border border-line-strong text-ink",
+  },
+];
+
+function TicketPipeline() {
+  return (
+    <div className="relative mx-auto w-full max-w-md">
+      {/* Offset plate: gives the panel depth without a heavy shadow. */}
+      <div
+        aria-hidden
+        className="absolute inset-x-6 -bottom-3 h-full rounded-xl border border-line bg-surface-sunken"
+      />
+
+      <div className="relative overflow-hidden rounded-xl border border-line-strong bg-surface shadow-lg">
+        <div className="flex items-center gap-2 border-b border-line bg-surface-sunken/70 px-4 py-3">
+          <span className="flex gap-1.5" aria-hidden>
+            <span className="size-2.5 rounded-pill bg-line-strong" />
+            <span className="size-2.5 rounded-pill bg-line-strong" />
+            <span className="size-2.5 rounded-pill bg-line-strong" />
+          </span>
+          <span className="ml-1.5 text-[0.6875rem] font-semibold tracking-[0.14em] text-ink-subtle uppercase">
+            Kitchen display
+          </span>
+          <span className="ml-auto inline-flex items-center gap-1.5 rounded-pill bg-ready-surface px-2.5 py-1 text-[0.6875rem] font-semibold tracking-wide text-ready uppercase">
+            <span aria-hidden className="size-1.5 rounded-pill bg-ready" />
+            Live
+          </span>
+        </div>
+
+        <div className="flex flex-col gap-3 bg-surface-sunken/50 p-3.5 sm:p-4">
+          {miniTickets.map((ticket) => (
+            <div
+              key={ticket.table}
+              className="relative overflow-hidden rounded-lg border border-line bg-paper p-4 shadow-sm"
+            >
+              <span aria-hidden className={`absolute inset-y-0 left-0 w-1 ${ticket.rail}`} />
+
+              <div className="flex items-center justify-between gap-3 pl-1.5">
+                <span className="font-display text-sm font-semibold text-ink">{ticket.table}</span>
+                <span className="flex items-center gap-2">
+                  <span className="font-mono text-[0.6875rem] text-ink-subtle">{ticket.elapsed}</span>
+                  <Badge tone={ticket.tone}>{ticket.status}</Badge>
+                </span>
+              </div>
+
+              <ul className="mt-3 flex flex-col gap-1 pl-1.5">
+                {ticket.lines.map((line) => (
+                  <li key={line} className="text-sm text-ink-muted">
+                    {line}
+                  </li>
+                ))}
+              </ul>
+
+              {ticket.allergy ? (
+                <p className="mt-3 ml-1.5 flex items-center gap-1.5 rounded-md border border-alert/40 bg-alert-surface px-2.5 py-1.5 text-xs font-bold tracking-wide text-alert uppercase">
+                  <ShieldAlert className="size-3.5 shrink-0" aria-hidden />
+                  {ticket.allergy}
+                </p>
+              ) : null}
+
+              <span
+                className={`mt-3.5 ml-1.5 flex h-9 items-center justify-center rounded-md text-sm font-semibold ${ticket.actionClass}`}
+              >
+                {ticket.action}
+              </span>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
   );
 }

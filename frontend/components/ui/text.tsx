@@ -2,7 +2,7 @@ import type { ElementType, HTMLAttributes } from "react";
 import { cn } from "@/lib/utils";
 
 export type TextVariant = "lead" | "body" | "small" | "caption" | "label";
-export type TextTone = "default" | "muted" | "subtle" | "inverse" | "alert";
+export type TextTone = "default" | "muted" | "subtle" | "inverse" | "inverseMuted" | "alert" | "accent";
 
 const variants: Record<TextVariant, string> = {
   lead: "text-lead",
@@ -16,8 +16,10 @@ const tones: Record<TextTone, string> = {
   default: "text-ink",
   muted: "text-ink-muted",
   subtle: "text-ink-subtle",
-  inverse: "text-cream",
+  inverse: "text-ink-inverse",
+  inverseMuted: "text-ink-inverse/75",
   alert: "text-alert",
+  accent: "text-ember",
 };
 
 const tags: Record<TextVariant, ElementType> = {
