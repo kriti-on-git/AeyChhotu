@@ -84,16 +84,37 @@ export const DISH_PHOTOS: Record<string, string> = {
   momo: STARTER_CAT,
   kebab: STARTER_CAT,
   /* Drinks & Desserts */
+  "egg curry": CHAI,
+  "egg fried rice": NOODLES,
+  "egg dosa": DOSA,
+  /* Drinks & Desserts */
   lassi: LASSI,
   chai: CHAI,
   coffee: CHAI,
   soda: DRINK_CAT,
   kulfi: KULFI,
+  "filter coffee": CHAI,
+  "fresh lime soda": DRINK_CAT,
+  "gulab jamun": DESSERT_CAT,
+  "mango falooda": DESSERT_CAT,
   "ice cream": KULFI,
   jamun: DESSERT_CAT,
   gulab: DESSERT_CAT,
   falooda: DESSERT_CAT,
+  dal: PANEER,
+  "dal makhani": PANEER,
+  "veg biryani": BIRYANI,
+  "chicken biryani": BIRYANI,
+  "hyderabadi biryani": BIRYANI,
+  "peas pulao": BIRYANI,
+  "sweet lassi": LASSI,
+  "masala chai": CHAI,
+  "malai kulfi": KULFI,
 };
+
+/* The category net only comments on what the dish map missed. If it started to
+   hand out photos for the seeded menu we would have put them in the dish map
+   instead. */
 
 /* Category-level photography: the safety net for any dish the map above does
    not know, so a growing backend menu is never photo-less. Keys include the
@@ -113,7 +134,14 @@ const CATEGORY_PHOTOS: Record<string, string> = {
   "south indian": DOSA,
   "indo-chinese": NOODLES,
   "north indian": PANEER,
+  "biryani & rice": BIRYANI,
+  "drinks & desserts": DRINK_CAT,
+  starters: STARTER_CAT,
 };
+
+/* The category net only comments on what the dish map missed. If it started to
+   hand out photos for the seeded menu we would have put them in the dish map
+   instead. */
 
 const KEYS_BY_LENGTH = Object.keys(DISH_PHOTOS).sort((a, b) => b.length - a.length);
 
