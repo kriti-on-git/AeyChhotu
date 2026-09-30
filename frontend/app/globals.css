@@ -169,15 +169,16 @@
     }
   }
 
-  /* A slow bob for the hero's live-status chips: enough drift to read as
-     "alive", slow enough to never steal attention from the food. */
+  /* A slow bob for the hero's floating status pills: a 7px drift, enough to
+     read as "alive" and slow enough to never steal attention from the
+     illustration. Each pill offsets its own duration and delay. */
   @keyframes float {
     0%,
     100% {
       transform: translateY(0);
     }
     50% {
-      transform: translateY(-9px);
+      transform: translateY(-7px);
     }
   }
 
@@ -294,5 +295,137 @@
 
   &::-webkit-scrollbar {
     display: none;
+  }
+}
+
+/* ============================================================
+   HERO VISUAL COMPOSITION
+
+   One wrapper owns the illustration, the light behind it and the two status
+   pills, so the three move as a single object at every width.
+
+   Why the crop: ref.png is a 1672×941 canvas holding a 681×941 figure, i.e.
+   roughly 59% of the file is transparent margin either side of the subject.
+   Anything painted on that canvas box — a glow, a drop-shadow, a gradient —
+   therefore reads as a rectangle floating around the chef, which is exactly
+   the bug this replaced. So the wrapper takes the FIGURE's aspect ratio and
+   the artwork is offset inside it, and every layer of light now lives on the
+   wrapper, *behind* the art. The image itself carries no shadow, no filter
+   and no glow, and its transparency passes through untouched.
+
+   The offsets are the artwork's own measured alpha bounding box
+   (x 516..1196 of 1672, full height). Re-measure them if ref.png is ever
+   re-exported: left = -(bboxX0 / bboxWidth), width = canvasWidth / bboxWidth.
+   ============================================================ */
+.hero-visual-wrapper {
+  position: relative;
+  width: 100%;
+  max-width: 21rem;
+  margin-inline: auto;
+  /* the silhouette's own box, not the canvas's */
+  aspect-ratio: 681 / 941;
+}
+
+.hero-visual-image {
+  position: absolute;
+  inset-block-start: 0;
+  inset-inline-start: -75.77%; /* ≙ -516/681 of the figure's width */
+  height: 100%;
+  width: auto;
+  max-width: none;
+  object-fit: contain;
+  z-index: 10;
+}
+
+/* The ambient field: three overlapping falls of different sizes and centres
+   rather than one disc, so it never reads as a spotlight or as a shape that
+   traces the artwork. It sits behind the image and drifts a few pixels with
+   the pointer — see hero-visual.tsx, which writes --gx / --gy / --gi onto
+   the wrapper and nothing else. */
+.hero-glow {
+  position: absolute;
+  inset: -16% -20% -12% -20%;
+  z-index: 0;
+  pointer-events: none;
+  filter: blur(44px);
+  background-image:
+    radial-gradient(
+      52% 42% at 40% 44%,
+      color-mix(in srgb, var(--color-ember) 15%, transparent) 0%,
+      transparent 68%
+    ),
+    radial-gradient(
+      64% 52% at 60% 62%,
+      color-mix(in srgb, var(--color-tan) 28%, transparent) 0%,
+      transparent 72%
+    ),
+    radial-gradient(
+      80% 70% at 50% 52%,
+      color-mix(in srgb, var(--color-cream) 85%, transparent) 0%,
+      transparent 76%
+    );
+  opacity: calc(0.9 + var(--gi, 0) * 0.1);
+  transform: translate3d(calc(var(--gx, 0) * 14px), calc(var(--gy, 0) * 11px), 0)
+    scale(calc(1 + var(--gi, 0) * 0.04));
+  /* The pointer writes the variables; this is what makes the light glide to
+     them instead of snapping, and glide back to rest on the way out. */
+  transition:
+    transform 700ms cubic-bezier(0.22, 1, 0.36, 1),
+    opacity 500ms cubic-bezier(0.4, 0, 0.2, 1);
+  will-change: transform;
+}
+
+/* The pills ride the illustration's own empty margins: the head band
+   (0–30% of the height) leaves the left third clear and the base (80–100%)
+   leaves the right quarter clear, so neither ever lands on the face or the
+   tablet. */
+.hero-pill {
+  position: absolute;
+  z-index: 20;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.4rem 0.8rem;
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-pill);
+  background-color: var(--color-surface);
+  box-shadow: var(--shadow-sm);
+  color: var(--color-ink);
+  font-size: 0.75rem;
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+  animation: float 5.6s ease-in-out infinite;
+  will-change: transform;
+}
+
+.hero-pill--ready {
+  top: 9%;
+  left: 0;
+  animation-delay: -0.6s;
+}
+
+.hero-pill--live {
+  right: 0;
+  bottom: 12%;
+  animation-duration: 4.6s;
+  animation-delay: -2.1s;
+}
+
+/* Desktop: the wrapper is driven by height — the illustration is the visual
+   anchor at roughly 70–75% of the hero's height and its width follows the
+   figure's aspect ratio, which keeps it inside its column by construction.
+   The hero is at the top of the page, so viewport height is a faithful proxy
+   for the section's own height, and sizing this way avoids a measure →
+   resize → measure loop with the section it sits in. */
+@media (min-width: 64rem) {
+  .hero-visual-wrapper {
+    --hero-visual-h: clamp(18rem, 66vh, 40rem);
+    height: var(--hero-visual-h);
+    /* width is spelled out from the same ratio so the box never depends on
+       aspect-ratio's block-level automatic sizing */
+    width: calc(var(--hero-visual-h) * 681 / 941);
+    max-width: none;
+    margin-inline: 0;
   }
 }

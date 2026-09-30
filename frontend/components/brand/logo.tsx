@@ -11,13 +11,18 @@ export interface LogoMarkProps {
 
 /* The mark is the brand tile: logo.png, the same art everywhere — hero
    companion, header, footer, PIN wall. The file is an opaque square on its
-   own dark ground, so the rounded tile only needs to clip it. */
+   own dark ground, so the rounded tile only needs to clip it.
+
+   The tile carries that ground as its own background (logo.png's corner
+   pixels are #1d1a18) so a slow fetch, or a deploy that is missing the file,
+   degrades to an on-brand dark tile instead of the empty box a transparent
+   image would leave behind. */
 export function LogoMark({ className }: LogoMarkProps) {
   return (
     <span
       aria-hidden
       className={cn(
-        "relative isolate inline-flex size-9 shrink-0 items-center justify-center overflow-hidden rounded-lg shadow-sm",
+        "relative isolate inline-flex size-9 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-ink shadow-sm",
         className,
       )}
     >

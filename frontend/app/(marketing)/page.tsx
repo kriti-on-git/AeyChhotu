@@ -24,12 +24,11 @@ import { TiltSurface } from "@/components/marketing/tilt-surface";
 import { WorkflowTimeline } from "@/components/marketing/workflow-timeline";
 import { Reveal } from "@/components/motion/reveal";
 import { Badge, type BadgeTone } from "@/components/ui/badge";
-import { buttonStyles } from "@/components/ui/button";
 import { Container } from "@/components/ui/container";
 import { Section } from "@/components/ui/section";
 import { SectionHeader } from "@/components/ui/section-header";
 import { Text } from "@/components/ui/text";
-import { demoTableToken, productLinks } from "@/lib/site";
+import { productLinks } from "@/lib/site";
 
 interface Gap {
   title: string;
@@ -191,36 +190,33 @@ export default function LandingPage() {
   return (
     <>
       {/* ============================ HERO ============================
-          The old hero stretched a flat mid-tone photo across the whole
-          viewport and then veiled it in cream, which left the page with no
-          focal point at all. The visual is now a mock of the actual product:
-          three live tickets in the states the kitchen moves them through. */}
+          One composition, two zones: the illustration owns the left half
+          (with its own light and its two status pills inside that wrapper —
+          see hero-visual.tsx) and the copy owns the right. Because each is a
+          grid child, the artwork can never reach under the headline, so the
+          cream veil that used to sit behind the text is gone; the warmth
+          moved to where it belongs, behind the server. */}
       <section className="relative isolate overflow-hidden border-b border-line bg-canvas">
         <div
           aria-hidden
           className="hairline-grid pointer-events-none absolute inset-0 opacity-60 [mask-image:radial-gradient(ellipse_60%_50%_at_50%_0%,black,transparent)]"
         />
+        {/* Warmth gathers under the illustration, low and wide; the right half
+            stays comparatively clean so the headline sits on plain cream. */}
         <div
           aria-hidden
-          className="pointer-events-none absolute -top-48 -right-32 size-[36rem] rounded-pill bg-ember/10 blur-3xl"
+          className="pointer-events-none absolute -bottom-48 -left-40 size-[44rem] rounded-pill bg-tan/25 blur-3xl"
         />
         <div
           aria-hidden
-          className="pointer-events-none absolute -bottom-40 -left-32 size-[30rem] rounded-pill bg-tan/25 blur-3xl"
+          className="pointer-events-none absolute -top-40 -right-40 size-[32rem] rounded-pill bg-ember/6 blur-3xl"
         />
 
         <Container className="relative py-20 lg:py-28">
-          {/* minmax(0, …) keeps the image's intrinsic 1672px width from
-              inflating the track past the column (the grid auto-min trap). */}
-          <div className="grid items-center gap-16 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.05fr)] lg:gap-20">
-            {/* z-10 keeps the copy above the cut-out where it slides under
-                it; the soft canvas veil behind the text carries the
-                legibility where the chef's tablet pixels reach this far. */}
-            <div className="relative z-10 lg:order-2">
-              <span
-                aria-hidden
-                className="pointer-events-none absolute -inset-x-8 -inset-y-6 -z-10 rounded-3xl bg-canvas/75 blur-2xl"
-              />
+          {/* minmax(0, …) keeps the artwork's intrinsic 1672px width from
+              inflating the track past its column (the grid auto-min trap). */}
+          <div className="grid items-center gap-14 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1fr)] lg:gap-20">
+            <div className="lg:order-2">
               <Reveal>
                 <Badge tone="accent" size="md">
                   Zero download · no logins · live updates
@@ -243,32 +239,30 @@ export default function LandingPage() {
                 </Text>
               </Reveal>
 
+              {/* One action, not a launcher bar: the live screens are one
+                  scroll away in the closing band and in the navbar, so the
+                  hero gets to stay a product statement. */}
               <Reveal delay={0.18}>
-                <div className="mt-9 flex flex-wrap items-center gap-3">
-                  <Link
-                    href={`/table/${demoTableToken}`}
-                    className={buttonStyles({ variant: "ember", size: "lg" })}
+                <div className="mt-9">
+                  <a
+                    href="#how-it-works"
+                    className="group inline-flex items-center gap-2 text-sm font-semibold text-ember transition-colors duration-[var(--duration-fast)] hover:text-ember-strong"
                   >
-                    Open the diner view
-                  </Link>
-                  <Link
-                    href="/kitchen"
-                    className={buttonStyles({ variant: "soft", size: "lg" })}
-                  >
-                    Kitchen board
-                  </Link>
-                  <a href="#how-it-works" className={buttonStyles({ variant: "ghost", size: "lg" })}>
                     How it works
+                    <span
+                      aria-hidden
+                      className="transition-transform duration-[var(--duration-base)] ease-organic group-hover:translate-x-1"
+                    >
+                      →
+                    </span>
                   </a>
                 </div>
               </Reveal>
-
             </div>
 
-            {/* The visual sizes itself to 75% of this section's measured
-                height and anchors its own bottom edge to the section's
-                border — see hero-visual.tsx. */}
-            <Reveal delay={0.16} className="lg:order-1">
+            {/* Illustration first on a phone, left half from lg up — see
+                hero-visual.tsx for the crop and the lighting layer. */}
+            <Reveal delay={0.16} className="order-first lg:order-1">
               <HeroVisual />
             </Reveal>
           </div>
