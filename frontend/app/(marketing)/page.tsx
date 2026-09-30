@@ -1,5 +1,6 @@
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 import {
-  Activity,
   BellRing,
   ChefHat,
   Columns3,
@@ -15,7 +16,9 @@ import {
   Users,
   type LucideIcon,
 } from "lucide-react";
+import Image from "next/image";
 import Link from "next/link";
+import { InnovationDeck } from "@/components/marketing/innovation-deck";
 import { Reveal } from "@/components/motion/reveal";
 import { Badge, type BadgeTone } from "@/components/ui/badge";
 import { buttonStyles } from "@/components/ui/button";
@@ -50,40 +53,6 @@ const gaps: Gap[] = [
     friction:
       "The screen only shows done or not done. Nothing travels back to the server or the guest while food is being cooked.",
     complaint: "Servers walk to the pass to ask, and guests stare at a frozen screen.",
-  },
-];
-
-interface Innovation {
-  title: string;
-  innovation: string;
-  impact: string;
-  icon: LucideIcon;
-}
-
-const innovations: Innovation[] = [
-  {
-    title: "The anti-chaos unified cart",
-    innovation:
-      "Every phone at a table shares one live-syncing room bucket instead of being treated as an independent customer.",
-    impact:
-      "A digital gatekeeper: the kitchen never receives eight tickets for one table, and course timing is protected without a server merging orders by hand.",
-    icon: ShoppingBasket,
-  },
-  {
-    title: "Guardrailed allergy alerts",
-    innovation:
-      "Dietary notes bypass the standard modifier log and are formatted as bold, high-contrast red directly on the kitchen ticket line.",
-    impact:
-      "Removes the human error of handwriting and forgotten verbal warnings — chefs see the safety risk without stopping the line.",
-    icon: ShieldAlert,
-  },
-  {
-    title: "Two-way micro-status",
-    innovation:
-      "Prep milestones stream outward: Pending, Preparing, Ready. No static done / not done checkbox.",
-    impact:
-      "Guests lose waiting anxiety and servers stop running to the kitchen window to ask how long the steaks will be.",
-    icon: Activity,
   },
 ];
 
@@ -215,6 +184,15 @@ const heroStats = [
   { value: "0", label: "downloads, logins or hardware" },
 ];
 
+/* The hero photograph is an operator-supplied asset. It is checked at build
+   time so a deployment without it renders a token-built panel instead of a
+   broken image — the page never ships a 404ing <img>. Both the app-root and
+   repo-root layouts are probed so the check survives either build cwd. */
+const hasHeroImage = [
+  join(process.cwd(), "public", "hero-dish.png"),
+  join(process.cwd(), "frontend", "public", "hero-dish.png"),
+].some(existsSync);
+
 export default function LandingPage() {
   return (
     <>
@@ -238,8 +216,8 @@ export default function LandingPage() {
         />
 
         <Container className="relative py-20 lg:py-28">
-          <div className="grid items-center gap-16 lg:grid-cols-[1.05fr_1fr] lg:gap-20">
-            <div>
+          <div className="grid items-center gap-16 lg:grid-cols-[1fr_1.05fr] lg:gap-20">
+            <div className="lg:order-2">
               <Reveal>
                 <Badge tone="accent" size="md">
                   Zero download · no logins · live updates
@@ -298,8 +276,8 @@ export default function LandingPage() {
               </Reveal>
             </div>
 
-            <Reveal delay={0.16}>
-              <TicketPipeline />
+            <Reveal delay={0.16} className="lg:order-1">
+              <HeroVisual hasImage={hasHeroImage} />
             </Reveal>
           </div>
         </Container>
@@ -372,27 +350,17 @@ export default function LandingPage() {
             tone="inverse"
             eyebrow="Why it is different"
             title="Three things the incumbents do not do"
+            description="Flip through the deck — the board on the left moves the same three ideas through the line."
           />
 
-          <div className="mt-14 grid gap-5 lg:grid-cols-3">
-            {innovations.map((item, index) => (
-              <Reveal key={item.title} delay={index * 0.08}>
-                <div className="flex h-full flex-col rounded-lg border border-ink-inverse/15 bg-ink-inverse/5 p-6">
-                  <span className="flex size-10 items-center justify-center rounded-md bg-ember text-on-ember">
-                    <item.icon className="size-5" aria-hidden />
-                  </span>
-                  <h3 className="mt-5 font-display text-subheading text-ink-inverse">
-                    {item.title}
-                  </h3>
-                  <p className="mt-3 text-sm leading-relaxed text-ink-inverse/80">
-                    {item.innovation}
-                  </p>
-                  <p className="mt-5 border-t border-ink-inverse/15 pt-5 text-sm leading-relaxed text-ink-inverse/65">
-                    {item.impact}
-                  </p>
-                </div>
-              </Reveal>
-            ))}
+          <div className="mt-14 grid items-center gap-14 lg:grid-cols-[1fr_1fr] lg:gap-16">
+            <Reveal>
+              <TicketPipeline />
+            </Reveal>
+
+            <Reveal delay={0.08}>
+              <InnovationDeck />
+            </Reveal>
           </div>
         </Container>
       </Section>
@@ -504,9 +472,77 @@ export default function LandingPage() {
 }
 
 /* ---------------------------------------------------------------
-   Hero visual: the kitchen board, rendered from the same status
-   tokens the real board uses. Because it is built from tokens rather
-   than a screenshot, it can never drift away from the product.
+   Hero visual: an operator-supplied photograph, tilted in 3D so it reads
+   as an object rather than a flat banner, and straightened on hover. Falls
+   back to a token-built panel when the asset is absent, so the page never
+   renders a broken image.
+   --------------------------------------------------------------- */
+
+function HeroVisual({ hasImage }: { hasImage: boolean }) {
+  return (
+    <div className="relative mx-auto w-full max-w-xl [perspective:1500px]">
+      <div
+        aria-hidden
+        className="pointer-events-none absolute -inset-10 rounded-[2.5rem] bg-ember/10 blur-3xl"
+      />
+
+      <div className="group relative transition-transform duration-700 ease-gentle will-change-transform [transform:rotateY(-13deg)_rotateX(6deg)] hover:[transform:rotateY(-4deg)_rotateX(2deg)]">
+        {/* Offset plate: depth without a heavy shadow. */}
+        <div
+          aria-hidden
+          className="absolute inset-x-5 -bottom-5 h-full rounded-2xl border border-line bg-surface-sunken"
+        />
+
+        <div className="relative aspect-[4/3] overflow-hidden rounded-2xl border border-line-strong bg-surface shadow-lg">
+          {hasImage ? (
+            <Image
+              src="/hero-dish.png"
+              alt="A diner scanning the table's QR code and adding dishes to the shared cart"
+              fill
+              priority
+              sizes="(min-width: 1024px) 40rem, 100vw"
+              className="object-cover"
+            />
+          ) : (
+            <HeroVisualFallback />
+          )}
+
+          {/* Glass sheen so the panel reads as a lit surface. */}
+          <span
+            aria-hidden
+            className="pointer-events-none absolute inset-0 rounded-2xl bg-gradient-to-tr from-transparent via-white/5 to-white/25"
+          />
+        </div>
+      </div>
+
+      <div aria-hidden className="mx-auto mt-10 h-5 w-3/4 rounded-pill bg-ink/15 blur-2xl" />
+    </div>
+  );
+}
+
+function HeroVisualFallback() {
+  return (
+    <div className="relative flex h-full w-full items-center justify-center bg-canvas">
+      <div aria-hidden className="absolute -top-16 -right-10 size-72 rounded-pill bg-ember/15 blur-3xl" />
+      <div aria-hidden className="absolute -bottom-16 -left-10 size-64 rounded-pill bg-tan/25 blur-3xl" />
+
+      <div className="relative flex flex-col items-center gap-4 px-8 text-center">
+        <span className="flex size-14 items-center justify-center rounded-xl bg-ember text-on-ember shadow-xs">
+          <QrCode className="size-7" aria-hidden />
+        </span>
+        <p className="font-display text-subheading text-ink">Scan. Share. Fire once.</p>
+        <p className="max-w-xs text-sm leading-relaxed text-ink-muted">
+          One QR per table, one shared cart, one ticket to the kitchen.
+        </p>
+      </div>
+    </div>
+  );
+}
+
+/* ---------------------------------------------------------------
+   TicketPipeline: the kitchen board, rendered from the same status tokens
+   the real board uses. Because it is built from tokens rather than a
+   screenshot, it can never drift away from the product.
    --------------------------------------------------------------- */
 
 interface MiniTicketProps {
