@@ -131,7 +131,7 @@ export function MenuBrowser({
       >
         <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
           <Input
-            label="Search the menu"
+            label="Ready to order?"
             placeholder="Dosa, biryani, chai…"
             value={query}
             onChange={(event) => setQuery(event.target.value)}

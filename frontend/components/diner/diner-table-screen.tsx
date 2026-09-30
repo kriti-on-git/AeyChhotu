@@ -1,6 +1,5 @@
 "use client";
 
-import { Flame, ShoppingBasket, Timer } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { BillDrawer, type BillScope } from "@/components/diner/bill-drawer";
@@ -14,7 +13,6 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Container } from "@/components/ui/container";
 import { EmptyState } from "@/components/ui/empty-state";
-import { Heading } from "@/components/ui/heading";
 import { Skeleton } from "@/components/ui/loading-state";
 import { useToast } from "@/components/ui/toast";
 import { usePresence } from "@/hooks/use-presence";
@@ -25,13 +23,6 @@ import type { MenuItem } from "@/lib/api/types";
 export interface DinerTableScreenProps {
   tableToken: string;
 }
-
-/* The flow in three icons, one word each: browse, swipe, fire. */
-const sessionSteps = [
-  { icon: ShoppingBasket, title: "Browse" },
-  { icon: Flame, title: "Swipe" },
-  { icon: Timer, title: "Fire" },
-];
 
 export function DinerTableScreen({ tableToken }: DinerTableScreenProps) {
   const router = useRouter();
@@ -117,38 +108,12 @@ export function DinerTableScreen({ tableToken }: DinerTableScreenProps) {
         onOpenBill={(scope) => setBillScope(scope)}
       />
 
-      {/* One row, no further session chrome: the guest only needs the
-          instruction, so the page opens on "Ready to order?" beside the three
-          one-word moves that spell the flow. */}
-      <div className="border-b border-line bg-surface">
-        <Container className="flex flex-col gap-6 py-7 sm:py-8 lg:flex-row lg:items-center lg:justify-between lg:gap-12">
-          {/* No table identifier: the token in the URL is the capability
-              credential, so it must never be shown to the diner. */}
-          <Heading
-            level="title"
-            as="h1"
-            className="font-bold text-ember text-[2.6rem] leading-[2.8rem]"
-          >
-            Ready to order?
-          </Heading>
-
-          <ol className="grid gap-4 sm:grid-cols-3 lg:max-w-xl lg:shrink-0">
-            {sessionSteps.map((step, index) => (
-              <li key={step.title} className="flex items-center gap-3 sm:flex-col sm:gap-2">
-                <span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-ember-soft text-ember">
-                  <step.icon className="size-4" aria-hidden />
-                </span>
-                <p className="text-sm font-semibold text-ink">
-                  <span className="text-ink-subtle tabular-nums">
-                    {String(index + 1).padStart(2, "0")}
-                  </span>{" "}
-                  {step.title}
-                </p>
-              </li>
-            ))}
-          </ol>
-        </Container>
-      </div>
+      {/* The heading block is gone on purpose: "Ready to order?" now lives on
+          the menu's own search field, so the page's heading exists only for
+          assistive tech and the guest lands straight on the menu. No table
+          identifier either — the token in the URL is the capability
+          credential. */}
+      <h1 className="sr-only">Ready to order?</h1>
 
       <Container className="grid gap-12 py-12 lg:grid-cols-[minmax(0,1fr)_21rem] lg:items-start lg:gap-14">
         {menu.length === 0 ? (
@@ -224,24 +189,13 @@ export function DinerTableScreen({ tableToken }: DinerTableScreenProps) {
 function DinerSkeleton() {
   return (
     <main id="main" className="min-h-dvh pb-32">
-      <div className="border-b border-ink/40 bg-ink">
+      <div className="border-b border-line bg-canvas/85 backdrop-blur-md">
         <Container className="flex items-center gap-3 py-3">
           <Skeleton className="size-10 shrink-0 rounded-md" />
           <Skeleton className="h-4 w-32" />
           <div className="ml-auto flex items-center gap-1.5">
             {Array.from({ length: 3 }).map((_, index) => (
               <Skeleton key={index} className="size-10 rounded-md" />
-            ))}
-          </div>
-        </Container>
-      </div>
-
-      <div className="border-b border-line bg-surface">
-        <Container className="flex flex-col gap-6 py-7 sm:py-8 lg:flex-row lg:items-center lg:justify-between lg:gap-12">
-          <Skeleton className="h-9 w-64 max-w-full" />
-          <div className="grid gap-4 sm:grid-cols-3 lg:w-full lg:max-w-xl lg:shrink-0">
-            {Array.from({ length: 3 }).map((_, index) => (
-              <Skeleton key={index} className="h-10 w-full" />
             ))}
           </div>
         </Container>

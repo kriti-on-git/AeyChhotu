@@ -23,7 +23,8 @@ export interface DinerNavBarProps {
    the left — editable, because the table reads that name beside every line
    you add — and the three things a guest reaches for sit on the right: the
    live tracker and the two running bills. Amounts stay in tooltips so the
-   band reads as three quiet icons rather than a dashboard. */
+   band reads as three quiet icons rather than a dashboard. Its colours are
+   the marketing header's own, so the two navbars read as one product. */
 export function DinerNavBar({
   tableToken,
   live,
@@ -33,6 +34,19 @@ export function DinerNavBar({
 }: DinerNavBarProps) {
   const { menuIndex, orders, cart, activeOrder } = live;
   const headerRef = useRef<HTMLElement>(null);
+
+  /* Matches the landing page's navbar exactly: transparent and lineless at
+     the top of the scroll, then a blurred canvas wash once content passes
+     underneath it. */
+  const [scrolled, setScrolled] = useState(false);
+
+  useEffect(() => {
+    const onScroll = () => setScrolled(window.scrollY > 16);
+    onScroll();
+
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => window.removeEventListener("scroll", onScroll);
+  }, []);
 
   /* Publish the band's height so the sticky menu search can dock beneath it
      instead of sliding under it while the guest scrolls. */
@@ -77,7 +91,10 @@ export function DinerNavBar({
   return (
     <header
       ref={headerRef}
-      className="sticky top-0 z-40 border-b border-ink/40 bg-ink text-ink-inverse"
+      className={cn(
+        "sticky top-0 z-40 w-full border-b text-ink transition-colors duration-[var(--duration-base)] ease-gentle",
+        scrolled ? "border-line bg-canvas/85 backdrop-blur-md" : "border-transparent",
+      )}
     >
       <Container className="flex flex-wrap items-center gap-x-4 gap-y-3 py-3">
         <DinerIdentity displayName={displayName} onChange={onDisplayNameChange} />
@@ -93,7 +110,7 @@ export function DinerNavBar({
               {activeOrder ? (
                 <span
                   aria-hidden
-                  className="absolute top-2.5 right-2.5 size-2 animate-pulse-soft rounded-pill bg-ember ring-2 ring-ink"
+                  className="absolute top-2.5 right-2.5 size-2 animate-pulse-soft rounded-pill bg-ember ring-2 ring-canvas"
                 />
               ) : null}
             </Link>
@@ -127,7 +144,7 @@ export function DinerNavBar({
 }
 
 const actionClass =
-  "inline-flex size-10 items-center justify-center rounded-md text-ink-inverse/75 transition-colors duration-[var(--duration-fast)] ease-gentle hover:bg-ink-inverse/10 hover:text-ink-inverse focus-visible:bg-ink-inverse/10 focus-visible:text-ink-inverse focus-visible:outline-none";
+  "inline-flex size-10 items-center justify-center rounded-md text-ink-muted transition-colors duration-[var(--duration-fast)] ease-gentle hover:bg-sand hover:text-ink focus-visible:bg-sand focus-visible:text-ink focus-visible:outline-none";
 
 /* The guest's own name, editable in place. Committing it updates the shared
    display name, so the next dish they add carries it and every other phone at
@@ -167,13 +184,13 @@ function DinerIdentity({
     <div className="flex min-w-0 items-center gap-2.5">
       <span
         aria-hidden
-        className="flex size-10 shrink-0 items-center justify-center rounded-md bg-ink-inverse/10 text-ink-inverse/80"
+        className="flex size-10 shrink-0 items-center justify-center rounded-md bg-sand text-ink-muted"
       >
         <UserRound className="size-5" />
       </span>
 
       <div className="min-w-0">
-        <p className="text-label text-ink-inverse/55 uppercase">Ordering as</p>
+        <p className="text-label text-ink-subtle uppercase">Ordering as</p>
 
         {editing ? (
           <input
@@ -190,7 +207,7 @@ function DinerIdentity({
                 setEditing(false);
               }
             }}
-            className="w-32 border-b border-ember/70 bg-transparent font-display text-base font-semibold text-ink-inverse outline-none sm:w-40"
+            className="w-32 border-b border-ember/70 bg-transparent font-display text-base font-semibold text-ink outline-none placeholder:text-ink-subtle sm:w-40"
           />
         ) : (
           <button
@@ -199,11 +216,11 @@ function DinerIdentity({
             aria-label={`Edit your name (currently ${displayName})`}
             className="group flex max-w-40 cursor-pointer items-center gap-1.5 rounded-sm text-left"
           >
-            <span className="truncate font-display text-base font-semibold text-ink-inverse">
+            <span className="truncate font-display text-base font-semibold text-ink">
               {displayName}
             </span>
             <Pencil
-              className="size-3.5 shrink-0 text-ink-inverse/50 transition-colors duration-[var(--duration-fast)] group-hover:text-ember"
+              className="size-3.5 shrink-0 text-ink-subtle transition-colors duration-[var(--duration-fast)] group-hover:text-ember"
               aria-hidden
             />
           </button>
