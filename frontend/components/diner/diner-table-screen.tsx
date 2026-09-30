@@ -1,7 +1,9 @@
 "use client";
 
+import { CircleCheckBig } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
+import { acknowledgeSettlement, requestBill } from "@/lib/api/bill";
 import { BillDrawer, type BillScope } from "@/components/diner/bill-drawer";
 import { CartModal } from "@/components/diner/cart-modal";
 import { CartStrip } from "@/components/diner/cart-strip";
@@ -16,6 +18,7 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { Skeleton } from "@/components/ui/loading-state";
 import { useToast } from "@/components/ui/toast";
 import { usePresence } from "@/hooks/use-presence";
+import { useBills } from "@/hooks/use-bills";
 import { useLiveTable } from "@/hooks/use-live-table";
 import { getStoredDisplayName, storeDisplayName, storeTableToken } from "@/lib/api/session";
 import type { MenuItem } from "@/lib/api/types";
@@ -23,6 +26,9 @@ import type { MenuItem } from "@/lib/api/types";
 export interface DinerTableScreenProps {
   tableToken: string;
 }
+
+/* How long the diner gets to read the thank-you before the table clears. */
+const SETTLED_THANKS_MS = 3600;
 
 export function DinerTableScreen({ tableToken }: DinerTableScreenProps) {
   const router = useRouter();
@@ -39,15 +45,38 @@ export function DinerTableScreen({ tableToken }: DinerTableScreenProps) {
   // hydration, so reading storage in the initialiser cannot mismatch the SSR HTML.
   const [displayName, setDisplayName] = useState(() => getStoredDisplayName());
 
+  const bills = useBills();
+  const settledAt = bills[tableToken]?.settled_at ?? null;
+
   usePresence(tableToken);
 
   useEffect(() => {
     storeTableToken(tableToken);
   }, [tableToken]);
 
+  /* The server settled the bill: hold the thank-you for a beat, then drop the
+     event so nothing lingers for the next guests. The clear itself happens in
+     useLiveTable and in the shared demo store. */
+  useEffect(() => {
+    if (!settledAt) return;
+    const timer = window.setTimeout(() => acknowledgeSettlement(tableToken), SETTLED_THANKS_MS);
+    return () => window.clearTimeout(timer);
+  }, [settledAt, tableToken]);
+
   function handleDisplayNameChange(name: string) {
     setDisplayName(name);
     storeDisplayName(name);
+  }
+
+  function handleRequestBill() {
+    if (bills[tableToken]) return;
+    requestBill(tableToken);
+    // Asking for the bill closes the editor behind it: the table is done.
+    setCartOpen(false);
+    toast({
+      title: "Bill requested",
+      description: "We've asked the server to bring your bill.",
+    });
   }
 
   async function handleAdd(item: MenuItem) {
@@ -144,7 +173,12 @@ export function DinerTableScreen({ tableToken }: DinerTableScreenProps) {
         {/* Desktop: the cart sits in view the whole time. On a phone it would
             be half the screen, so there it becomes the bar below instead. */}
         <aside className="hidden lg:sticky lg:top-28 lg:block" aria-label="Live table cart">
-          <TableCart live={live} onReview={() => setCartOpen(true)} />
+          <TableCart
+            live={live}
+            onReview={() => setCartOpen(true)}
+            onRequestBill={handleRequestBill}
+            billRequested={Boolean(bills[tableToken])}
+          />
         </aside>
       </Container>
 
@@ -180,6 +214,26 @@ export function DinerTableScreen({ tableToken }: DinerTableScreenProps) {
           router.push(`/table/${tableToken}/tracker`);
         }}
       />
+
+      {/* Last in the DOM so it sits above the cart, the strip and the nav. */}
+      {settledAt ? (
+        <div
+          role="status"
+          aria-live="polite"
+          className="fixed inset-0 z-50 flex flex-col items-center justify-center gap-5 bg-canvas/95 px-6 text-center backdrop-blur-md"
+        >
+          <span
+            aria-hidden
+            className="flex size-20 items-center justify-center rounded-pill bg-ember-soft text-ember"
+          >
+            <CircleCheckBig className="size-10" />
+          </span>
+          <h2 className="font-display text-title font-semibold text-ink">Thank you!</h2>
+          <p className="max-w-md text-lead text-ink-muted">
+            Your bill is settled. This table has been cleared and is ready for its next guests.
+          </p>
+        </div>
+      ) : null}
     </main>
   );
 }

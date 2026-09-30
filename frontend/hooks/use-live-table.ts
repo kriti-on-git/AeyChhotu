@@ -19,6 +19,7 @@
    every view at a table observes exactly the same snapshot. */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useBills } from "@/hooks/use-bills";
 import {
   ApiError,
   fetchAllPages,
@@ -113,6 +114,25 @@ export function useLiveTable(tableToken: string): LiveTableValue {
   const tableIdRef = useRef<string | null>(null);
   const tableCodeRef = useRef<string | null>(null);
   const mountedRef = useRef(true);
+
+  /* A server settling this table's bill erases the session. The shared demo
+     store is cleared by settleTable(); on the live API — which has no such
+     endpoint — this local frame is what makes the diner's screen come back
+     empty instead of showing a table that was just settled. Depend on the
+     timestamp alone so a request on ANOTHER table never wipes this cart. */
+  const settledAt = useBills()[tableToken]?.settled_at ?? null;
+
+  useEffect(() => {
+    if (!settledAt) return;
+    // Deferred so the effect body itself never writes state synchronously.
+    const timer = window.setTimeout(() => {
+      if (!mountedRef.current) return;
+      setCart([]);
+      setOrders([]);
+      setItemErrors({});
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [settledAt]);
 
   useEffect(() => {
     mountedRef.current = true;

@@ -1,6 +1,6 @@
 "use client";
 
-import { Check, Clock, EyeOff, Lock, ShieldAlert, Users } from "lucide-react";
+import { Check, ChevronRight, Clock, EyeOff, HandCoins, Lock, ShieldAlert, Users } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { OpsBar } from "@/components/staff/ops-bar";
@@ -16,7 +16,11 @@ import { useLiveFloor } from "@/hooks/use-live-floor";
 import { useNow } from "@/hooks/use-now";
 import { usePresence } from "@/hooks/use-presence";
 import { useStaffMenuCatalog } from "@/hooks/use-staff-menu-catalog";
+import { useBills } from "@/hooks/use-bills";
+import { settleBill } from "@/lib/api/bill";
+import { settleTable } from "@/lib/api";
 import { countActiveDiners } from "@/lib/api/store";
+import type { BillEvent } from "@/lib/api/bill";
 import type { FloorTableSummary, OrderStatus } from "@/lib/api/types";
 import { formatElapsed } from "@/lib/format";
 import { transitionBase } from "@/lib/motion";
@@ -90,6 +94,9 @@ export function FloorView({ onLock }: FloorViewProps) {
      persisted anywhere — no backend write happens on "I'll serve this". */
   const [claimed, setClaimed] = useState<Record<string, boolean>>({});
 
+  /* Diners' "get bill now" requests, keyed by table code. */
+  const bills = useBills();
+
   /* The catalog is global but E3 needs a table token; the floor already knows
      every table code, so hand one over instead of making the hook re-fetch
      the floor list. */
@@ -149,6 +156,20 @@ export function FloorView({ onLock }: FloorViewProps) {
       title: `${summary.table.name} released`,
       description: "Back in the open pool for any server.",
       tone: "info",
+    });
+  }
+
+  /* Payment taken: drop the signal for every open tab and erase the table's
+     session — staged cart and every ticket on it — so the next guests to sit
+     down start from nothing. The live API has no equivalent endpoint yet, so
+     the erasure only lands on the shared demo store (see settleTable). */
+  function settle(summary: FloorTableSummary) {
+    settleBill(summary.table.code);
+    settleTable(summary.table.code);
+    toast({
+      title: `${summary.table.name} settled`,
+      description: "Bill paid — the table's session is cleared.",
+      tone: "success",
     });
   }
 
@@ -232,8 +253,10 @@ export function FloorView({ onLock }: FloorViewProps) {
                 now={now}
                 demo={source === "demo"}
                 claimed={Boolean(claimed[summary.table.id])}
+                bill={bills[summary.table.code] ?? null}
                 onClaim={claim}
                 onRelease={release}
+                onSettle={settle}
               />
             ))}
           </ul>
@@ -279,15 +302,19 @@ function TableCard({
   now,
   demo,
   claimed,
+  bill,
   onClaim,
   onRelease,
+  onSettle,
 }: {
   summary: FloorTableSummary;
   now: number | null;
   demo: boolean;
   claimed: boolean;
+  bill: BillEvent | null;
   onClaim: (summary: FloorTableSummary) => void;
   onRelease: (summary: FloorTableSummary) => void;
+  onSettle: (summary: FloorTableSummary) => void;
 }) {
   const db = useDb();
   const { table, active_order: order, cart_line_count } = summary;
@@ -324,6 +351,10 @@ function TableCard({
   /* Only a ready ticket needs a runner, so only a ready ticket gets a CTA.
      Everything else is information the server reads on the way past. */
   const canServe = status === "ready";
+
+  // A settled event is kept briefly so the diner can thank them; it is not a
+  // request any more, so the board must stop asking the server to act.
+  const billRequested = Boolean(bill && !bill.settled_at);
 
   return (
     <li className="h-full">
@@ -411,6 +442,31 @@ function TableCard({
             </span>
           ) : null}
         </div>
+
+        {/* The one thing on this card that is a request rather than a fact:
+            the table asked for its bill, and tapping it takes payment. */}
+        {billRequested ? (
+          <button
+            type="button"
+            onClick={() => onSettle(summary)}
+            aria-label={`Take the bill at ${table.name} and clear the table`}
+            className="mt-4 flex w-full cursor-pointer items-center gap-3 rounded-md border border-ember/35 bg-ember-soft px-4 py-3 text-left transition-[border-color] duration-[var(--duration-fast)] hover:border-ember/60"
+          >
+            <span
+              aria-hidden
+              className="flex size-9 shrink-0 items-center justify-center rounded-md bg-ember text-on-ember"
+            >
+              <HandCoins className="size-4" />
+            </span>
+            <span className="min-w-0 flex-1">
+              <span className="block text-label text-ember uppercase">Bill requested</span>
+              <span className="mt-1 block text-xs leading-snug text-ink-muted">
+                Tap to take payment and clear this table.
+              </span>
+            </span>
+            <ChevronRight aria-hidden className="size-4 shrink-0 text-ember" />
+          </button>
+        ) : null}
 
         {canServe ? (
           <div className="mt-auto pt-6">

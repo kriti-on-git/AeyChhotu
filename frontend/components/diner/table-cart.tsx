@@ -1,18 +1,24 @@
 "use client";
 
-import { Flame, Pencil } from "lucide-react";
+import { Flame, Pencil, Receipt } from "lucide-react";
 import { useState } from "react";
 import { QuantityStepper } from "@/components/diner/quantity-stepper";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { Tooltip } from "@/components/ui/tooltip";
 import type { LiveTableValue } from "@/hooks/use-live-table";
 import { formatPrice } from "@/lib/format";
+import { cn } from "@/lib/utils";
 
 export interface TableCartProps {
   /** The same live snapshot every other surface at this table reads. */
   live: LiveTableValue;
   /** Opens the existing review-and-fire surface. */
   onReview: () => void;
+  /** Asks the server to bring the bill. */
+  onRequestBill: () => void;
+  /** True once this table has asked, so the icon stops inviting a second tap. */
+  billRequested?: boolean;
   className?: string;
 }
 
@@ -22,7 +28,13 @@ export interface TableCartProps {
    totals the same way as the review modal — it is a second window onto one
    cart, not a second cart. Quantity changes are optimistic-feeling because
    the server applies them as deltas and the realtime channel echoes back. */
-export function TableCart({ live, onReview, className }: TableCartProps) {
+export function TableCart({
+  live,
+  onReview,
+  onRequestBill,
+  billRequested = false,
+  className,
+}: TableCartProps) {
   const { cart, menuIndex, totals, soldOutInCart, updateLine, removeLine } = live;
   const [busyLineId, setBusyLineId] = useState<string | null>(null);
 
@@ -122,16 +134,45 @@ export function TableCart({ live, onReview, className }: TableCartProps) {
       )}
 
       <div className="mt-6 flex flex-col gap-3">
-        <Button
-          variant="ember"
-          size="lg"
-          fullWidth
-          disabled={cart.length === 0}
-          onClick={onReview}
-          leftIcon={<Flame className="size-5" aria-hidden />}
-        >
-          Review &amp; fire
-        </Button>
+        <div className="flex items-center gap-2.5">
+          <Button
+            variant="ember"
+            size="lg"
+            className="flex-1"
+            disabled={cart.length === 0}
+            onClick={onReview}
+            leftIcon={<Flame className="size-5" aria-hidden />}
+          >
+            Review &amp; fire
+          </Button>
+
+          {/* Deliberately wordless: asking for the bill is not a step in the
+              ordering flow, so it gets one glyph beside the primary action
+              and says its name on hover. */}
+          <Tooltip
+            label={billRequested ? "Waiting for the server to settle" : "Get bill now"}
+            side="top"
+            className="max-w-40"
+          >
+            <button
+              type="button"
+              onClick={onRequestBill}
+              disabled={billRequested}
+              aria-label="Get bill now"
+              aria-pressed={billRequested}
+              className={cn(
+                "inline-flex size-13 shrink-0 cursor-pointer items-center justify-center rounded-md border transition-colors duration-[var(--duration-fast)]",
+                "disabled:cursor-default",
+                billRequested
+                  ? "border-ember/40 bg-ember-soft text-ember"
+                  : "border-line-strong text-ink-muted hover:border-ink-subtle hover:bg-sand hover:text-ink",
+              )}
+            >
+              <Receipt className="size-5" aria-hidden />
+            </button>
+          </Tooltip>
+        </div>
+
         {cart.length > 0 ? (
           <Button
             variant="ghost"

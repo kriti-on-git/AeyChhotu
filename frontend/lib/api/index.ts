@@ -190,6 +190,23 @@ export function getCart(tableToken: string): CartLine[] {
   return getSnapshot().cart.filter((line) => line.table_id === table.id);
 }
 
+/** Settle a table: erase its session — every staged line and every order —
+    so the next guests genuinely start from nothing. Demo-store only; the
+    live API has no equivalent endpoint yet (docs/7 ends at E17). */
+export function settleTable(tableToken: string): ServiceResult<null> {
+  const table = findTable(tableToken);
+  if (!table) {
+    return { ok: false, code: "table_not_found", message: "Unknown table." };
+  }
+
+  mutate((draft) => {
+    draft.cart = draft.cart.filter((line) => line.table_id !== table.id);
+    draft.orders = draft.orders.filter((order) => order.table_id !== table.id);
+  });
+
+  return { ok: true, data: null };
+}
+
 export function getActiveOrder(tableToken: string): Order | null {
   const table = findTable(tableToken);
   if (!table) return null;
