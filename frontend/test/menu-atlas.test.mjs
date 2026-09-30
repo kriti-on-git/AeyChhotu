@@ -42,7 +42,7 @@ describe("buildMenuAtlas over the seeded menu", () => {
 
   it("files each dish under the right menu", () => {
     assert.equal(findByDish(atlas.cuisines, "Masala Dosa")?.id, "south-indian");
-    assert.equal(findByDish(atlas.cuisines, "Veg Noodles")?.id, "chinese");
+    assert.equal(findByDish(atlas.cuisines, "Veg Hakka Noodles")?.id, "chinese");
     assert.equal(findByDish(atlas.cuisines, "Paneer Butter Masala")?.id, "north-indian");
     assert.equal(findByDish(atlas.cuisines, "Garlic Naan")?.id, "north-indian");
     assert.equal(findByDish(atlas.cuisines, "Hyderabadi Biryani")?.id, "rice");
@@ -51,12 +51,18 @@ describe("buildMenuAtlas over the seeded menu", () => {
     assert.equal(findByDish(atlas.cuisines, "Malai Kulfi")?.id, "drinks-desserts");
   });
 
-  it("keeps the API's own category strings as the second level", () => {
+  it("keeps the API's own category string as the section inside a menu", () => {
     const northIndian = atlas.cuisines.find((cuisine) => cuisine.id === "north-indian");
     assert.deepEqual(
       northIndian?.categories.map((category) => category.name),
-      ["Main Course", "Breads"],
+      ["North Indian"],
     );
+  });
+
+  it("stocks every menu with enough dishes to browse", () => {
+    for (const cuisine of atlas.cuisines) {
+      assert.ok(cuisine.itemCount >= 6, `${cuisine.name} holds only ${cuisine.itemCount}`);
+    }
   });
 
   it("counts what it actually holds, and loses nothing on the way", () => {
@@ -77,10 +83,18 @@ describe("buildMenuAtlas over the seeded menu", () => {
   });
 
   it("flags a menu whose whole content sits in one section", () => {
-    const southIndian = atlas.cuisines.find((cuisine) => cuisine.id === "south-indian");
-    const northIndian = atlas.cuisines.find((cuisine) => cuisine.id === "north-indian");
-    assert.equal(southIndian?.singleCategory, true);
-    assert.equal(northIndian?.singleCategory, false);
+    // Every seeded cuisine is stocked as a single section, so opening it lands
+    // on the dishes rather than on a one-card list of sections.
+    for (const cuisine of atlas.cuisines) {
+      assert.equal(cuisine.singleCategory, true, cuisine.name);
+    }
+
+    // A menu with two sections is the case the flag exists to catch.
+    const split = buildMenuAtlas([
+      { id: "a", name: "Paneer Butter Masala", price: 1, category: "Main Course", is_available: true, description: "", vegetarian: true },
+      { id: "b", name: "Garlic Naan", price: 1, category: "Breads", is_available: true, description: "", vegetarian: true },
+    ]);
+    assert.equal(split.cuisines[0]?.singleCategory, false);
   });
 });
 
@@ -114,17 +128,18 @@ describe("searchMenu", () => {
   it("matches a dish name", () => {
     assert.deepEqual(
       searchMenu(seedMenu, "dosa").map((item) => item.name),
-      ["Masala Dosa"],
+      ["Masala Dosa", "Rava Dosa", "Egg Dosa"],
     );
   });
 
   it("matches a description or a category, case-insensitively", () => {
-    // "Tandoori Roti" by name, "Garlic Naan" by its description.
+    // "Tandoori Roti" by name, "Garlic Naan" and "Chicken Tikka Masala" by
+    // their descriptions.
     assert.deepEqual(
       searchMenu(seedMenu, "TANDOOR")
         .map((item) => item.name)
         .sort(),
-      ["Garlic Naan", "Tandoori Roti"],
+      ["Chicken Tikka Masala", "Garlic Naan", "Tandoori Roti"],
     );
     assert.ok(searchMenu(seedMenu, "drinks").length >= 2);
   });

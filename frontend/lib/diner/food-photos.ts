@@ -6,9 +6,10 @@
    then a category-level photo, then a designed palette tile. Nothing in this
    file invents menu data — it only decides what a dish looks like.
 
-   Every URL below was fetched once and confirmed to return 200. To swap a
-   dish's photo, edit the one entry for it; to add a dish the backend grows
-   later, add a keyword line and it inherits the right picture automatically. */
+   Every URL below was fetched once and confirmed to return 200, so a new dish
+   reuses an existing picture rather than introducing an unverified one. To
+   swap a dish's photo, edit the one entry for it; to add a dish the backend
+   grows later, add a keyword line and it inherits the right picture. */
 
 import type { MenuItem } from "@/lib/api/types";
 
@@ -17,41 +18,101 @@ export const FOOD_PHOTO_HOST = "images.unsplash.com";
 
 const photo = (path: string) => `https://${FOOD_PHOTO_HOST}/${path}`;
 
+/* Verified plate photos, named once and reused across the dish map below. */
+const DOSA = photo("photo-1668236543090-82eba5ee5976");
+const PANEER = photo("photo-1742599361574-6fb156181466");
+const NOODLES = photo("photo-1789990662414-f607ba6405f3");
+const BIRYANI = photo("photo-1631515243349-e0cb75fb8d3a");
+const TACO = photo("photo-1545093149-618ce3bcf49d");
+const BURGER = photo("photo-1520072959219-c595dc870360");
+const PAKORA = photo("photo-1765360024331-25b63e85272e");
+const NAAN = photo("photo-1756821752957-00bfcadc3748");
+const ROTI = photo("photo-1780907084884-ded9fddbb474");
+const LASSI = photo("photo-1623065422902-30a2d299bbe4");
+const CHAI = photo("photo-1619581073186-5b4ae1b0caad");
+const KULFI = photo("photo-1772004839638-fcad4bcc2b89");
+
+const BREAD_CAT = photo("photo-1680359939304-7e27ee183e7a");
+const DRINK_CAT = photo("photo-1636920272028-c27f1ae474c3");
+const DESSERT_CAT = photo("photo-1695568181363-af5c78f4d059");
+const STARTER_CAT = photo("photo-1775717430472-bac0b07e90e3");
+const MAIN_CAT = photo("photo-1767114915936-745dd372f1d8");
+
 /* One photo per signature dish. Keys are matched as substrings against the
    dish's lowercased name + description + category, longest key first, so
-   "butter masala" wins over "masala". */
+   "paneer butter masala" wins over "paneer". */
 export const DISH_PHOTOS: Record<string, string> = {
-  dosa: photo("photo-1668236543090-82eba5ee5976"),
-  "paneer butter masala": photo("photo-1742599361574-6fb156181466"),
-  noodles: photo("photo-1789990662414-f607ba6405f3"),
-  biryani: photo("photo-1631515243349-e0cb75fb8d3a"),
-  "butter masala": photo("photo-1742599361574-6fb156181466"),
-  taco: photo("photo-1545093149-618ce3bcf49d"),
-  burger: photo("photo-1520072959219-c595dc870360"),
-  pakora: photo("photo-1765360024331-25b63e85272e"),
-  naan: photo("photo-1756821752957-00bfcadc3748"),
-  kulcha: photo("photo-1756821752957-00bfcadc3748"),
-  roti: photo("photo-1780907084884-ded9fddbb474"),
-  paratha: photo("photo-1780907084884-ded9fddbb474"),
-  lassi: photo("photo-1623065422902-30a2d299bbe4"),
-  chai: photo("photo-1619581073186-5b4ae1b0caad"),
-  kulfi: photo("photo-1772004839638-fcad4bcc2b89"),
-  "ice cream": photo("photo-1772004839638-fcad4bcc2b89"),
+  /* South Indian */
+  dosa: DOSA,
+  idli: DOSA,
+  vada: DOSA,
+  uttapam: DOSA,
+  pongal: DOSA,
+  rasam: DOSA,
+  sambar: DOSA,
+  /* Indo-Chinese */
+  noodles: NOODLES,
+  hakka: NOODLES,
+  chowmein: NOODLES,
+  manchurian: NOODLES,
+  schezwan: NOODLES,
+  "spring roll": NOODLES,
+  /* North Indian */
+  "paneer butter masala": PANEER,
+  "butter masala": PANEER,
+  paneer: PANEER,
+  tikka: PANEER,
+  kofta: PANEER,
+  curry: PANEER,
+  naan: NAAN,
+  kulcha: NAAN,
+  roti: ROTI,
+  paratha: ROTI,
+  /* Biryani & Rice */
+  biryani: BIRYANI,
+  pulao: BIRYANI,
+  "jeera rice": BIRYANI,
+  "curd rice": BIRYANI,
+  "lemon rice": BIRYANI,
+  /* Starters */
+  taco: TACO,
+  burger: BURGER,
+  pakora: PAKORA,
+  samosa: PAKORA,
+  chaat: PAKORA,
+  fries: PAKORA,
+  momo: STARTER_CAT,
+  kebab: STARTER_CAT,
+  /* Drinks & Desserts */
+  lassi: LASSI,
+  chai: CHAI,
+  coffee: CHAI,
+  soda: DRINK_CAT,
+  kulfi: KULFI,
+  "ice cream": KULFI,
+  jamun: DESSERT_CAT,
+  gulab: DESSERT_CAT,
+  falooda: DESSERT_CAT,
 };
 
 /* Category-level photography: the safety net for any dish the map above does
-   not know, so a growing backend menu is never photo-less. */
+   not know, so a growing backend menu is never photo-less. Keys include the
+   section names the seed uses (lib/api/seed.ts) as well as the older generic
+   ones, so both vocabularies resolve. */
 const CATEGORY_PHOTOS: Record<string, string> = {
-  bread: photo("photo-1680359939304-7e27ee183e7a"),
-  drink: photo("photo-1636920272028-c27f1ae474c3"),
-  beverage: photo("photo-1636920272028-c27f1ae474c3"),
-  dessert: photo("photo-1695568181363-af5c78f4d059"),
-  sweet: photo("photo-1695568181363-af5c78f4d059"),
-  starter: photo("photo-1775717430472-bac0b07e90e3"),
-  appetiser: photo("photo-1775717430472-bac0b07e90e3"),
-  appetizer: photo("photo-1775717430472-bac0b07e90e3"),
-  main: photo("photo-1767114915936-745dd372f1d8"),
-  rice: photo("photo-1631515243349-e0cb75fb8d3a"),
+  bread: BREAD_CAT,
+  drink: DRINK_CAT,
+  beverage: DRINK_CAT,
+  dessert: DESSERT_CAT,
+  sweet: DESSERT_CAT,
+  starter: STARTER_CAT,
+  appetiser: STARTER_CAT,
+  appetizer: STARTER_CAT,
+  main: MAIN_CAT,
+  rice: BIRYANI,
+  "south indian": DOSA,
+  "indo-chinese": NOODLES,
+  "north indian": PANEER,
 };
 
 const KEYS_BY_LENGTH = Object.keys(DISH_PHOTOS).sort((a, b) => b.length - a.length);

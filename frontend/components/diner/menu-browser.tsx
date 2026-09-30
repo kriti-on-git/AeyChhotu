@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowLeft, LayoutGrid, Search, Sparkles } from "lucide-react";
+import { ArrowLeft, Search } from "lucide-react";
 import { motion } from "motion/react";
 import { useMemo, useState } from "react";
 import { DishCard } from "@/components/diner/dish-card";
@@ -11,6 +11,7 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { IconButton } from "@/components/ui/icon-button";
 import { Input } from "@/components/ui/input";
 import type { MenuItem } from "@/lib/api/types";
+import { DIET_FILTERS, matchesDiet, type DietFilter } from "@/lib/diner/diet";
 import { buildMenuAtlas, searchMenu } from "@/lib/diner/menu-atlas";
 import { transitionBase } from "@/lib/motion";
 import { cn } from "@/lib/utils";
@@ -54,10 +55,21 @@ export function MenuBrowser({
 }: MenuBrowserProps) {
   const [query, setQuery] = useState("");
   const [stage, setStage] = useState<Stage>({ level: "cuisines" });
-  const [mode, setMode] = useState<"swipe" | "list">("swipe");
+  // One diet at a time, with "All" as an explicit choice — see lib/diner/diet.
+  const [diet, setDiet] = useState<DietFilter>("all");
 
-  const atlas = useMemo(() => buildMenuAtlas(menu), [menu]);
-  const matches = useMemo(() => searchMenu(menu, query), [menu, query]);
+  /* The filter narrows the menu BEFORE the atlas is built, so a cuisine card
+     and its count only ever describe dishes the guest can order under the
+     active diet. Changing the filter returns to the top, because the level
+     the guest was standing on may no longer exist. */
+  const visibleMenu = useMemo(() => menu.filter((item) => matchesDiet(item, diet)), [menu, diet]);
+  const atlas = useMemo(() => buildMenuAtlas(visibleMenu), [visibleMenu]);
+  const matches = useMemo(() => searchMenu(visibleMenu, query), [visibleMenu, query]);
+
+  function chooseDiet(next: DietFilter) {
+    setDiet(next);
+    setStage({ level: "cuisines" });
+  }
 
   const searching = query.trim().length > 0;
   const cuisines = atlas.cuisines;
@@ -79,12 +91,12 @@ export function MenuBrowser({
     : (activeCuisine?.categories.flatMap((category) => category.items) ?? []);
 
   const stageKey = searching
-    ? "search"
+    ? `search:${diet}`
     : stage.level === "cuisines"
-      ? "cuisines"
+      ? `cuisines:${diet}`
       : stage.level === "categories"
-        ? `categories:${stage.cuisineId}`
-        : `dishes:${stage.cuisineId}:${stage.categoryName ?? "all"}`;
+        ? `categories:${diet}:${stage.cuisineId}`
+        : `dishes:${diet}:${stage.cuisineId}:${stage.categoryName ?? "all"}`;
 
   function selectCuisine(cuisineId: string, categoryName: string | null) {
     // A cuisine with one section goes straight to its dishes: a level that
@@ -108,7 +120,7 @@ export function MenuBrowser({
     <div className="flex flex-col gap-7">
       {/* Sticky so search and the view switch stay reachable on a phone while
           the guest scrolls a long section. */}
-      <div className="sticky top-[4.25rem] z-20 -mx-1 rounded-lg bg-canvas/90 px-1 py-2 backdrop-blur-md">
+      <div className="sticky top-0 z-20 -mx-1 rounded-lg bg-canvas/90 px-1 py-2 backdrop-blur-md">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
           <Input
             label="Search the menu"
@@ -119,35 +131,28 @@ export function MenuBrowser({
             containerClassName="flex-1"
           />
 
+          {/* Diet is the only axis worth a persistent control here: it maps
+              to a real question at an Indian table. Scrolls sideways rather
+              than wrapping, so the sticky bar never grows taller. */}
           <div
             role="group"
-            aria-label="How to browse dishes"
-            className="flex h-12 shrink-0 items-center gap-1 rounded-md border border-line-strong bg-surface p-1"
+            aria-label="Filter dishes by diet"
+            className="hide-scrollbar flex h-12 shrink-0 items-center gap-1 overflow-x-auto rounded-md border border-line-strong bg-surface p-1"
           >
-            <button
-              type="button"
-              onClick={() => setMode("swipe")}
-              aria-pressed={mode === "swipe"}
-              className={cn(
-                "flex h-full cursor-pointer items-center gap-2 rounded-sm px-3.5 text-sm font-semibold transition-colors duration-[var(--duration-fast)]",
-                mode === "swipe" ? "bg-ember text-on-ember" : "text-ink-muted hover:text-ink",
-              )}
-            >
-              <Sparkles className="size-4" aria-hidden />
-              Swipe
-            </button>
-            <button
-              type="button"
-              onClick={() => setMode("list")}
-              aria-pressed={mode === "list"}
-              className={cn(
-                "flex h-full cursor-pointer items-center gap-2 rounded-sm px-3.5 text-sm font-semibold transition-colors duration-[var(--duration-fast)]",
-                mode === "list" ? "bg-ember text-on-ember" : "text-ink-muted hover:text-ink",
-              )}
-            >
-              <LayoutGrid className="size-4" aria-hidden />
-              List
-            </button>
+            {DIET_FILTERS.map((option) => (
+              <button
+                key={option.id}
+                type="button"
+                onClick={() => chooseDiet(option.id)}
+                aria-pressed={diet === option.id}
+                className={cn(
+                  "flex h-full shrink-0 cursor-pointer items-center rounded-sm px-3.5 text-sm font-semibold transition-colors duration-[var(--duration-fast)]",
+                  diet === option.id ? "bg-ember text-on-ember" : "text-ink-muted hover:text-ink",
+                )}
+              >
+                {option.label}
+              </button>
+            ))}
           </div>
         </div>
       </div>
@@ -204,7 +209,10 @@ export function MenuBrowser({
                   </button>
                 </>
               ) : null}
-              {activeCategory ? (
+              {/* Skip the section crumb when it repeats the menu's own name:
+                  a single-section cuisine would otherwise read
+                  "South Indian / South Indian". */}
+              {activeCategory && activeCategory.name !== activeCuisine?.name ? (
                 <>
                   <span aria-hidden>/</span>
                   <span className="text-ink">{activeCategory.name}</span>
@@ -214,7 +222,17 @@ export function MenuBrowser({
           </div>
         )}
 
-        {searching ? (
+        {!searching && visibleMenu.length === 0 ? (
+          <EmptyState
+            title="Nothing on the menu fits that"
+            description="No dish is tagged for this diet yet. Try another filter."
+            action={
+              <Button variant="soft" size="md" onClick={() => chooseDiet("all")}>
+                Show everything
+              </Button>
+            }
+          />
+        ) : searching ? (
           matches.length === 0 ? (
             <EmptyState
               title="Nothing matches that"
@@ -356,9 +374,9 @@ export function MenuBrowser({
             {dishes.length === 0 ? (
               <EmptyState
                 title="Nothing in this section yet"
-                description="The kitchen has not stocked it. Try another section."
+                description="The kitchen has not stocked it under this filter. Try another section."
               />
-            ) : mode === "swipe" ? (
+            ) : (
               <DishDeck
                 key={stageKey}
                 items={dishes}
@@ -370,14 +388,6 @@ export function MenuBrowser({
                 cartItemCount={cartItemCount}
                 onReview={onReview}
                 className="mx-auto w-full max-w-xl"
-              />
-            ) : (
-              <DishGrid
-                items={dishes}
-                quantities={quantities}
-                pendingItemId={pendingItemId}
-                itemErrors={itemErrors}
-                onAdd={onAdd}
               />
             )}
           </section>

@@ -709,6 +709,7 @@ Full engineering detail lives in the [docs index](#-documentation-index) — esp
 | [`docs/9-integration-report.md`](docs/9-integration-report.md) | Frontend ↔ API integration report, 18/18 smoke |
 | [`docs/10-db-report.md`](docs/10-db-report.md) | Senior-DB review: rules → constraints, indexes, hygiene audit |
 | [`docs/11-deploy.md`](docs/11-deploy.md) | Free deployment: Vercel + Render + Supabase, push-to-deploy, verification |
+| [`docs/12-judge-pitch.md`](docs/12-judge-pitch.md) | The interactive judge pitch: one dinner service told twice, with judge roles and timing |
 
 ---
 

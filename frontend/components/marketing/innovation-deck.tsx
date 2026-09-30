@@ -84,8 +84,10 @@ export function InnovationDeck() {
             }
             style={{ zIndex: innovations.length - position }}
             aria-hidden={!isFront}
+            // 15% of the card's own width on every side, so the copy sits off
+            // the border instead of touching it, at every breakpoint.
             className={cn(
-              "col-start-1 row-start-1 flex flex-col rounded-xl bg-surface",
+              "col-start-1 row-start-1 flex flex-col rounded-xl bg-surface p-[15%]",
               isFront
                 ? "border-2 border-ember shadow-lg"
                 : "pointer-events-none border border-line opacity-85 shadow-sm",

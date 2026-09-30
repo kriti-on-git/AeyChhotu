@@ -304,14 +304,15 @@ export default function LandingPage() {
         </Container>
       </Section>
 
-      <Section id="innovations" spacing="lg" tone="ink" className="scroll-mt-20">
-        {/* Still charcoal, with a warm ember glow gathering through the lower
-            third — the ground starts warming up before the page ever reaches
-            the closing ramp. */}
-        <div
-          aria-hidden
-          className="pointer-events-none absolute inset-x-0 bottom-0 -z-10 h-2/3 bg-gradient-to-b from-ink/0 via-ember/5 to-ember/20"
-        />
+      {/* The ground is the same ember ramp the closing card uses, so the
+          section and the close read as one material rather than charcoal
+          warming into orange. `tone="ink"` still supplies the cream text. */}
+      <Section
+        id="innovations"
+        spacing="lg"
+        tone="ink"
+        className="scroll-mt-20 bg-gradient-to-br from-ember-strong to-ember-dusk"
+      >
         <Container>
           <SectionHeader align="center" size="heading" tone="inverse" title="What makes us different?" />
 
@@ -386,14 +387,10 @@ export default function LandingPage() {
       </Section>
 
       {/* The close. The card keeps its shape but drops from bright ember to a
-          muted ember gradient, and the section's own ground fades out of the
-          cream into the exact tone the footer opens on — so the page sinks
-          from charcoal to deep ember instead of stopping on an orange block. */}
+          muted ember gradient. No ground tail under it: the cream runs
+          straight into the footer, so there is no gradient seam between the
+          card and the footer. */}
       <Section spacing="lg" className="scroll-mt-20">
-        <div
-          aria-hidden
-          className="pointer-events-none absolute inset-x-0 bottom-0 h-40 bg-gradient-to-b from-canvas/0 to-ember-dusk sm:h-52"
-        />
         <Container className="relative">
           <Reveal>
             <div className="relative isolate overflow-hidden rounded-2xl border border-on-ember/15 bg-gradient-to-br from-ember-strong to-ember-dusk px-7 py-14 text-on-ember sm:px-12 sm:py-16">
@@ -495,7 +492,7 @@ function TicketPipeline() {
       {/* A panel, not a phone: it fills the column, and the width it gains is
           spent on padding rather than on stretching the tickets inside it. */}
       <div className="relative overflow-hidden rounded-2xl border border-line-strong bg-surface shadow-lg [transform-style:preserve-3d]">
-        <div className="flex items-center gap-2.5 border-b border-line bg-surface-sunken/70 px-5 py-4 sm:px-6 lg:px-7">
+        <div className="flex items-center gap-2.5 border-b border-line bg-surface-sunken/70 px-4 py-3 sm:px-5 lg:px-6">
           <span className="flex gap-1.5" aria-hidden>
             <span className="size-2.5 rounded-pill bg-line-strong" />
             <span className="size-2.5 rounded-pill bg-line-strong" />
@@ -504,48 +501,50 @@ function TicketPipeline() {
           <span className="ml-2 text-[0.6875rem] font-semibold tracking-[0.14em] text-ink-subtle uppercase">
             Kitchen display
           </span>
-          <span className="ml-auto inline-flex items-center gap-1.5 rounded-pill bg-ready-surface px-3 py-1.5 text-[0.6875rem] font-semibold tracking-wide text-ready uppercase">
+          <span className="ml-auto inline-flex items-center gap-1.5 rounded-pill bg-ready-surface px-3 py-1 text-[0.6875rem] font-semibold tracking-wide text-ready uppercase">
             <span aria-hidden className="size-1.5 rounded-pill bg-ready" />
             Live
           </span>
         </div>
 
-        <div className="flex flex-col gap-4 bg-canvas p-4 sm:gap-5 sm:p-6 lg:p-7">
+        <div className="flex flex-col gap-3 bg-canvas p-4 sm:gap-3.5 sm:p-5 lg:p-6">
           {miniTickets.map((ticket) => (
             <div
               key={ticket.table}
-              className="relative overflow-hidden rounded-xl border border-line bg-paper p-5 shadow-sm sm:p-6"
+              className="relative overflow-hidden rounded-xl border border-line bg-paper p-4 shadow-sm sm:p-5"
             >
               <span aria-hidden className={`absolute inset-y-0 left-0 w-1.5 ${ticket.rail}`} />
 
-              <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 pl-2">
+              {/* The action now rides the title row instead of owning a line
+                  of its own, which is where most of the mock's lost height
+                  comes from — the tickets keep every word they had. */}
+              <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 pl-2">
                 <span className="font-display text-base font-semibold text-ink">{ticket.table}</span>
-                <span className="flex items-center gap-3">
+                <span className="flex flex-wrap items-center gap-2.5">
                   <span className="font-mono text-xs text-ink-subtle">{ticket.elapsed}</span>
                   <Badge tone={ticket.tone}>{ticket.status}</Badge>
+                  <span
+                    className={`inline-flex h-9 items-center justify-center rounded-lg px-3.5 text-xs font-semibold ${ticket.actionClass}`}
+                  >
+                    {ticket.action}
+                  </span>
                 </span>
               </div>
 
-              <ul className="mt-4 flex flex-col gap-2 pl-2">
+              <ul className="mt-2.5 flex flex-col gap-1 pl-2">
                 {ticket.lines.map((line) => (
-                  <li key={line} className="text-sm leading-relaxed text-ink-muted">
+                  <li key={line} className="text-sm leading-snug text-ink-muted">
                     {line}
                   </li>
                 ))}
               </ul>
 
               {ticket.allergy ? (
-                <p className="mt-5 ml-2 flex items-center gap-2 rounded-lg border border-alert/40 bg-alert-surface px-3 py-2 text-xs font-bold tracking-wide text-alert uppercase">
+                <p className="mt-3 ml-2 flex w-fit items-center gap-2 rounded-lg border border-alert/40 bg-alert-surface px-3 py-1.5 text-xs font-bold tracking-wide text-alert uppercase">
                   <ShieldAlert className="size-3.5 shrink-0" aria-hidden />
                   {ticket.allergy}
                 </p>
               ) : null}
-
-              <span
-                className={`mt-5 ml-2 flex h-11 items-center justify-center rounded-lg px-5 text-sm font-semibold ${ticket.actionClass}`}
-              >
-                {ticket.action}
-              </span>
             </div>
           ))}
         </div>

@@ -9,14 +9,12 @@ import { CartStrip } from "@/components/diner/cart-strip";
 import { InactiveTableState } from "@/components/diner/inactive-table-state";
 import { MenuBrowser } from "@/components/diner/menu-browser";
 import { TableCart } from "@/components/diner/table-cart";
-import { TableSessionHeader } from "@/components/diner/table-session-header";
 import { Button, buttonStyles } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Container } from "@/components/ui/container";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Heading } from "@/components/ui/heading";
 import { Skeleton } from "@/components/ui/loading-state";
-import { Text } from "@/components/ui/text";
 import { useToast } from "@/components/ui/toast";
 import { usePresence } from "@/hooks/use-presence";
 import { useLiveTable } from "@/hooks/use-live-table";
@@ -106,32 +104,17 @@ export function DinerTableScreen({ tableToken }: DinerTableScreenProps) {
 
   return (
     <main id="main" className="min-h-dvh pb-32">
-      <TableSessionHeader table={table} hasActiveOrder={Boolean(activeOrder)} />
+      {/* One row, no session chrome: the guest only needs the instruction, so
+          the page opens on "Ready to order?" beside the three moves. */}
+      <div className="border-b border-line bg-surface">
+        <Container className="flex flex-col gap-6 py-7 sm:py-8 lg:flex-row lg:items-center lg:justify-between lg:gap-12">
+          {/* No table identifier: the token in the URL is the capability
+              credential, so it must never be shown to the diner. */}
+          <Heading level="title" as="h1" className="font-bold text-ember">
+            Ready to order?
+          </Heading>
 
-      {/* Hero. The screen has one job — get an order to the kitchen — so the
-          page opens on the instruction, not on a description of the product. */}
-      <div className="relative isolate overflow-hidden border-b border-line bg-surface">
-        <div
-          aria-hidden
-          className="pointer-events-none absolute -top-24 -right-16 size-80 rounded-pill bg-ember/8 blur-3xl"
-        />
-        <Container className="relative py-11 sm:py-14">
-          <div className="flex flex-col gap-10 lg:flex-row lg:items-end lg:justify-between">
-            <div className="max-w-xl">
-              <Text variant="label" tone="accent">
-                Scan-to-order session
-              </Text>
-              {/* No table identifier: the token in the URL is the capability
-                  credential, so it must never be shown to the diner. */}
-              <Heading level="title" as="h1" className="mt-3">
-                Ready to order?
-              </Heading>
-              <Text variant="lead" tone="muted" className="mt-4">
-                Pick what sounds good. Swipe what you want. We&rsquo;ll handle the rest.
-              </Text>
-            </div>
-
-            <ol className="grid gap-4 sm:grid-cols-3 lg:max-w-lg lg:shrink-0">
+          <ol className="grid gap-4 sm:grid-cols-3 lg:max-w-xl lg:shrink-0">
               {sessionSteps.map((step, index) => (
                 <li key={step.title} className="flex gap-3 sm:flex-col sm:gap-2">
                   <span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-ember-soft text-ember">
@@ -148,8 +131,7 @@ export function DinerTableScreen({ tableToken }: DinerTableScreenProps) {
                   </div>
                 </li>
               ))}
-            </ol>
-          </div>
+          </ol>
         </Container>
       </div>
 
@@ -248,18 +230,14 @@ export function DinerTableScreen({ tableToken }: DinerTableScreenProps) {
 function DinerSkeleton() {
   return (
     <main id="main" className="min-h-dvh pb-32">
-      <div className="border-b border-line bg-canvas/88">
-        <Container className="flex items-center justify-between gap-4 py-3.5">
-          <Skeleton className="h-7 w-44 rounded-pill" />
-          <Skeleton className="h-7 w-28 rounded-pill" />
-        </Container>
-      </div>
-
       <div className="border-b border-line bg-surface">
-        <Container className="py-11 sm:py-14">
-          <Skeleton className="h-3 w-44" />
-          <Skeleton className="mt-4 h-9 w-72 max-w-full" />
-          <Skeleton className="mt-5 h-4 w-80 max-w-full" />
+        <Container className="flex flex-col gap-6 py-7 sm:py-8 lg:flex-row lg:items-center lg:justify-between lg:gap-12">
+          <Skeleton className="h-9 w-64 max-w-full" />
+          <div className="grid gap-4 sm:grid-cols-3 lg:w-full lg:max-w-xl lg:shrink-0">
+            {Array.from({ length: 3 }).map((_, index) => (
+              <Skeleton key={index} className="h-10 w-full" />
+            ))}
+          </div>
         </Container>
       </div>
 
