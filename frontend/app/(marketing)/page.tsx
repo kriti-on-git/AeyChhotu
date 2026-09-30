@@ -2,7 +2,6 @@ import {
   BellRing,
   ChefHat,
   Columns3,
-  EyeOff,
   Flame,
   Hand,
   KeyRound,
@@ -18,8 +17,10 @@ import Image from "next/image";
 import Link from "next/link";
 import { LogoWatermark } from "@/components/brand/logo";
 import { ExpandableCard } from "@/components/marketing/expandable-card";
+import { FlipCard } from "@/components/marketing/flip-card";
 import { HeroVisual } from "@/components/marketing/hero-visual";
 import { InnovationDeck } from "@/components/marketing/innovation-deck";
+import { TiltSurface } from "@/components/marketing/tilt-surface";
 import { WorkflowTimeline } from "@/components/marketing/workflow-timeline";
 import { Reveal } from "@/components/motion/reveal";
 import { Badge, type BadgeTone } from "@/components/ui/badge";
@@ -82,59 +83,66 @@ const steps = [
 
 interface Feature {
   title: string;
+  teaser: string;
   body: string;
   icon: LucideIcon;
 }
 
+/* Nine cards, three by three: the grid stays symmetric on every
+   breakpoint, and each teaser names the win while the back carries the how. */
 const features: Feature[] = [
   {
     title: "QR table link",
-    body: "Unguessable table tokens instead of numbered tables, opening the menu instantly.",
+    teaser: "Scan, sit, order.",
+    body: "Unguessable table tokens instead of numbered tables, opening the menu instantly — no app store between the guest and the food.",
     icon: QrCode,
   },
   {
     title: "Shared table cart",
-    body: "One cart for the whole table, synced across every phone at it.",
+    teaser: "One bucket per table.",
+    body: "One cart for the whole table, synced across every phone at it, so eight people build one order instead of eight.",
     icon: ShoppingBasket,
   },
   {
     title: "Review & fire",
-    body: "A single submission with a live inventory check and a duplicate-order guardrail.",
+    teaser: "One tap sends it all.",
+    body: "A single submission with a live inventory check and a duplicate-order guardrail before anything reaches the kitchen.",
     icon: Flame,
   },
   {
     title: "Kitchen kanban",
-    body: "Pending, Preparing and Ready columns with one card per table.",
+    teaser: "One card per table.",
+    body: "Pending, Preparing and Ready columns with one card per table, so the line sees the whole rush at a glance.",
     icon: Columns3,
   },
   {
     title: "One-tap status",
-    body: "Cook, ready, served — the same button changes meaning per column.",
+    teaser: "Cook, ready, served.",
+    body: "The same button changes meaning per column — one tap moves the ticket, and the whole floor sees it move.",
     icon: Hand,
   },
   {
     title: "Live guest tracker",
-    body: "A self-updating screen so nobody has to ask where the food is.",
+    teaser: "No more “how long?”",
+    body: "A self-updating screen so nobody has to ask where the food is — the table watches its ticket cook.",
     icon: Timer,
   },
   {
     title: "Red allergy text",
-    body: "A dedicated allergy box that renders bold red on the ticket. Normal notes stay normal.",
+    teaser: "Impossible to miss.",
+    body: "A dedicated allergy box that renders bold red on the ticket, while normal notes stay normal and quiet.",
     icon: ShieldAlert,
   },
   {
     title: "Screen flash & sounds",
-    body: "A green flash for the diner, a chime for the kitchen the moment a ticket lands.",
+    teaser: "You'll know it landed.",
+    body: "A green flash for the diner, a chime for the kitchen the moment a ticket lands — no polling, no staring.",
     icon: BellRing,
   },
   {
     title: "Quick item hide",
-    body: "86 a dish in one tap and it greys out on every active menu.",
-    icon: EyeOff,
-  },
-  {
-    title: "Staff PIN",
-    body: "The kitchen board stays behind a shared PIN so diners cannot open it.",
+    teaser: "86 a dish in a tap.",
+    body: "Pull a dish in one tap and it greys out on every active menu — behind a staff PIN, so diners cannot open it.",
     icon: KeyRound,
   },
 ];
@@ -262,7 +270,7 @@ export default function LandingPage() {
 
       <Section id="problem" spacing="lg" tone="surface" className="scroll-mt-20">
         <Container>
-          <SectionHeader title="What gaps are we bridging?" />
+          <SectionHeader align="center" size="heading" title="What gaps are we bridging?" />
 
           <div className="mt-14 grid gap-5 md:grid-cols-3">
             {gaps.map((gap, index) => (
@@ -285,7 +293,7 @@ export default function LandingPage() {
 
       <Section id="how-it-works" spacing="lg" className="scroll-mt-20">
         <Container>
-          <SectionHeader title="How do we work?" />
+          <SectionHeader align="center" size="heading" title="How do we work?" />
 
           <div className="mt-14">
             <Reveal>
@@ -297,11 +305,13 @@ export default function LandingPage() {
 
       <Section id="innovations" spacing="lg" tone="ink" className="scroll-mt-20">
         <Container>
-          <SectionHeader tone="inverse" title="What makes us different?" />
+          <SectionHeader align="center" size="heading" tone="inverse" title="What makes us different?" />
 
           <div className="mt-14 grid items-center gap-14 lg:grid-cols-[1fr_1fr] lg:gap-16">
             <Reveal>
-              <TicketPipeline />
+              <TiltSurface className="w-fit mx-auto">
+                <TicketPipeline />
+              </TiltSurface>
             </Reveal>
 
             <Reveal delay={0.08}>
@@ -313,17 +323,18 @@ export default function LandingPage() {
 
       <Section id="features" spacing="lg" className="scroll-mt-20">
         <Container>
-          <SectionHeader title="What do we actually ship?" />
+          <SectionHeader align="center" size="heading" title="What do we actually ship?" />
 
           <div className="mt-14 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {features.map((feature, index) => (
               <Reveal key={feature.title} delay={(index % 3) * 0.06}>
-                <ExpandableCard
+                <FlipCard
                   icon={<feature.icon className="size-5" aria-hidden />}
                   title={feature.title}
+                  teaser={feature.teaser}
                 >
-                  <p className="text-sm leading-relaxed text-ink-muted">{feature.body}</p>
-                </ExpandableCard>
+                  <p className="text-sm leading-relaxed">{feature.body}</p>
+                </FlipCard>
               </Reveal>
             ))}
           </div>
@@ -332,7 +343,7 @@ export default function LandingPage() {
 
       <Section id="personas" spacing="lg" tone="surface" className="scroll-mt-20">
         <Container>
-          <SectionHeader title="Who is this for?" />
+          <SectionHeader align="center" size="heading" title="Who is this for?" />
 
           <div className="mt-14 grid gap-5 lg:grid-cols-3">
             {personas.map((persona, index) => (
@@ -463,13 +474,7 @@ const miniTickets: MiniTicketProps[] = [
 function TicketPipeline() {
   return (
     <div className="relative mx-auto w-full max-w-md">
-      {/* Offset plate: gives the panel depth without a heavy shadow. */}
-      <div
-        aria-hidden
-        className="absolute inset-x-6 -bottom-3 h-full rounded-xl border border-line bg-surface-sunken"
-      />
-
-      <div className="relative overflow-hidden rounded-xl border border-line-strong bg-surface shadow-lg">
+      <div className="relative overflow-hidden rounded-xl border border-line-strong bg-surface shadow-lg [transform-style:preserve-3d]">
         <div className="flex items-center gap-2 border-b border-line bg-surface-sunken/70 px-4 py-3">
           <span className="flex gap-1.5" aria-hidden>
             <span className="size-2.5 rounded-pill bg-line-strong" />
@@ -485,7 +490,7 @@ function TicketPipeline() {
           </span>
         </div>
 
-        <div className="flex flex-col gap-3 bg-surface-sunken/50 p-3.5 sm:p-4">
+        <div className="flex flex-col gap-3 bg-canvas p-3.5 sm:p-4">
           {miniTickets.map((ticket) => (
             <div
               key={ticket.table}

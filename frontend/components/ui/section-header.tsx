@@ -4,7 +4,7 @@ import { Text } from "@/components/ui/text";
 import { cn } from "@/lib/utils";
 
 export type HeaderAlign = "left" | "center";
-export type HeaderSize = "section" | "page";
+export type HeaderSize = "section" | "heading" | "page";
 export type HeaderTone = "default" | "inverse";
 
 const aligns: Record<HeaderAlign, string> = {
@@ -14,6 +14,7 @@ const aligns: Record<HeaderAlign, string> = {
 
 const maxWidths: Record<HeaderSize, string> = {
   section: "max-w-2xl",
+  heading: "max-w-3xl",
   page: "max-w-3xl",
 };
 
@@ -65,10 +66,16 @@ export function SectionHeader({
         </Text>
       ) : null}
 
+      {/* `heading` is the emphasised landing style: a step larger than the
+          default section title, read in the brand accent and centred by the
+          caller. Full-page headers keep ink, dark sections stay inverse. */}
       <Heading
         level={size === "page" ? "title" : "heading"}
-        tone={inverse ? "inverse" : "default"}
+        tone={inverse ? "inverse" : size === "heading" ? "accent" : "default"}
         as={size === "page" ? "h1" : "h2"}
+        className={
+          size === "heading" ? "text-[length:var(--text-section-title)]" : undefined
+        }
       >
         {title}
       </Heading>

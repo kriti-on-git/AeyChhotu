@@ -98,6 +98,11 @@
   --text-heading--letter-spacing: -0.025em;
   --text-heading--font-weight: 600;
 
+  /* One step above --text-heading: the emphasised landing-page section
+     titles (centred, ember). Consumed via text-[length:var(...)] so it
+     never collides with Tailwind's colour-classification of text-*. */
+  --text-section-title: clamp(1.625rem, 2.9vw, 2.375rem);
+
   --text-subheading: 1.25rem;
   --text-subheading--line-height: 1.3;
   --text-subheading--letter-spacing: -0.015em;

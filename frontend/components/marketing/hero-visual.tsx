@@ -50,6 +50,16 @@ export function HeroVisual() {
     const rect = event.currentTarget.getBoundingClientRect();
     pointerX.set((event.clientX - rect.left) / rect.width - 0.5);
     pointerY.set((event.clientY - rect.top) / rect.height - 0.5);
+
+    // The ember glow behind the cut-out tracks the pointer, exactly like
+    // the spotlight on the expandable cards. Written straight to the node:
+    // this fires on every mouse move, far too often for React state.
+    const node = frameRef.current;
+    if (node) {
+      const bounds = node.getBoundingClientRect();
+      node.style.setProperty("--mx", `${event.clientX - bounds.left}px`);
+      node.style.setProperty("--my", `${event.clientY - bounds.top}px`);
+    }
   }
 
   function handlePointerLeave() {
@@ -61,7 +71,17 @@ export function HeroVisual() {
     <>
       <div
         aria-hidden
-        className="pointer-events-none absolute inset-x-8 top-1/4 h-3/4 rounded-pill bg-ember/12 blur-3xl"
+        className="pointer-events-none absolute inset-x-8 top-1/4 h-3/4 rounded-pill bg-ember/8 blur-3xl"
+      />
+      {/* Pointer-following ember glow, the same treatment the info cards
+          use — it only appears while the pointer is over the hero. */}
+      <span
+        aria-hidden
+        className="pointer-events-none absolute inset-0 opacity-0 transition-opacity duration-[var(--duration-base)] group-hover:opacity-100"
+        style={{
+          background:
+            "radial-gradient(480px circle at var(--mx, 50%) var(--my, 45%), color-mix(in srgb, var(--color-ember) 18%, transparent), transparent 72%)",
+        }}
       />
       <Image
         src="/ref.png"
@@ -90,7 +110,7 @@ export function HeroVisual() {
     return (
       <div
         ref={frameRef}
-        className="relative mx-auto -mb-20 w-full max-w-xl lg:mx-0 lg:-mb-28 lg:-ml-12 lg:-mr-8 lg:w-[calc(100%+5rem)] lg:max-w-none"
+        className="group relative mx-auto -mb-20 w-full max-w-xl lg:mx-0 lg:-mb-28 lg:-ml-12 lg:-mr-8 lg:w-[calc(100%+5rem)] lg:max-w-none"
       >
         {frame}
       </div>
