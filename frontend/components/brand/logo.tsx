@@ -1,32 +1,51 @@
+import Image from "next/image";
 import { cn } from "@/lib/utils";
 
 export interface LogoMarkProps {
   className?: string;
+  /* Kept so every existing call site keeps compiling: the mark is now the
+     brand illustration itself, which needs no tone variant — on the ember
+     grounds the cut-out's own white torn edge does the separating. */
   tone?: "default" | "inverse";
 }
 
-/* A cloche read as an arch: food service and a bridge between the floor and
-   the kitchen in one glyph. A solid tinted tile replaces the old
-   multi-path landscape illustration, which read as clip art rather than a
-   product mark. */
-export function LogoMark({ className, tone = "default" }: LogoMarkProps) {
-  const tile = tone === "inverse" ? "var(--color-cream)" : "var(--color-ember)";
-  const glyph = tone === "inverse" ? "var(--color-dark-brown)" : "var(--color-on-ember)";
-
+/* The mark is Mr. Baawarchi — the same cut-out that anchors the hero. One
+   brand image everywhere: hero, header, footer, PIN wall, favicons. It sits
+   on a rounded ink tile so the white torn edge stays legible on both the
+   canvas and the saturated ember grounds. */
+export function LogoMark({ className }: LogoMarkProps) {
   return (
-    <svg viewBox="0 0 32 32" aria-hidden className={cn("size-8", className)}>
-      <rect width="32" height="32" rx="9" fill={tile} />
-      <g
-        stroke={glyph}
-        strokeWidth="2.4"
-        strokeLinecap="round"
-        fill="none"
-      >
-        <path d="M5.5 22.5h21" />
-        <path d="M8.5 22.5a7.5 7.5 0 0115 0" />
-      </g>
-      <circle cx="16" cy="12.6" r="2.1" fill={glyph} />
-    </svg>
+    <span
+      aria-hidden
+      className={cn(
+        "relative isolate inline-flex size-9 shrink-0 items-end justify-center overflow-hidden rounded-lg bg-ink shadow-sm",
+        className,
+      )}
+    >
+      <Image
+        src="/ref.png"
+        alt=""
+        width={1672}
+        height={941}
+        className="w-[118%] max-w-none translate-y-[4%]"
+      />
+    </span>
+  );
+}
+
+/* The full cut-out, undressed: for the large decorative watermarks on the
+   footer and the closing CTA, where a tile would read as a sticker but the
+   chef's silhouette drifting out of frame reads as a mural. */
+export function LogoWatermark({ className }: { className?: string }) {
+  return (
+    <Image
+      src="/ref.png"
+      alt=""
+      aria-hidden
+      width={1672}
+      height={941}
+      className={cn("pointer-events-none select-none", className)}
+    />
   );
 }
 

@@ -134,6 +134,7 @@
 
   --animate-pulse-soft: pulse-soft 2.4s var(--ease-gentle) infinite;
   --animate-flash-ready: flash-ready 1.4s var(--ease-gentle) 3;
+  --animate-float: float 5.2s ease-in-out infinite;
 
   @keyframes pulse-soft {
     0%,
@@ -152,6 +153,18 @@
     }
     40% {
       background-color: var(--color-ready-surface);
+    }
+  }
+
+  /* A slow bob for the hero's live-status chips: enough drift to read as
+     "alive", slow enough to never steal attention from the food. */
+  @keyframes float {
+    0%,
+    100% {
+      transform: translateY(0);
+    }
+    50% {
+      transform: translateY(-9px);
     }
   }
 

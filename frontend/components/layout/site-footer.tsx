@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Logo, LogoMark } from "@/components/brand/logo";
+import { Logo, LogoWatermark } from "@/components/brand/logo";
 import { Container } from "@/components/ui/container";
 import { marketingNav, productLinks } from "@/lib/site";
 
@@ -22,10 +22,7 @@ export function SiteFooter() {
         aria-hidden
         className="pointer-events-none absolute -top-32 left-1/3 size-[28rem] rounded-pill bg-on-ember/10 blur-3xl"
       />
-      <LogoMark
-        tone="inverse"
-        className="pointer-events-none absolute -top-16 right-[6%] size-56 opacity-10"
-      />
+      <LogoWatermark className="absolute -top-16 right-[6%] h-56 w-auto opacity-10" />
       <span aria-hidden className="absolute inset-x-0 top-0 h-1 bg-ember-strong/60" />
 
       <Container className="relative pt-16 pb-10">

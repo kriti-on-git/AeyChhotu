@@ -16,8 +16,9 @@ import {
 } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
-import { LogoMark } from "@/components/brand/logo";
+import { LogoWatermark } from "@/components/brand/logo";
 import { ExpandableCard } from "@/components/marketing/expandable-card";
+import { HeroVisual } from "@/components/marketing/hero-visual";
 import { InnovationDeck } from "@/components/marketing/innovation-deck";
 import { WorkflowTimeline } from "@/components/marketing/workflow-timeline";
 import { Reveal } from "@/components/motion/reveal";
@@ -178,12 +179,6 @@ const personas: Persona[] = [
   },
 ];
 
-const heroStats = [
-  { value: "1", label: "ticket per table, not per phone" },
-  { value: "3", label: "live status tags streamed to the guest" },
-  { value: "0", label: "downloads, logins or hardware" },
-];
-
 export default function LandingPage() {
   return (
     <>
@@ -207,7 +202,9 @@ export default function LandingPage() {
         />
 
         <Container className="relative py-20 lg:py-28">
-          <div className="grid items-center gap-16 lg:grid-cols-[1fr_1.05fr] lg:gap-20">
+          {/* minmax(0, …) keeps the image's intrinsic 1672px width from
+              inflating the track past the column (the grid auto-min trap). */}
+          <div className="grid items-center gap-16 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.05fr)] lg:gap-20">
             <div className="lg:order-2">
               <Reveal>
                 <Badge tone="accent" size="md">
@@ -251,23 +248,12 @@ export default function LandingPage() {
                 </div>
               </Reveal>
 
-              <Reveal delay={0.24}>
-                <dl className="mt-12 grid max-w-lg grid-cols-3 gap-6 border-t border-line pt-8">
-                  {heroStats.map((stat) => (
-                    <div key={stat.label}>
-                      <dt className="font-display text-3xl font-semibold text-ember">
-                        {stat.value}
-                      </dt>
-                      <dd className="mt-1.5 text-xs leading-snug text-ink-muted">
-                        {stat.label}
-                      </dd>
-                    </div>
-                  ))}
-                </dl>
-              </Reveal>
             </div>
 
-            <Reveal delay={0.16} className="lg:order-1">
+            {/* self-end plants the visual's margin box on the row's bottom
+                edge, so the negative bottom margin inside HeroVisual pushes
+                the cut-out down onto the rule that closes the section. */}
+            <Reveal delay={0.16} className="lg:order-1 lg:self-end">
               <HeroVisual />
             </Reveal>
           </div>
@@ -390,10 +376,7 @@ export default function LandingPage() {
                 aria-hidden
                 className="pointer-events-none absolute -top-24 -right-16 size-80 rounded-pill bg-on-ember/10 blur-3xl"
               />
-              <LogoMark
-                tone="inverse"
-                className="pointer-events-none absolute -right-10 -bottom-14 size-64 opacity-10"
-              />
+              <LogoWatermark className="absolute -right-10 -bottom-14 h-64 w-auto opacity-10" />
 
               <div className="relative max-w-2xl">
                 <h2 className="text-title font-display font-semibold text-balance">Ready to open?</h2>
@@ -422,44 +405,6 @@ export default function LandingPage() {
         </Container>
       </Section>
     </>
-  );
-}
-
-/* ---------------------------------------------------------------
-   Hero visual: the cut-out illustration, tilted in 3D so it reads as an
-   object in the room rather than a flat banner, and straightened on hover.
-   The status chips are built from the same tokens the real board paints.
-   --------------------------------------------------------------- */
-
-function HeroVisual() {
-  return (
-    <div className="relative mx-auto w-full max-w-2xl [perspective:1500px]">
-      <div
-        aria-hidden
-        className="pointer-events-none absolute inset-x-8 top-1/4 h-3/4 rounded-pill bg-ember/12 blur-3xl"
-      />
-
-      <div className="group relative transition-transform duration-700 ease-gentle will-change-transform [transform:rotateY(-12deg)_rotateX(5deg)] hover:[transform:rotateY(-3deg)_rotateX(1deg)]">
-        <Image
-          src="/ref.png"
-          alt="Mr. Baawarchi watching live tickets on the kitchen tablet"
-          width={1672}
-          height={941}
-          priority
-          sizes="(min-width: 1024px) 44rem, 100vw"
-          className="relative h-auto w-full [filter:drop-shadow(0_34px_44px_rgb(28_21_18/0.26))]"
-        />
-
-        <span className="absolute top-1 left-0 hidden items-center gap-2 rounded-pill border border-line bg-surface px-3 py-1.5 text-xs font-semibold text-ink shadow-sm sm:flex">
-          <span aria-hidden className="size-2 rounded-pill bg-ready" />
-          Ticket ready
-        </span>
-        <span className="absolute right-2 bottom-10 hidden items-center gap-2 rounded-pill border border-line bg-surface px-3 py-1.5 text-xs font-semibold text-ink shadow-sm sm:flex">
-          <span aria-hidden className="size-2 rounded-pill bg-preparing" />
-          3 tables live
-        </span>
-      </div>
-    </div>
   );
 }
 
