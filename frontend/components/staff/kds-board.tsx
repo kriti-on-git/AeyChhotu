@@ -2,24 +2,24 @@
 
 import { AnimatePresence } from "motion/react";
 import { BellRing, ChefHat, EyeOff, Flame, Lock, Volume2 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { KdsCard } from "@/components/staff/kds-card";
 import { MenuAvailabilityDrawer } from "@/components/staff/menu-availability-drawer";
-import { Badge, type BadgeTone } from "@/components/ui/badge";
+import { LiveIndicator, OpsBar } from "@/components/staff/ops-bar";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Container } from "@/components/ui/container";
 import { EmptyState, ErrorState } from "@/components/ui/empty-state";
 import { Skeleton } from "@/components/ui/loading-state";
 import { useToast } from "@/components/ui/toast";
+import { useLiveKds } from "@/hooks/use-live-kds";
 import { useNow } from "@/hooks/use-now";
 import { usePresence } from "@/hooks/use-presence";
-import { getMe, type SessionIdentity } from "@/lib/api-client";
-import { useLiveKds } from "@/hooks/use-live-kds";
 import { useStaffMenuCatalog } from "@/hooks/use-staff-menu-catalog";
-import { formatIstTime } from "@/lib/format";
-import { activateShift } from "@/lib/api-client";
+import { activateShift, getMe, type SessionIdentity } from "@/lib/api-client";
 import { getDeviceId } from "@/lib/api/session";
 import type { Order, OrderStatus } from "@/lib/api/types";
+import { formatIstTime } from "@/lib/format";
 import { armAudio, isAudioArmed, playChime } from "@/lib/sound";
 import { cn } from "@/lib/utils";
 
@@ -32,11 +32,10 @@ interface Column {
   title: string;
   hint: string;
   rail: string;
-  iconTile: string;
   count: string;
-  badge: BadgeTone;
   Icon: typeof Flame;
-  empty: string;
+  emptyTitle: string;
+  emptyBody: string;
 }
 
 const columns: Column[] = [
@@ -45,33 +44,30 @@ const columns: Column[] = [
     title: "Pending",
     hint: "Waiting to start",
     rail: "bg-pending",
-    iconTile: "bg-pending-surface text-pending",
     count: "text-pending",
-    badge: "pending",
     Icon: Flame,
-    empty: "No tickets waiting",
+    emptyTitle: "No tickets waiting",
+    emptyBody: "Tickets appear here when a table fires an order.",
   },
   {
     status: "preparing",
     title: "Preparing",
     hint: "On the line",
     rail: "bg-preparing",
-    iconTile: "bg-preparing-surface text-preparing",
     count: "text-preparing",
-    badge: "preparing",
     Icon: ChefHat,
-    empty: "Nothing is cooking",
+    emptyTitle: "Nothing is cooking",
+    emptyBody: "Tickets move here the moment the line starts them.",
   },
   {
     status: "ready",
     title: "Ready",
     hint: "At the pass",
     rail: "bg-ready",
-    iconTile: "bg-ready-surface text-ready",
     count: "text-ready",
-    badge: "ready",
     Icon: BellRing,
-    empty: "Nothing at the pass",
+    emptyTitle: "Nothing at the pass",
+    emptyBody: "Finished tickets wait here until the floor runs them.",
   },
 ];
 
@@ -87,6 +83,20 @@ export function KdsBoard({ onLock }: KdsBoardProps) {
      which meant real dishes could not be 86'd from the board. */
   const catalog = useStaffMenuCatalog();
   const [shift, setShift] = useState<SessionIdentity | null>(null);
+
+  /* Frontend-only checklist ticks, keyed by ticket then by line. Purely
+     presentational: ticking a line never writes a status, and the real
+     one-tap advance below is untouched. */
+  const [checked, setChecked] = useState<Record<string, string[]>>({});
+
+  const toggleItem = useCallback((orderId: string, itemId: string) => {
+    setChecked((current) => {
+      const set = new Set(current[orderId] ?? []);
+      if (set.has(itemId)) set.delete(itemId);
+      else set.add(itemId);
+      return { ...current, [orderId]: [...set] };
+    });
+  }, []);
 
   /* E2b — restore the armed shift's identity from the stored bearer token.
      Claims only (role, terminal, expiry); a lapsed token 401s and the
@@ -192,25 +202,16 @@ export function KdsBoard({ onLock }: KdsBoardProps) {
 
   return (
     <main id="main" className="min-h-dvh pb-16">
-      <header className="sticky top-0 z-30 border-b border-line-strong bg-surface/95 backdrop-blur-md">
-        <Container className="flex flex-wrap items-center justify-between gap-4 py-4">
-          <div className="flex items-center gap-3">
-            <Badge tone="brand" size="md">
-              Kitchen
-            </Badge>
-            <div className="flex flex-col">
-              <h1 className="font-display text-subheading text-ink">Kitchen display</h1>
-              <p className="text-xs text-ink-muted">
-                {phase === "loading"
-                  ? "Loading the line…"
-                  : tickets.length === 1
-                    ? "1 live ticket"
-                    : `${tickets.length} live tickets`}
-              </p>
-            </div>
-          </div>
-
-          <div className="flex flex-wrap items-center gap-2">
+      <OpsBar
+        title="Kitchen display"
+        prefix={
+          <Badge tone="brand" size="md">
+            Kitchen
+          </Badge>
+        }
+        status={<LiveIndicator live={source !== "demo"} />}
+        actions={
+          <>
             {/* E2b — the shift's own expiry, decoded from the bearer token.
                 An 8-hour token expiring mid-service used to mean every one-tap
                 action silently 401ing; now the line can see it coming. */}
@@ -226,7 +227,7 @@ export function KdsBoard({ onLock }: KdsBoardProps) {
               onClick={handleStartShift}
               leftIcon={<Volume2 className="size-4" aria-hidden />}
             >
-              {audioArmed ? "Audio on" : "Start shift & enable audio"}
+              {audioArmed ? "Audio on" : "Enable audio"}
             </Button>
 
             <Button
@@ -246,9 +247,9 @@ export function KdsBoard({ onLock }: KdsBoardProps) {
             >
               Lock board
             </Button>
-          </div>
-        </Container>
-      </header>
+          </>
+        }
+      />
 
       {/* ---- State matrix: error — API message + Retry Connection --------- */}
       {phase === "error" ? (
@@ -265,7 +266,7 @@ export function KdsBoard({ onLock }: KdsBoardProps) {
           />
         </Container>
       ) : (
-        <Container className="grid gap-5 py-6 lg:grid-cols-3">
+        <Container className="grid gap-6 py-6 lg:grid-cols-3 lg:items-start">
           {columns.map((column) => {
             const list = tickets.filter((order) => order.status === column.status);
 
@@ -273,34 +274,24 @@ export function KdsBoard({ onLock }: KdsBoardProps) {
               <section
                 key={column.status}
                 aria-label={`${column.title} tickets`}
-                className="relative flex flex-col gap-4 overflow-hidden rounded-lg border border-line-strong bg-surface p-4 pt-5 sm:p-5 sm:pt-6"
+                className="relative flex min-h-[26rem] flex-col gap-4 overflow-hidden rounded-lg border border-line-strong bg-surface p-4 pt-5 sm:p-5"
               >
                 {/* The lane's own colour runs across its top edge so the three
                     columns are separable at a glance across the whole board. */}
                 <span aria-hidden className={cn("absolute inset-x-0 top-0 h-1", column.rail)} />
 
-                <header className="flex items-center justify-between gap-3">
-                  <span className="flex items-center gap-2.5">
-                    <span
-                      className={cn(
-                        "flex size-9 shrink-0 items-center justify-center rounded-md",
-                        column.iconTile,
-                      )}
-                    >
-                      <column.Icon className="size-5" aria-hidden />
-                    </span>
-                    <span className="flex flex-col">
-                      <h2 className="font-display text-subheading leading-none text-ink">
-                        {column.title}
-                      </h2>
-                      <span className="mt-1 text-xs text-ink-subtle">{column.hint}</span>
-                    </span>
-                  </span>
+                <header className="flex items-start justify-between gap-3">
+                  <div className="flex flex-col gap-1">
+                    <h2 className="font-display text-subheading leading-none text-ink">
+                      {column.title}
+                    </h2>
+                    <span className="text-xs text-ink-subtle">{column.hint}</span>
+                  </div>
 
                   <span
                     aria-label={`${list.length} ${column.title} tickets`}
                     className={cn(
-                      "font-display text-3xl leading-none font-semibold tabular-nums",
+                      "font-display text-2xl leading-none font-semibold tabular-nums",
                       column.count,
                     )}
                   >
@@ -330,13 +321,9 @@ export function KdsBoard({ onLock }: KdsBoardProps) {
                   /* ---- State matrix: empty — contextual copy + CTA ------- */
                   <EmptyState
                     icon={column.Icon}
-                    title={column.empty}
-                    description={
-                      boardEmpty
-                        ? "No active orders on the line! 🍳 The board pings the moment a table fires."
-                        : "Tickets move here the moment a status tag is tapped."
-                    }
-                    className="py-8"
+                    title={column.emptyTitle}
+                    description={column.emptyBody}
+                    className="flex-1 py-8"
                     action={
                       boardEmpty ? (
                         <Button variant="outline" size="sm" onClick={() => void refresh()}>
@@ -355,6 +342,8 @@ export function KdsBoard({ onLock }: KdsBoardProps) {
                           order={order}
                           now={now}
                           busy={Boolean(busy[order.id])}
+                          checkedItemIds={checked[order.id]}
+                          onToggleItem={toggleItem}
                           onAdvance={(ticket, next) => void handleAdvance(ticket, next)}
                         />
                       ))}

@@ -1,15 +1,14 @@
 "use client";
 
-import { Clock, EyeOff, Lock, ShieldAlert, Users } from "lucide-react";
+import { Check, Clock, EyeOff, Lock, ShieldAlert, Users } from "lucide-react";
+import { AnimatePresence, motion } from "motion/react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { LiveIndicator, OpsBar } from "@/components/staff/ops-bar";
 import { MenuAvailabilityDrawer } from "@/components/staff/menu-availability-drawer";
-import { Badge, type BadgeTone } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
 import { Container } from "@/components/ui/container";
 import { EmptyState, ErrorState } from "@/components/ui/empty-state";
 import { Skeleton } from "@/components/ui/loading-state";
-import { PageHeader } from "@/components/ui/page-header";
 import { useToast } from "@/components/ui/toast";
 import { useDb } from "@/hooks/use-db";
 import { useLiveFloor } from "@/hooks/use-live-floor";
@@ -19,22 +18,34 @@ import { useStaffMenuCatalog } from "@/hooks/use-staff-menu-catalog";
 import { countActiveDiners } from "@/lib/api/store";
 import type { FloorTableSummary, OrderStatus } from "@/lib/api/types";
 import { formatElapsed } from "@/lib/format";
+import { transitionBase } from "@/lib/motion";
 import { cn } from "@/lib/utils";
 
-const statusLabels: Record<OrderStatus, { label: string; badge: BadgeTone }> = {
-  pending: { label: "Pending", badge: "pending" },
-  preparing: { label: "Preparing", badge: "preparing" },
-  ready: { label: "Ready", badge: "ready" },
-  served: { label: "Served", badge: "neutral" },
+/* One word per state, one sentence to support it. The word is what a server
+   scans the whole room for; the sentence is only read once they stop. */
+const statusWord: Record<OrderStatus, string> = {
+  pending: "Pending",
+  preparing: "Preparing",
+  ready: "Ready",
+  served: "Served",
 };
 
 const guidance: Record<OrderStatus, string> = {
-  pending: "Food awaiting production at the pass.",
+  pending: "Waiting behind the tickets already on the line.",
   preparing: "On the cooking line right now.",
-  ready: "Run the food to the physical table.",
+  ready: "Run the food to the table.",
   served: "Order complete.",
 };
 
+const statusText: Record<OrderStatus, string> = {
+  pending: "text-pending",
+  preparing: "text-preparing",
+  ready: "text-ready",
+  served: "text-ink-subtle",
+};
+
+/* A colour rail on the card edge lets a server triage the whole room by
+   scanning the left margin, without reading a single label. */
 const statusRail: Record<OrderStatus, string> = {
   pending: "bg-pending",
   preparing: "bg-preparing",
@@ -57,6 +68,11 @@ function urgency(summary: FloorTableSummary) {
   return urgencyRank[order.status];
 }
 
+/* Demo-only pacing counter. The floor API has no "orders today" figure, so a
+   seeded base rides on top of the live active-table count — the number moves
+   with real data and never touches the backend. */
+const DEMO_ORDERS_TODAY_BASE = 19;
+
 export interface FloorViewProps {
   /** Ends the shift — returns the operator to the PIN wall. */
   onLock: () => void;
@@ -67,6 +83,11 @@ export function FloorView({ onLock }: FloorViewProps) {
   const now = useNow(1000);
   const { toast } = useToast();
   const [availabilityOpen, setAvailabilityOpen] = useState(false);
+
+  /* Frontend-only coordination state: which tables this server has picked up.
+     It exists to demonstrate the future claim flow and is deliberately not
+     persisted anywhere — no backend write happens on "I'll serve this". */
+  const [claimed, setClaimed] = useState<Record<string, boolean>>({});
 
   /* The catalog is global but E3 needs a table token; the floor already knows
      every table code, so hand one over instead of making the hook re-fetch
@@ -98,48 +119,100 @@ export function FloorView({ onLock }: FloorViewProps) {
     [tables],
   );
 
+  const activeTables = useMemo(
+    () => tables.filter((summary) => summary.active_order !== null).length,
+    [tables],
+  );
+  const needAttention = useMemo(
+    () => tables.filter((summary) => summary.active_order?.status === "ready").length,
+    [tables],
+  );
+  const ordersToday = DEMO_ORDERS_TODAY_BASE + activeTables;
+
+  function claim(summary: FloorTableSummary) {
+    setClaimed((current) => ({ ...current, [summary.table.id]: true }));
+    toast({
+      title: `${summary.table.name} claimed`,
+      description: "You're serving this one — the room sees it as taken.",
+      tone: "success",
+    });
+  }
+
+  function release(summary: FloorTableSummary) {
+    setClaimed((current) => {
+      const next = { ...current };
+      delete next[summary.table.id];
+      return next;
+    });
+    toast({
+      title: `${summary.table.name} released`,
+      description: "Back in the open pool for any server.",
+      tone: "info",
+    });
+  }
+
   return (
     <main id="main" className="min-h-dvh pb-20">
-      <Container className="py-10 sm:py-14">
-        <PageHeader
-          eyebrow="Floor operations"
-          title="Floor view"
-          description="Live pacing for every table in the room — no walk to the kitchen pass required."
-          actions={
-            <div className="flex flex-wrap items-center gap-2.5">
-              <Badge tone={source === "demo" ? "outline" : "ready"} size="md">
-                {source === "demo" ? "Demo data" : "Live"}
-              </Badge>
+      <OpsBar
+        title="Floor operations"
+        status={<LiveIndicator live={source !== "demo"} />}
+        metrics={[
+          { label: "Orders today", value: String(ordersToday) },
+          { label: "Tables active", value: String(activeTables) },
+        ]}
+        actions={
+          <>
+            <Button
+              variant="soft"
+              size="md"
+              onClick={() => setAvailabilityOpen(true)}
+              leftIcon={<EyeOff className="size-4" aria-hidden />}
+            >
+              Quick 86
+            </Button>
 
-              <Button
-                variant="soft"
-                onClick={() => setAvailabilityOpen(true)}
-                leftIcon={<EyeOff className="size-4" aria-hidden />}
-              >
-                Quick 86 panel
-              </Button>
+            <Button
+              variant="ghost"
+              size="md"
+              onClick={onLock}
+              leftIcon={<Lock className="size-4" aria-hidden />}
+            >
+              Lock board
+            </Button>
+          </>
+        }
+      />
 
-              <Button
-                variant="ghost"
-                onClick={onLock}
-                leftIcon={<Lock className="size-4" aria-hidden />}
-              >
-                Lock board
-              </Button>
+      <Container className="py-10 sm:py-12">
+        {/* ---- Concise heading + operational summary -------------------- */}
+        {phase === "success" && ordered.length > 0 ? (
+          <header className="flex flex-col gap-7">
+            <h1 className="max-w-2xl font-display text-heading text-ink">
+              Know what needs attention before you reach the pass.
+            </h1>
+
+            <div className="flex flex-wrap items-end gap-x-12 gap-y-6">
+              <SummaryStat value={ordersToday} label="Orders today" />
+              <SummaryStat value={activeTables} label="Active tables" />
+              <SummaryStat
+                value={needAttention}
+                label="Need attention"
+                tone={needAttention > 0 ? "attention" : "default"}
+              />
             </div>
-          }
-        />
+          </header>
+        ) : null}
 
         {/* ---- State matrix: loading ---------------------------------- */}
         {phase === "loading" ? (
           <div className="mt-10 grid gap-5 sm:grid-cols-2 xl:grid-cols-3" aria-busy="true">
             {Array.from({ length: 6 }).map((_, index) => (
-              <Skeleton key={index} className="h-44 rounded-lg" />
+              <Skeleton key={index} className="h-48 rounded-lg" />
             ))}
           </div>
         ) : phase === "error" ? (
           /* ---- State matrix: error — API message + Retry -------------- */
-          <div className="mt-12">
+          <div className="mt-10">
             <ErrorState
               titleAs="h2"
               title="The floor lost its connection"
@@ -153,7 +226,7 @@ export function FloorView({ onLock }: FloorViewProps) {
           </div>
         ) : ordered.length === 0 ? (
           /* ---- State matrix: empty ----------------------------------- */
-          <div className="mt-12">
+          <div className="mt-10">
             <EmptyState
               title="No tables are configured"
               description="Add tables in the database and they appear here the moment a diner scans one."
@@ -168,7 +241,15 @@ export function FloorView({ onLock }: FloorViewProps) {
           /* ---- State matrix: success --------------------------------- */
           <ul className="mt-10 grid gap-5 sm:grid-cols-2 xl:grid-cols-3">
             {ordered.map((summary) => (
-              <TableCard key={summary.table.id} summary={summary} now={now} demo={source === "demo"} />
+              <TableCard
+                key={summary.table.id}
+                summary={summary}
+                now={now}
+                demo={source === "demo"}
+                claimed={Boolean(claimed[summary.table.id])}
+                onClaim={claim}
+                onRelease={release}
+              />
             ))}
           </ul>
         )}
@@ -184,14 +265,44 @@ export function FloorView({ onLock }: FloorViewProps) {
   );
 }
 
+function SummaryStat({
+  value,
+  label,
+  tone = "default",
+}: {
+  value: number;
+  label: string;
+  tone?: "default" | "attention";
+}) {
+  return (
+    <div className="flex flex-col gap-1.5">
+      <span
+        className={cn(
+          "font-display text-3xl leading-none font-semibold tabular-nums",
+          tone === "attention" ? "text-ember" : "text-ink",
+        )}
+      >
+        {value}
+      </span>
+      <span className="text-label text-ink-subtle uppercase">{label}</span>
+    </div>
+  );
+}
+
 function TableCard({
   summary,
   now,
   demo,
+  claimed,
+  onClaim,
+  onRelease,
 }: {
   summary: FloorTableSummary;
   now: number | null;
   demo: boolean;
+  claimed: boolean;
+  onClaim: (summary: FloorTableSummary) => void;
+  onRelease: (summary: FloorTableSummary) => void;
 }) {
   const db = useDb();
   const { table, active_order: order, cart_line_count } = summary;
@@ -204,57 +315,107 @@ function TableCard({
   const allergyLines = order
     ? order.items.filter((item) => item.allergy_note.trim()).length
     : 0;
+  const itemCount = order
+    ? order.items.reduce((total, item) => total + item.quantity, 0)
+    : 0;
 
-  const badge = status
-    ? statusLabels[status]
+  const word = status ? statusWord[status] : cart_line_count > 0 ? "Staged" : "Idle";
+  const wordTone = status
+    ? statusText[status]
     : cart_line_count > 0
-      ? { label: "Staged", badge: "outline" as BadgeTone }
-      : { label: "Idle", badge: "neutral" as BadgeTone };
-
-  const cardTone = status === "ready" ? "border-ready/60 bg-ready-surface" : undefined;
-
-  /* A colour rail on the card edge lets a server triage the whole room by
-     scanning the left margin, without reading a single label. */
+      ? "text-ink-muted"
+      : "text-ink-subtle";
+  const detail = status
+    ? guidance[status]
+    : cart_line_count > 0
+      ? "Staged in the shared cart, not fired yet."
+      : "Nothing in flight for this table.";
   const rail = status
     ? statusRail[status]
     : cart_line_count > 0
       ? "bg-line-strong"
       : "bg-line";
 
-  const detail = status
-    ? guidance[status]
-    : cart_line_count > 0
-      ? "Items staged in the shared cart but not fired yet."
-      : "Nothing in flight for this table.";
+  /* Only a ready ticket needs a runner, so only a ready ticket gets a CTA.
+     Everything else is information the server reads on the way past. */
+  const canServe = status === "ready";
 
   return (
-    <li>
-      <Card className={cn("h-full pt-5", cardTone)}>
+    <li className="h-full">
+      <article
+        className={cn(
+          "relative flex h-full flex-col overflow-hidden rounded-lg border bg-surface p-6 transition-[transform,box-shadow,border-color] duration-[var(--duration-base)] ease-organic",
+          canServe ? "border-ready/50 shadow-sm" : "border-line",
+          !canServe && "hover:border-line-strong",
+          claimed && "ring-1 ring-ember/25",
+        )}
+      >
         <span aria-hidden className={cn("absolute inset-x-0 top-0 h-1", rail)} />
 
-        <div className="flex items-start justify-between gap-3">
+        <header className="flex items-start justify-between gap-3">
           <div className="flex flex-col gap-1">
             {/* Staff see the human table name, never the QR token — the
                 token is the diner's capability credential. */}
-            <span className="text-label text-ink-subtle uppercase">
-              Table
-            </span>
-            <p className="font-display text-subheading text-ink">{table.name}</p>
+            <span className="text-label text-ink-subtle uppercase">Table</span>
+            <h2 className="font-display text-subheading text-ink">{table.name}</h2>
           </div>
-          <Badge tone={badge.badge} size="md">
-            {badge.label}
-          </Badge>
+
+          {allergyLines > 0 ? (
+            <span
+              title={`${allergyLines} ${allergyLines === 1 ? "allergy" : "allergies"} on this ticket`}
+              className="flex items-center gap-1.5 rounded-pill bg-alert-surface px-2.5 py-1 text-label text-alert uppercase"
+            >
+              <ShieldAlert className="size-3.5 shrink-0" aria-hidden />
+              {allergyLines}
+            </span>
+          ) : null}
+        </header>
+
+        <div className="mt-5 flex flex-wrap items-baseline gap-x-3 gap-y-1.5">
+          <span
+            className={cn(
+              "font-display text-2xl leading-none font-semibold tracking-[-0.01em] uppercase",
+              wordTone,
+            )}
+          >
+            {word}
+          </span>
+
+          <AnimatePresence initial={false}>
+            {claimed ? (
+              <motion.span
+                key="claimed"
+                initial={{ opacity: 0, scale: 0.9 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.96 }}
+                transition={transitionBase}
+                className="inline-flex items-center gap-1.5 rounded-pill bg-ember-soft px-2.5 py-1 text-label text-ember uppercase"
+              >
+                <Check className="size-3 shrink-0" aria-hidden />
+                Taken by you
+              </motion.span>
+            ) : null}
+          </AnimatePresence>
         </div>
 
-        <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-ink-muted">
+        <p className="mt-2.5 text-sm leading-relaxed text-ink-muted">{detail}</p>
+
+        <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-ink-subtle">
           {order ? (
-            <span className="flex items-center gap-1.5">
-              <Clock className="size-3.5" aria-hidden />
-              {now === null ? "—" : formatElapsed(order.created_at, now)}
+            <>
+              <span className="flex items-center gap-1.5">
+                <Clock className="size-3.5" aria-hidden />
+                {now === null ? "—" : formatElapsed(order.created_at, now)}
+              </span>
+              <span>
+                {itemCount} {itemCount === 1 ? "item" : "items"} on the ticket
+              </span>
+            </>
+          ) : cart_line_count > 0 ? (
+            <span>
+              {cart_line_count} {cart_line_count === 1 ? "line" : "lines"} staged
             </span>
-          ) : (
-            <span>{cart_line_count} staged</span>
-          )}
+          ) : null}
 
           {/* Phone count is only meaningful from real presence, which the
               floor board does not subscribe to per table. Showing a seeded
@@ -265,27 +426,55 @@ function TableCard({
               {diners === 1 ? "1 phone" : `${diners} phones`}
             </span>
           ) : null}
-
         </div>
 
-        {/* Allergies are the reason this card exists, so they get their own
-            block rather than a line inside the metadata row. */}
-        {allergyLines > 0 ? (
-          <p className="mt-3 flex items-center gap-2 rounded-md border border-alert/45 bg-alert-surface px-3 py-2 text-xs font-bold tracking-wide text-alert uppercase">
-            <ShieldAlert className="size-3.5 shrink-0" aria-hidden />
-            {allergyLines} {allergyLines === 1 ? "allergy" : "allergies"} on this ticket
-          </p>
+        {canServe ? (
+          <div className="mt-auto pt-6">
+            <AnimatePresence mode="wait" initial={false}>
+              {claimed ? (
+                <motion.div
+                  key="serving"
+                  initial={{ opacity: 0, y: 6 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -6 }}
+                  transition={transitionBase}
+                  className="flex items-center gap-3"
+                >
+                  <span className="inline-flex h-11 flex-1 items-center justify-center gap-2 rounded-md border border-ready/40 bg-ready-surface px-4 text-sm font-semibold text-ready">
+                    <Check className="size-4" aria-hidden />
+                    You&apos;re serving
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => onRelease(summary)}
+                    className="shrink-0 cursor-pointer text-xs font-semibold text-ink-subtle underline-offset-4 transition-colors duration-[var(--duration-fast)] hover:text-ink hover:underline"
+                  >
+                    Release
+                  </button>
+                </motion.div>
+              ) : (
+                <motion.div
+                  key="open"
+                  initial={{ opacity: 0, y: 6 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -6 }}
+                  transition={transitionBase}
+                >
+                  <Button
+                    variant="ember"
+                    size="md"
+                    fullWidth
+                    onClick={() => onClaim(summary)}
+                    leftIcon={<Check className="size-4" aria-hidden />}
+                  >
+                    I&apos;ll serve this
+                  </Button>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
         ) : null}
-
-        <p
-          className={cn(
-            "mt-4 border-t border-line pt-4 text-sm leading-relaxed",
-            status === "ready" ? "font-medium text-ready" : "text-ink-muted",
-          )}
-        >
-          {detail}
-        </p>
-      </Card>
+      </article>
     </li>
   );
 }

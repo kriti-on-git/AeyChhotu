@@ -3,19 +3,22 @@
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import {
   BellRing,
+  Check,
   ChefHat,
   CircleCheck,
   Clock,
   Flame,
+  ShoppingBasket,
+  Timer,
+  TriangleAlert,
   type LucideIcon,
 } from "lucide-react";
 import Link from "next/link";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { ActiveDinersBadge } from "@/components/diner/active-diners-badge";
 import { InactiveTableState } from "@/components/diner/inactive-table-state";
-import { Badge, type BadgeTone } from "@/components/ui/badge";
+import { LogoMark } from "@/components/brand/logo";
 import { Button, buttonStyles } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
 import { Container } from "@/components/ui/container";
 import { EmptyState, ErrorState } from "@/components/ui/empty-state";
 import { Heading } from "@/components/ui/heading";
@@ -25,51 +28,52 @@ import { useNow } from "@/hooks/use-now";
 import { usePresence } from "@/hooks/use-presence";
 import { useLiveTable } from "@/hooks/use-live-table";
 import type { Order, OrderStatus } from "@/lib/api/types";
+import { ACTIVITY_LINES, FOODIE_JOKES, estimateArrival } from "@/lib/diner/tracker";
 import { formatElapsed, formatIstTime } from "@/lib/format";
 import { transitionBase } from "@/lib/motion";
 import { cn } from "@/lib/utils";
+
+/* The tracker answers one question — where is my food — so the current status
+   is the page's single dominant object, and nothing below it repeats the
+   word. Everything else (the journey, the estimate, the ticket, the activity
+   line) supports that one statement instead of restating it. */
 
 interface StatusMeta {
   label: string;
   message: string;
   Icon: LucideIcon;
-  circle: string;
-  surface: string;
-  badge: BadgeTone;
+  emblem: string;
+  halo: string;
 }
 
 const statusMeta: Record<OrderStatus, StatusMeta> = {
   pending: {
     label: "Pending",
-    message: "Your ticket is with the kitchen and waiting to start.",
+    message: "Your ticket is at the pass, waiting for a free burner.",
     Icon: Clock,
-    circle: "border-pending/45 bg-paper text-pending",
-    surface: "bg-canvas",
-    badge: "pending",
+    emblem: "border-line-strong bg-surface text-pending",
+    halo: "border-transparent",
   },
   preparing: {
     label: "Preparing",
-    message: "The chef is cooking your table's order right now.",
+    message: "The line is cooking your table's order right now.",
     Icon: ChefHat,
-    circle: "border-preparing/50 bg-paper text-preparing",
-    surface: "bg-preparing-surface",
-    badge: "preparing",
+    emblem: "border-preparing/40 bg-preparing-surface text-preparing",
+    halo: "animate-pulse-soft border-preparing/30",
   },
   ready: {
     label: "Ready",
-    message: "Your food is ready — it is on its way out to the table.",
+    message: "Everything is plated — it's on its way to your table.",
     Icon: BellRing,
-    circle: "border-ready/50 bg-ready-surface text-ready",
-    surface: "bg-ready-surface",
-    badge: "ready",
+    emblem: "border-ready/45 bg-ready-surface text-ready",
+    halo: "border-ready/30",
   },
   served: {
     label: "Served",
-    message: "Order served. The table can fire a new round whenever it likes.",
+    message: "That round is done. Fire another whenever you're ready.",
     Icon: CircleCheck,
-    circle: "border-ready/50 bg-ready-surface text-ready",
-    surface: "bg-canvas",
-    badge: "ready",
+    emblem: "border-ready/45 bg-ready-surface text-ready",
+    halo: "border-ready/30",
   },
 };
 
@@ -102,6 +106,8 @@ export function LiveTracker({ tableToken }: LiveTrackerProps) {
       [...orders].sort((a, b) => b.created_at.localeCompare(a.created_at)).at(0) ?? null,
     [orders],
   );
+
+  const estimate = useMemo(() => estimateArrival(orders), [orders]);
 
   const [flashing, setFlashing] = useState(false);
   const previousStatus = useRef<OrderStatus | null>(null);
@@ -147,8 +153,8 @@ export function LiveTracker({ tableToken }: LiveTrackerProps) {
     <div className="sticky top-0 z-30 border-b border-line bg-canvas/88 backdrop-blur-md">
       <Container className="flex flex-wrap items-center justify-between gap-3 py-3.5">
         <div className="flex items-center gap-3">
-          <Badge tone="brand" size="md">Your table</Badge>
-          <span className="text-sm text-ink-muted">Live status tracker</span>
+          <LogoMark className="size-8" />
+          <span className="text-label text-ink-subtle uppercase">Your table</span>
         </div>
 
         <div className="flex items-center gap-3">
@@ -164,6 +170,7 @@ export function LiveTracker({ tableToken }: LiveTrackerProps) {
     </div>
   );
 
+  // ---- State matrix: empty (nothing fired yet) --------------------------
   if (!order) {
     return (
       <main id="main" className="min-h-dvh">
@@ -192,113 +199,72 @@ export function LiveTracker({ tableToken }: LiveTrackerProps) {
   }
 
   const meta = statusMeta[order.status];
-  const firedLabel =
-    (now === null ? "Fired just now" : `Fired ${formatElapsed(order.created_at, now)} ago`) +
-    ` · ${formatIstTime(order.created_at)}`;
 
   return (
-    <main
-      id="main"
-      className={cn(
-        "relative isolate min-h-dvh transition-colors duration-[var(--duration-slower)] ease-gentle",
-        meta.surface,
-      )}
-    >
+    <main id="main" className="relative isolate min-h-dvh bg-canvas">
       {flashing ? (
         <div aria-hidden className="pointer-events-none fixed inset-0 z-50 animate-flash-ready" />
       ) : null}
 
       {header}
 
-      <Container size="narrow" className="flex flex-col items-center gap-10 py-12 sm:py-16">
-        <div className="flex flex-col items-center gap-4 text-center" aria-live="polite">
-          <Text variant="label" tone="subtle">
-            Live status tracker
-          </Text>
+      <Container
+        size="narrow"
+        className="flex flex-col items-center gap-10 py-12 sm:gap-12 sm:py-16"
+      >
+        {/* ---- Status hero: one statement, said once ------------------- */}
+        <div className="flex flex-col items-center gap-7 text-center" aria-live="polite">
+          <span className="text-label text-ink-subtle uppercase">Live order</span>
 
-          <StatusCircle status={order.status} />
+          <StatusEmblem status={order.status} />
 
-          <Heading level="title" as="h1">
-            {meta.label}
-          </Heading>
-
-          <Text variant="lead" tone="muted" className="max-w-xl">
-            {meta.message}
-          </Text>
-        </div>
-
-        <ProgressSteps status={order.status} />
-
-        <Card tone="surface" className="w-full">
-          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line pb-4">
-            <div className="flex items-center gap-3">
-              <Badge tone={meta.badge}>{meta.label}</Badge>
-              <span className="text-sm text-ink-muted">
-                {order.items.length} {order.items.length === 1 ? "line" : "lines"} on the ticket
-              </span>
-            </div>
-            <span className="flex items-center gap-1.5 text-xs text-ink-subtle">
-              <Clock className="size-3.5" aria-hidden />
-              {firedLabel}
-            </span>
+          <div className="flex flex-col items-center gap-3">
+            <Heading level="display" as="h1" className="uppercase">
+              {meta.label}
+            </Heading>
+            <Text variant="lead" tone="muted" className="max-w-xl">
+              {meta.message}
+            </Text>
           </div>
 
-          <ul className="mt-4 flex flex-col gap-3">
-            {order.items.map((item) => (
-              <li
-                key={item.id}
-                className="flex flex-col gap-1 border-b border-line pb-3 last:border-0 last:pb-0"
-              >
-                <p className="flex flex-wrap items-baseline gap-2 text-sm font-medium text-ink">
-                  <span className="font-display text-base">{item.quantity}×</span>
-                  {item.name}
-                  {item.added_by && item.added_by !== "Guest" ? (
-                    <span className="text-xs font-normal text-ink-subtle">
-                      added by {item.added_by}
-                    </span>
-                  ) : null}
-                </p>
+          <ActivityLine status={order.status} />
+        </div>
 
-                {item.request_note ? (
-                  <p className="text-xs text-ink-muted">Kitchen note: {item.request_note}</p>
-                ) : null}
+        {/* ---- Journey: where the order is in the pipeline -------------- */}
+        <ProgressJourney status={order.status} />
 
-                {item.allergy_note ? (
-                  <p className="text-xs font-bold uppercase tracking-wide text-alert">
-                    Allergy: {item.allergy_note}
-                  </p>
-                ) : null}
-              </li>
-            ))}
-          </ul>
-        </Card>
+        <ArrivalEstimateModule status={order.status} estimate={estimate} />
+
+        <OrderTicket order={order} now={now} />
 
         {cart.length > 0 && order.status !== "served" ? (
-          <Card tone="surface" className="w-full">
-            <Text variant="small" tone="muted">
-              {totals.itemCount} {totals.itemCount === 1 ? "item is" : "items are"} already staged
-              for the next round. A second fire is blocked until this order is served.
-            </Text>
-          </Card>
+          <p className="flex items-center gap-2 text-xs text-ink-subtle">
+            <ShoppingBasket className="size-3.5 shrink-0" aria-hidden />
+            {totals.itemCount} {totals.itemCount === 1 ? "item" : "items"} staged for the next
+            round — a second fire unlocks once this one leaves the table.
+          </p>
         ) : null}
 
-        <div className="flex w-full flex-col gap-3 sm:flex-row sm:justify-center">
-          <Link
-            href={`/table/${table.code}`}
-            className={buttonStyles({
-              variant: order.status === "served" ? "primary" : "outline",
-              size: "lg",
-            })}
-          >
-            {order.status === "served" ? "Start a new round" : "Back to the menu"}
-          </Link>
-        </div>
+        <Link
+          href={`/table/${table.code}`}
+          className={buttonStyles({
+            variant: order.status === "served" ? "ember" : "outline",
+            size: "lg",
+          })}
+        >
+          {order.status === "served" ? "Start a new round" : "Back to the menu"}
+        </Link>
+
+        <JokeLine />
       </Container>
     </main>
   );
 }
 
-function StatusCircle({ status }: { status: OrderStatus }) {
+/* The single largest object on the page. The icon is the hero; the status
+   word below it names it. A soft halo — pulsing only while the food is
+   actually being cooked — is the one piece of motion allowed up here. */
+function StatusEmblem({ status }: { status: OrderStatus }) {
   const meta = statusMeta[status];
   const reduceMotion = useReducedMotion();
   const Icon = meta.Icon;
@@ -306,59 +272,94 @@ function StatusCircle({ status }: { status: OrderStatus }) {
   return (
     <div
       className={cn(
-        "relative flex size-40 items-center justify-center rounded-pill border-4 sm:size-48",
-        meta.circle,
+        "relative flex size-28 items-center justify-center rounded-pill border sm:size-32",
+        meta.emblem,
       )}
     >
       <span
         aria-hidden
-        className="absolute inset-3 rounded-pill border border-dashed border-current opacity-30"
+        className={cn("absolute -inset-2.5 rounded-pill border", meta.halo)}
       />
 
       <AnimatePresence mode="wait" initial={false}>
         <motion.span
           key={status}
-          initial={reduceMotion ? { opacity: 0 } : { opacity: 0, scale: 0.9, y: 8 }}
+          initial={reduceMotion ? { opacity: 0 } : { opacity: 0, scale: 0.86, y: 8 }}
           animate={{ opacity: 1, scale: 1, y: 0 }}
-          exit={reduceMotion ? { opacity: 0 } : { opacity: 0, scale: 0.96 }}
+          exit={reduceMotion ? { opacity: 0 } : { opacity: 0, scale: 0.94 }}
           transition={transitionBase}
-          className="flex flex-col items-center gap-1.5"
+          className="flex items-center justify-center"
         >
-          <Icon className="size-8" aria-hidden />
-          <span className="font-display text-2xl font-semibold">{meta.label}</span>
+          <Icon className="size-11 sm:size-12" aria-hidden />
         </motion.span>
       </AnimatePresence>
     </div>
   );
 }
 
-function ProgressSteps({ status }: { status: OrderStatus }) {
+/* A horizontal journey. Finished stages carry a small check, the live stage
+   is filled and carries a ring, and everything ahead stays quiet. */
+function ProgressJourney({ status }: { status: OrderStatus }) {
   const current = stepIndex[status];
   const complete = status === "served";
 
   return (
-    <ol className="flex w-full items-start gap-2 sm:gap-4" aria-label="Order progress">
+    <ol className="flex w-full max-w-xl items-start" aria-label="Order progress">
       {steps.map((step, index) => {
         const done = complete || index < current;
         const active = !complete && index === current;
+        const reached = done || active;
+        /* The connector after this stage is live once the NEXT stage is
+           reached, so the line fills in step with the order. */
+        const segmentReached = complete || index + 1 <= current;
 
         return (
-          <li key={step.status} className="flex flex-1 flex-col items-center gap-2">
-            <span
-              aria-hidden
-              className={cn(
-                "h-1.5 w-full rounded-pill transition-colors duration-[var(--duration-base)]",
-                active ? "bg-ember" : done ? "bg-ink" : "bg-line-strong",
-              )}
-            />
-            <span
-              className={cn(
-                "text-label uppercase",
-                active ? "text-ember" : done ? "text-ink" : "text-ink-subtle",
-              )}
-            >
-              {step.label}
+          <li
+            key={step.status}
+            className={cn("flex items-start", index < steps.length - 1 && "flex-1")}
+          >
+            {/* Equal-width stages keep the middle node exactly centred, so
+                the three connectors read as one straight line. */}
+            <span className="flex w-20 shrink-0 flex-col items-center gap-2.5 sm:w-24">
+              <span
+                aria-hidden
+                className={cn(
+                  "flex size-8 items-center justify-center rounded-pill border transition-all duration-[var(--duration-base)] ease-organic",
+                  done && "border-ember/35 bg-ember-soft text-ember",
+                  active && "scale-110 border-ember bg-ember text-on-ember ring-4 ring-ember/10",
+                  !reached && "border-line-strong bg-surface text-ink-subtle",
+                )}
+              >
+                {done ? (
+                  <Check className="size-4" />
+                ) : (
+                  <span
+                    className={cn(
+                      "rounded-pill",
+                      active ? "size-2 bg-on-ember" : "size-1.5 bg-current",
+                    )}
+                  />
+                )}
+              </span>
+              <span
+                className={cn(
+                  "text-label uppercase",
+                  active ? "text-ember" : reached ? "text-ink" : "text-ink-subtle",
+                )}
+              >
+                {step.label}
+              </span>
             </span>
+
+            {index < steps.length - 1 ? (
+              <span
+                aria-hidden
+                className={cn(
+                  "mx-2 mt-4 h-px flex-1 transition-colors duration-[var(--duration-slow)] ease-gentle",
+                  segmentReached ? "bg-ember/45" : "bg-line-strong",
+                )}
+              />
+            ) : null}
           </li>
         );
       })}
@@ -366,27 +367,194 @@ function ProgressSteps({ status }: { status: OrderStatus }) {
   );
 }
 
-/* Loading state: mirrors the circle + steps + ticket card structure so the
+/* Small, deliberately not a card: one line of intelligence under the
+   journey. The number is a demo-only estimate built from the open tickets. */
+function ArrivalEstimateModule({
+  status,
+  estimate,
+}: {
+  status: OrderStatus;
+  estimate: ReturnType<typeof estimateArrival>;
+}) {
+  const arriving = status === "ready" || status === "served";
+
+  return (
+    <div className="flex flex-wrap items-center justify-center gap-x-3.5 gap-y-1 rounded-pill border border-line bg-surface/70 px-5 py-2">
+      <span className="flex items-center gap-2 text-label text-ink-subtle uppercase">
+        <Timer className="size-3.5" aria-hidden />
+        {arriving ? "Arriving now" : "Estimated arrival"}
+      </span>
+
+      {arriving ? null : (
+        <span className="font-display text-xl leading-none font-semibold text-ink tabular-nums">
+          ~ {estimate.minutes} min
+        </span>
+      )}
+
+      <span className="text-xs text-ink-subtle">
+        {arriving
+          ? "Waiting for a runner."
+          : `Based on ${estimate.tickets} active kitchen ${
+              estimate.tickets === 1 ? "ticket" : "tickets"
+            }`}
+      </span>
+    </div>
+  );
+}
+
+/* The order as one cohesive object: a receipt. Dashed rule, tabular counts,
+   generous line spacing, and the table's own notes kept where the guest
+   wrote them. */
+function OrderTicket({ order, now }: { order: Order; now: number | null }) {
+  const lineCount = order.items.length;
+
+  return (
+    <section
+      aria-label="Order ticket"
+      className="w-full overflow-hidden rounded-lg border border-line bg-surface shadow-sm"
+    >
+      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 border-b border-dashed border-line-strong px-6 py-4">
+        <span className="text-label text-ink-subtle uppercase">Order ticket</span>
+        <span className="flex items-center gap-1.5 text-xs text-ink-muted">
+          <Clock className="size-3.5" aria-hidden />
+          {lineCount} {lineCount === 1 ? "line" : "lines"}
+          <span aria-hidden className="text-ink-subtle">
+            ·
+          </span>
+          {now === null ? "Fired just now" : `Fired ${formatElapsed(order.created_at, now)} ago`}
+          <span aria-hidden className="text-ink-subtle">
+            ·
+          </span>
+          {formatIstTime(order.created_at)}
+        </span>
+      </div>
+
+      <ul className="flex flex-col px-6">
+        {order.items.map((item, index) => (
+          <li
+            key={item.id}
+            className={cn("flex flex-col gap-1.5 py-4", index > 0 && "border-t border-line/70")}
+          >
+            <p className="flex flex-wrap items-baseline gap-x-2.5 gap-y-1 text-base font-medium text-ink">
+              <span className="font-display text-lg font-semibold text-ink tabular-nums">
+                {item.quantity}×
+              </span>
+              {item.name}
+              {item.added_by && item.added_by !== "Guest" ? (
+                <span className="text-xs font-normal text-ink-subtle">
+                  · added by {item.added_by}
+                </span>
+              ) : null}
+            </p>
+
+            {item.request_note ? (
+              <p className="text-sm leading-relaxed text-ink-muted">Note: {item.request_note}</p>
+            ) : null}
+
+            {item.allergy_note ? (
+              <p className="mt-0.5 flex items-center gap-2 text-xs font-bold tracking-wide text-alert uppercase">
+                <TriangleAlert className="size-3.5 shrink-0" aria-hidden />
+                Allergy · {item.allergy_note}
+              </p>
+            ) : null}
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+/* One quiet line of live colour under the status. The copy rotates inside the
+   pool for the REAL status, so it can never contradict the kitchen. */
+function ActivityLine({ status }: { status: OrderStatus }) {
+  const lines = ACTIVITY_LINES[status];
+  const [index, setIndex] = useState(0);
+  const reduceMotion = useReducedMotion();
+
+  useEffect(() => {
+    const timer = window.setInterval(
+      () => setIndex((current) => (current + 1) % lines.length),
+      7000,
+    );
+    return () => window.clearInterval(timer);
+  }, [lines.length]);
+
+  return (
+    <span className="flex items-center justify-center gap-2 text-sm text-ink-subtle">
+      <span aria-hidden className="size-1.5 shrink-0 animate-pulse-soft rounded-pill bg-ember/70" />
+      <AnimatePresence mode="wait" initial={false}>
+        <motion.span
+          key={`${status}-${index}`}
+          initial={reduceMotion ? { opacity: 0 } : { opacity: 0, y: 4 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={reduceMotion ? { opacity: 0 } : { opacity: 0, y: -4 }}
+          transition={transitionBase}
+        >
+          {lines[index % lines.length]}
+        </motion.span>
+      </AnimatePresence>
+    </span>
+  );
+}
+
+/* The easter egg: understated, italic, and never part of the status story. */
+function JokeLine() {
+  const [index, setIndex] = useState(0);
+  const reduceMotion = useReducedMotion();
+
+  useEffect(() => {
+    const timer = window.setInterval(
+      () => setIndex((current) => (current + 1) % FOODIE_JOKES.length),
+      7000,
+    );
+    return () => window.clearInterval(timer);
+  }, []);
+
+  return (
+    <div className="flex w-full max-w-xl flex-col items-center gap-2 text-center">
+      <span className="text-label text-ink-subtle uppercase">Kitchen wisdom</span>
+      <AnimatePresence mode="wait" initial={false}>
+        <motion.p
+          key={index}
+          initial={reduceMotion ? { opacity: 0 } : { opacity: 0, y: 6 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={reduceMotion ? { opacity: 0 } : { opacity: 0, y: -6 }}
+          transition={transitionBase}
+          className="text-sm text-ink-subtle italic"
+        >
+          {FOODIE_JOKES[index]}
+        </motion.p>
+      </AnimatePresence>
+    </div>
+  );
+}
+
+/* Loading state: mirrors the emblem + journey + ticket structure so the
    layout shift stays stable until the first snapshot streams in. */
 function TrackerSkeleton() {
   return (
     <main id="main" className="min-h-dvh bg-canvas">
-      <Container size="narrow" className="flex flex-col items-center gap-8 py-16">
-        <Skeleton className="h-6 w-48 rounded-pill" />
-        <Skeleton className="size-40 rounded-pill sm:size-48" />
-        <Skeleton className="h-8 w-40" />
+      <Container size="narrow" className="flex flex-col items-center gap-10 py-16">
+        <Skeleton className="h-5 w-24 rounded-pill" />
+        <Skeleton className="size-28 rounded-pill sm:size-32" />
+        <Skeleton className="h-12 w-48" />
         <Skeleton className="h-4 w-72 max-w-full" />
 
-        <div className="flex w-full items-start gap-2 sm:gap-4" aria-hidden>
-          <Skeleton className="h-1.5 flex-1" />
-          <Skeleton className="h-1.5 flex-1" />
-          <Skeleton className="h-1.5 flex-1" />
+        <div className="flex w-full max-w-xl items-start" aria-hidden>
+          {[0, 1, 2].map((index) => (
+            <Fragment key={index}>
+              {index > 0 ? <Skeleton className="mx-2 mt-4 h-px flex-1" /> : null}
+              <Skeleton className="size-8 shrink-0 rounded-pill" />
+            </Fragment>
+          ))}
         </div>
 
-        <div className="w-full rounded-xl border border-line bg-surface p-5">
-          <Skeleton className="h-5 w-52" />
-          <Skeleton className="mt-4 h-4 w-full" />
-          <Skeleton className="mt-2 h-4 w-3/4" />
+        <Skeleton className="h-9 w-64 rounded-pill" />
+
+        <div className="w-full rounded-lg border border-line bg-surface p-6">
+          <Skeleton className="h-4 w-40" />
+          <Skeleton className="mt-5 h-4 w-full" />
+          <Skeleton className="mt-3 h-4 w-3/4" />
         </div>
       </Container>
     </main>

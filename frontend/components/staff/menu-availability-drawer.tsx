@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { Button } from "@/components/ui/button";
 import { Drawer } from "@/components/ui/drawer";
 import { useToast } from "@/components/ui/toast";
 import type { MenuItem } from "@/lib/api/types";
@@ -24,7 +25,12 @@ export interface MenuAvailabilityDrawerProps {
 
    Purely presentational — it used to read the offline demo store directly,
    which meant the kitchen could only ever 86 a *seeded* dish, never a real
-   one. The catalog and the mutation now arrive as props. */
+   one. The catalog and the mutation now arrive as props.
+
+   Visually it is one grouped list per category, not a stack of cards: a
+   section heading with a running "out" tally, then hairline-separated rows
+   with the price aligned to the toggle. The drawer footer keeps the count in
+   sight while the operator scrolls. */
 export function MenuAvailabilityDrawer({
   open,
   onClose,
@@ -45,6 +51,8 @@ export function MenuAvailabilityDrawer({
 
     return [...byCategory.entries()];
   }, [menu]);
+
+  const unavailable = menu.filter((item) => !item.is_available).length;
 
   async function toggle(item: MenuItem) {
     setBusyId(item.id);
@@ -73,61 +81,85 @@ export function MenuAvailabilityDrawer({
       size="lg"
       title="Quick item hide (86)"
       description="Toggling a dish off greys it out instantly on every active menu at the table."
+      footer={
+        <div className="flex items-center justify-between gap-4">
+          <span className="text-xs text-ink-subtle">
+            {menu.length === 0
+              ? "Catalog loading…"
+              : unavailable === 0
+                ? "Everything is available."
+                : `${unavailable} of ${menu.length} dishes 86'd`}
+          </span>
+          <Button variant="outline" size="md" onClick={onClose}>
+            Done
+          </Button>
+        </div>
+      }
     >
       {groups.length === 0 ? (
         <p className="rounded-md border border-line bg-surface-sunken px-4 py-6 text-center text-sm text-ink-muted">
           No catalog loaded yet. Once the menu is reachable it appears here and you can 86 any dish.
         </p>
       ) : (
-        <div className="flex flex-col gap-7">
-          {groups.map(([category, items]) => (
-            <section key={category} className="flex flex-col gap-2">
-              <h3 className="text-label text-ink-muted uppercase">{category}</h3>
+        <div className="flex flex-col gap-8">
+          {groups.map(([category, items]) => {
+            const out = items.filter((item) => !item.is_available).length;
 
-              <ul className="flex flex-col divide-y divide-line rounded-md border border-line bg-paper">
-                {items.map((item) => {
-                  const available = item.is_available;
+            return (
+              <section key={category} className="flex flex-col gap-3">
+                <div className="flex items-baseline justify-between gap-4">
+                  <h3 className="text-label text-ink uppercase">{category}</h3>
+                  <span className="shrink-0 text-xs text-ink-subtle tabular-nums">
+                    {out > 0 ? `${out} out` : `${items.length} available`}
+                  </span>
+                </div>
 
-                  return (
-                    <li key={item.id} className="flex items-center justify-between gap-4 px-4 py-3">
-                      <div className="flex min-w-0 flex-col">
+                <ul className="flex flex-col divide-y divide-line border-y border-line">
+                  {items.map((item) => {
+                    const available = item.is_available;
+
+                    return (
+                      <li key={item.id} className="flex items-center gap-4 py-2.5">
                         <span
                           className={cn(
-                            "truncate text-sm font-semibold",
+                            "min-w-0 flex-1 truncate text-sm font-medium",
                             available ? "text-ink" : "text-ink-subtle line-through",
                           )}
                         >
                           {item.name}
                         </span>
-                        <span className="text-xs text-ink-muted">{formatPrice(item.price)}</span>
-                      </div>
 
-                      <button
-                        type="button"
-                        role="switch"
-                        aria-checked={available}
-                        aria-label={`${item.name} availability`}
-                        disabled={busyId === item.id}
-                        onClick={() => void toggle(item)}
-                        className={cn(
-                          "relative h-7 w-12 shrink-0 cursor-pointer rounded-pill transition-colors duration-[var(--duration-base)] ease-gentle disabled:opacity-60",
-                          available ? "bg-ready" : "bg-line-strong",
-                        )}
-                      >
-                        <span
-                          aria-hidden
+                        <span className="shrink-0 text-sm text-ink-muted tabular-nums">
+                          {formatPrice(item.price)}
+                        </span>
+
+                        <button
+                          type="button"
+                          role="switch"
+                          aria-checked={available}
+                          aria-label={`${item.name} availability`}
+                          disabled={busyId === item.id}
+                          onClick={() => void toggle(item)}
                           className={cn(
-                            "absolute top-0.5 left-0.5 size-6 rounded-pill bg-surface shadow-sm transition-transform duration-[var(--duration-base)] ease-gentle",
-                            available ? "translate-x-5" : "translate-x-0",
+                            "relative h-7 w-12 shrink-0 cursor-pointer rounded-pill transition-colors duration-[var(--duration-base)] ease-gentle disabled:opacity-60",
+                            available ? "bg-ready" : "bg-line-strong",
                           )}
-                        />
-                      </button>
-                    </li>
-                  );
-                })}
-              </ul>
-            </section>
-          ))}
+                        >
+                          <span
+                            aria-hidden
+                            className={cn(
+                              "absolute top-0.5 left-0.5 size-6 rounded-pill bg-surface shadow-sm transition-transform duration-[var(--duration-base)] ease-gentle",
+                              available ? "translate-x-5" : "translate-x-0",
+                            )}
+                          />
+                        </button>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </section>
+            );
+          })}
         </div>
       )}
     </Drawer>
