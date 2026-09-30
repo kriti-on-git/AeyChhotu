@@ -18,6 +18,7 @@ import Link from "next/link";
 import { LogoWatermark } from "@/components/brand/logo";
 import { ExpandableCard } from "@/components/marketing/expandable-card";
 import { FlipCard } from "@/components/marketing/flip-card";
+import { HeroPointerShadow } from "@/components/marketing/hero-pointer-shadow";
 import { HeroVisual } from "@/components/marketing/hero-visual";
 import { InnovationDeck } from "@/components/marketing/innovation-deck";
 import { TiltSurface } from "@/components/marketing/tilt-surface";
@@ -211,12 +212,17 @@ export default function LandingPage() {
           aria-hidden
           className="pointer-events-none absolute -top-40 -right-40 size-[32rem] rounded-pill bg-ember/6 blur-3xl"
         />
+        {/* Desktop-only: a shadow that chases the cursor under everything. */}
+        <HeroPointerShadow />
 
-        <Container className="relative py-20 lg:py-28">
+        {/* On desktop the bottom padding is dropped and the grid is aligned to
+            the end, so the server's base sits flush on the hero's closing
+            line instead of floating above it. */}
+        <Container className="relative py-20 lg:pt-28 lg:pb-0">
           {/* minmax(0, …) keeps the artwork's intrinsic 1672px width from
               inflating the track past its column (the grid auto-min trap). */}
-          <div className="grid items-center gap-14 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1fr)] lg:gap-20">
-            <div className="lg:order-2">
+          <div className="grid items-center gap-14 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1fr)] lg:items-end lg:gap-20">
+            <div className="lg:order-2 lg:self-center">
               <Reveal>
                 <Badge tone="accent" size="md">
                   Zero download · no logins · live updates

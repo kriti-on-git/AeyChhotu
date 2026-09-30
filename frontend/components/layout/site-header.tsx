@@ -1,6 +1,6 @@
 "use client";
 
-import { Menu } from "lucide-react";
+import { ChefHat, Menu, QrCode } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { Logo } from "@/components/brand/logo";
@@ -8,6 +8,7 @@ import { buttonStyles } from "@/components/ui/button";
 import { Container } from "@/components/ui/container";
 import { Drawer } from "@/components/ui/drawer";
 import { IconButton } from "@/components/ui/icon-button";
+import { Tooltip } from "@/components/ui/tooltip";
 import { marketingNav, productLinks } from "@/lib/site";
 import { cn } from "@/lib/utils";
 
@@ -49,13 +50,28 @@ export function SiteHeader() {
           ))}
         </nav>
 
+        {/* Desktop-only actions, icon-only on purpose: the labels lived here
+            as words and crowded the bar, so each action is now its glyph with
+            the name carried by the tooltip and the accessible label. */}
         <div className="hidden items-center gap-2 lg:flex">
-          <Link href="/kitchen" className={buttonStyles({ variant: "ghost", size: "sm" })}>
-            Kitchen board
-          </Link>
-          <Link href="/table/k7x2p" className={buttonStyles({ variant: "ember", size: "sm" })}>
-            Open a table
-          </Link>
+          <Tooltip label="Kitchen board" side="bottom">
+            <Link
+              href="/kitchen"
+              aria-label="Kitchen board"
+              className={cn(buttonStyles({ variant: "ghost", size: "sm" }), "aspect-square px-0")}
+            >
+              <ChefHat className="size-4" aria-hidden />
+            </Link>
+          </Tooltip>
+          <Tooltip label="Open a table" side="bottom">
+            <Link
+              href="/table/k7x2p"
+              aria-label="Open a table"
+              className={cn(buttonStyles({ variant: "ember", size: "sm" }), "aspect-square px-0")}
+            >
+              <QrCode className="size-4" aria-hidden />
+            </Link>
+          </Tooltip>
         </div>
 
         <IconButton

@@ -1,8 +1,15 @@
 "use client";
 
 import Image from "next/image";
-import { useRef, type PointerEvent } from "react";
-import { motion, useReducedMotion, useScroll, useTransform } from "motion/react";
+import { useEffect, useRef, useState, type PointerEvent } from "react";
+import {
+  motion,
+  useMotionValue,
+  useReducedMotion,
+  useScroll,
+  useSpring,
+  useTransform,
+} from "motion/react";
 
 /* ---------------------------------------------------------------
    Hero visual: ONE composition.
@@ -14,24 +21,41 @@ import { motion, useReducedMotion, useScroll, useTransform } from "motion/react"
    headline at any width.
 
    The lighting rule this file exists to keep: the pointer moves the
-   GLOW LAYER, never the artwork. The image carries no shadow, no
-   filter and no glow — a box-shaped treatment on a PNG is visible as
-   a rectangle around the subject, and the source art is a wide canvas
-   with a narrow figure inside it, so that rectangle would sit a long
-   way from anything you can actually see. The crop that makes the
-   wrapper hug the figure, and the reasoning behind it, live in
-   app/globals.css next to the classes.
+   GLOW LAYER, never the image's own pixels. The image carries no
+   shadow, no filter and no glow — a box-shaped treatment on a PNG is
+   visible as a rectangle around the subject, and the source art is a
+   wide canvas with a narrow figure inside it, so that rectangle would
+   sit a long way from anything you can actually see. The crop that
+   makes the wrapper hug the figure, and the reasoning behind it, live
+   in app/globals.css next to the classes.
 
-   Interaction cost: one pointer handler that writes two numbers onto
-   the wrapper as CSS custom properties. No React state, so no
-   re-render; no animation loop either, because .hero-glow eases into
-   whatever it is handed with a transition of its own. Moving away
-   writes the resting values back and the light settles there.
+   Desktop only (see useIsDesktop): the composition also drifts deeper
+   on scroll (parallax) and leans toward the cursor in 3D. Phones keep
+   the original, gentler drift and no tilt.
+
+   Interaction cost: one pointer handler. It writes two numbers to the
+   wrapper as CSS custom properties and two motion values, so there is
+   no React re-render; .hero-glow eases into whatever it is handed with
+   a transition of its own, and the tilt is springed. Moving away writes
+   the resting values back and the light settles there.
    --------------------------------------------------------------- */
 
 export function HeroVisual() {
   const reduceMotion = useReducedMotion();
+  const isDesktop = useIsDesktop();
+  // The 3D tilt is a laptop demonstration only; the glow behaves as it always
+  // did at every width.
+  const interactive = isDesktop && !reduceMotion;
   const wrapperRef = useRef<HTMLDivElement | null>(null);
+
+  // Springed pointer position, so the tilt leans toward the cursor and eases
+  // back to rest instead of snapping.
+  const pointerX = useMotionValue(0);
+  const pointerY = useMotionValue(0);
+  const springX = useSpring(pointerX, { stiffness: 60, damping: 16 });
+  const springY = useSpring(pointerY, { stiffness: 60, damping: 16 });
+  const rotateY = useTransform(springX, [-0.5, 0.5], [-9, 9]);
+  const rotateX = useTransform(springY, [-0.5, 0.5], [7, -7]);
 
   /* The only thing the pointer is allowed to touch: the glow's offsets,
      normalised to -1…1 from the centre of the visual. */
@@ -44,23 +68,33 @@ export function HeroVisual() {
   }
 
   function handlePointerMove(event: PointerEvent<HTMLDivElement>) {
-    if (reduceMotion) return;
     const rect = event.currentTarget.getBoundingClientRect();
-    pointGlowAt(
-      ((event.clientX - rect.left) / rect.width - 0.5) * 2,
-      ((event.clientY - rect.top) / rect.height - 0.5) * 2,
-    );
+    const nx = (event.clientX - rect.left) / rect.width - 0.5;
+    const ny = (event.clientY - rect.top) / rect.height - 0.5;
+
+    if (interactive) {
+      pointerX.set(nx);
+      pointerY.set(ny);
+    }
+
+    if (reduceMotion) return;
+    pointGlowAt(nx * 2, ny * 2);
   }
 
   function handlePointerLeave() {
+    if (interactive) {
+      pointerX.set(0);
+      pointerY.set(0);
+    }
+
     if (reduceMotion) return;
     pointGlowAt(0, 0);
   }
 
-  // A gentle vertical drift across the hero's scroll-through. No rotation:
-  // the composition should read as one object, not as a card being tilted.
+  // The parallax: a vertical drift across the hero's scroll-through, deeper on
+  // desktop where the artwork is large enough for the travel to read.
   const { scrollY } = useScroll();
-  const drift = useTransform(scrollY, [0, 900], [0, 48]);
+  const drift = useTransform(scrollY, [0, 900], [0, interactive ? 96 : 48]);
 
   const body = (
     <>
@@ -106,10 +140,32 @@ export function HeroVisual() {
       ref={wrapperRef}
       onPointerMove={handlePointerMove}
       onPointerLeave={handlePointerLeave}
-      style={{ y: drift }}
+      style={{
+        y: drift,
+        rotateX: interactive ? rotateX : 0,
+        rotateY: interactive ? rotateY : 0,
+        transformPerspective: 1200,
+      }}
       className="hero-visual-wrapper"
     >
       {body}
     </motion.div>
   );
+}
+
+/* True only at laptop width (the product's `lg` breakpoint), so the demo-grade
+   pointer effects stay off phones and tablets. */
+function useIsDesktop() {
+  const [matches, setMatches] = useState(false);
+
+  useEffect(() => {
+    const media = window.matchMedia("(min-width: 64rem)");
+    const update = () => setMatches(media.matches);
+
+    update();
+    media.addEventListener("change", update);
+    return () => media.removeEventListener("change", update);
+  }, []);
+
+  return matches;
 }
