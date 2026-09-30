@@ -9,25 +9,26 @@ export interface LogoMarkProps {
   tone?: "default" | "inverse";
 }
 
-/* The mark is Mr. Baawarchi — the same cut-out that anchors the hero. One
-   brand image everywhere: hero, header, footer, PIN wall, favicons. It sits
-   on a rounded ink tile so the white torn edge stays legible on both the
-   canvas and the saturated ember grounds. */
+/* The mark is the brand tile: logo.png, the same art everywhere — hero
+   companion, header, footer, PIN wall. The file is an opaque square on its
+   own dark ground, so the rounded tile only needs to clip it. */
 export function LogoMark({ className }: LogoMarkProps) {
   return (
     <span
       aria-hidden
       className={cn(
-        "relative isolate inline-flex size-9 shrink-0 items-end justify-center overflow-hidden rounded-lg bg-ink shadow-sm",
+        "relative isolate inline-flex size-9 shrink-0 items-center justify-center overflow-hidden rounded-lg shadow-sm",
         className,
       )}
     >
       <Image
-        src="/ref.png"
+        src="/logo.png"
         alt=""
-        width={1672}
-        height={941}
-        className="w-[118%] max-w-none translate-y-[4%]"
+        width={1254}
+        height={1254}
+        priority
+        sizes="2.25rem"
+        className="size-full object-cover"
       />
     </span>
   );

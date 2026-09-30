@@ -213,7 +213,14 @@ export default function LandingPage() {
           {/* minmax(0, …) keeps the image's intrinsic 1672px width from
               inflating the track past the column (the grid auto-min trap). */}
           <div className="grid items-center gap-16 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.05fr)] lg:gap-20">
-            <div className="lg:order-2">
+            {/* z-10 keeps the copy above the cut-out where it slides under
+                it; the soft canvas veil behind the text carries the
+                legibility where the chef's tablet pixels reach this far. */}
+            <div className="relative z-10 lg:order-2">
+              <span
+                aria-hidden
+                className="pointer-events-none absolute -inset-x-8 -inset-y-6 -z-10 rounded-3xl bg-canvas/75 blur-2xl"
+              />
               <Reveal>
                 <Badge tone="accent" size="md">
                   Zero download · no logins · live updates
@@ -258,10 +265,10 @@ export default function LandingPage() {
 
             </div>
 
-            {/* self-end plants the visual's margin box on the row's bottom
-                edge, so the negative bottom margin inside HeroVisual pushes
-                the cut-out down onto the rule that closes the section. */}
-            <Reveal delay={0.16} className="lg:order-1 lg:self-end">
+            {/* The visual sizes itself to 75% of this section's measured
+                height and anchors its own bottom edge to the section's
+                border — see hero-visual.tsx. */}
+            <Reveal delay={0.16} className="lg:order-1">
               <HeroVisual />
             </Reveal>
           </div>
