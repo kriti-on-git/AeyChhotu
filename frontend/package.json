@@ -11,7 +11,7 @@
     "start": "next start",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
-    "test": "node --import tsx --test test/normalize.test.mjs",
+    "test": "node --import tsx --test test/*.test.mjs",
     "realtime:check": "node scripts/realtime-check.mjs",
     "check:floor": "node scripts/floor-check.mjs"
   },

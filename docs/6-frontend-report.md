@@ -50,6 +50,16 @@ Every endpoint behavior from `docs/4-architectural-mapping.md` (session init, ca
 - **Token hygiene:** the QR table token (`restaurant_tables.code`) is a capability credential, so no diner surface renders it — the diner sees only generic copy ("Your table", "Live status tracker"). Staff surfaces label a table by its human `name`; only the PIN-gated kitchen board shows the code.
 - **Removed:** the `components/landscape/` set (LandscapeScene, Sun, OrganicShape, SectionDivider) was unmounted in the palette pass — the diner header and the landing hero were rebuilt around product mocks instead — and has now been deleted along with the unreferenced `public/hero.png`.
 
+### Diner ordering flow (`/table/[token]`)
+
+The diner screen is a staged discovery flow over the same single cart: **menus → sections → dishes → shared cart → Review & Fire**. Nothing in it owns data — it reads `useLiveTable` and calls its `addToCart` / `updateLine` / `removeLine` / `fire` handlers, exactly as the modal did before.
+
+- **`lib/diner/menu-atlas.ts`** arranges the API's flat `category` strings into cuisine cards, then the backend's own categories, then dishes. Cuisines are a presentation layer over dish names/descriptions; unmatched dishes fall into one honest “From the kitchen” group, and a menu whose vocabulary is unknown collapses to leading with its real categories.
+- **`lib/diner/food-photos.ts`** is the imagery layer. The menu contract has no image column and the schema is not ours to change, so photos are resolved frontend-side from a curated dish → photo map with a category fallback. Only `images.unsplash.com` is allowed through `next/image` (`next.config.ts`); a dish with no photo, or a failed load offline, degrades to a palette tile rather than a broken frame.
+- **Swipe to order:** `dish-card` owns its drag (motion's `drag="x"`, distance + velocity thresholds) and its exit animation; `dish-deck` walks the section one dish at a time, tracks progress and keeps skipped dishes recoverable. Every gesture has a plain **Add / Skip** button beside it and an `aria-live` announcement, so the gesture is the delightful path, never the only path. Reduced motion keeps the drag but drops the rotation and the exit slide.
+- **Cart:** `table-cart` is the desktop sticky column and `cart-strip` the phone's compact bottom bar; both open the existing review modal. `quantity-stepper` is shared by the panel and the modal so the `quantity_delta` intent path has one implementation.
+- **Tests:** `test/menu-atlas.test.mjs` pins the atlas grouping, its degradation behaviour and the photo resolver's host restriction (`npm test`).
+
 ## 5. Motion & Parallax
 
 - Entrance reveals via `components/motion/reveal.tsx`, plus status/overlay/card transitions.

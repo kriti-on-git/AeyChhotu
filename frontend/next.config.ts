@@ -13,6 +13,12 @@ const securityHeaders = [
 
 const nextConfig: NextConfig = {
   reactStrictMode: true,
+  /* Dish photography is resolved in the frontend (lib/diner/food-photos)
+     because the menu contract has no image column. Only that host is allowed
+     through the optimiser; anything else stays a plain remote URL. */
+  images: {
+    remotePatterns: [{ protocol: "https", hostname: "images.unsplash.com" }],
+  },
   async headers() {
     return [{ source: "/:path*", headers: securityHeaders }];
   },

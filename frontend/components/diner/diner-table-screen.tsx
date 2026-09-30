@@ -7,7 +7,8 @@ import { useEffect, useState } from "react";
 import { CartModal } from "@/components/diner/cart-modal";
 import { CartStrip } from "@/components/diner/cart-strip";
 import { InactiveTableState } from "@/components/diner/inactive-table-state";
-import { MenuList } from "@/components/diner/menu-list";
+import { MenuBrowser } from "@/components/diner/menu-browser";
+import { TableCart } from "@/components/diner/table-cart";
 import { TableSessionHeader } from "@/components/diner/table-session-header";
 import { Button, buttonStyles } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -21,23 +22,24 @@ import { usePresence } from "@/hooks/use-presence";
 import { useLiveTable } from "@/hooks/use-live-table";
 import { getStoredDisplayName, storeDisplayName, storeTableToken } from "@/lib/api/session";
 import type { MenuItem } from "@/lib/api/types";
-import { formatPrice } from "@/lib/format";
 
 export interface DinerTableScreenProps {
   tableToken: string;
 }
 
+/* The four moves this screen has to make obvious, in order. The first three
+   are what the guest does; the fourth is what the kitchen does about it. */
 const sessionSteps = [
-  { icon: ShoppingBasket, title: "Add dishes", body: "Everyone at the table edits one cart." },
-  { icon: Flame, title: "Fire once", body: "One ticket reaches the kitchen, grouped." },
-  { icon: Timer, title: "Watch it live", body: "Status streams back as the chef cooks." },
+  { icon: ShoppingBasket, title: "Browse", body: "Open a menu, then a section." },
+  { icon: Flame, title: "Swipe or tap", body: "Right to add, left to skip." },
+  { icon: Timer, title: "Fire once", body: "One grouped ticket to the kitchen." },
 ];
 
 export function DinerTableScreen({ tableToken }: DinerTableScreenProps) {
   const router = useRouter();
   const { toast } = useToast();
   const live = useLiveTable(tableToken);
-  const { table, menu, cart, quantities, totals, activeOrder, soldOutInCart, itemErrors } = live;
+  const { table, menu, quantities, totals, activeOrder, itemErrors } = live;
 
   const [cartOpen, setCartOpen] = useState(false);
   const [pendingItemId, setPendingItemId] = useState<string | null>(null);
@@ -106,9 +108,8 @@ export function DinerTableScreen({ tableToken }: DinerTableScreenProps) {
     <main id="main" className="min-h-dvh pb-32">
       <TableSessionHeader table={table} hasActiveOrder={Boolean(activeOrder)} />
 
-      {/* Session band. The landscape illustration that used to sit here was
-          pure decoration on a task screen; the space now carries the table
-          identity and the three-step mental model instead. */}
+      {/* Hero. The screen has one job — get an order to the kitchen — so the
+          page opens on the instruction, not on a description of the product. */}
       <div className="relative isolate overflow-hidden border-b border-line bg-surface">
         <div
           aria-hidden
@@ -116,29 +117,33 @@ export function DinerTableScreen({ tableToken }: DinerTableScreenProps) {
         />
         <Container className="relative py-11 sm:py-14">
           <div className="flex flex-col gap-10 lg:flex-row lg:items-end lg:justify-between">
-            <div className="max-w-2xl">
+            <div className="max-w-xl">
               <Text variant="label" tone="accent">
                 Scan-to-order session
               </Text>
               {/* No table identifier: the token in the URL is the capability
                   credential, so it must never be shown to the diner. */}
               <Heading level="title" as="h1" className="mt-3">
-                Your table
+                Ready to order?
               </Heading>
               <Text variant="lead" tone="muted" className="mt-4">
-                Add what you want to the shared cart. Nothing reaches the kitchen until someone at
-                the table taps review and fire.
+                Pick what sounds good. Swipe what you want. We&rsquo;ll handle the rest.
               </Text>
             </div>
 
-            <ol className="grid gap-4 sm:grid-cols-3 lg:max-w-md lg:shrink-0">
-              {sessionSteps.map((step) => (
+            <ol className="grid gap-4 sm:grid-cols-3 lg:max-w-lg lg:shrink-0">
+              {sessionSteps.map((step, index) => (
                 <li key={step.title} className="flex gap-3 sm:flex-col sm:gap-2">
                   <span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-ember-soft text-ember">
                     <step.icon className="size-4" aria-hidden />
                   </span>
                   <div>
-                    <p className="text-sm font-semibold text-ink">{step.title}</p>
+                    <p className="text-sm font-semibold text-ink">
+                      <span className="text-ink-subtle tabular-nums">
+                        {String(index + 1).padStart(2, "0")}
+                      </span>{" "}
+                      {step.title}
+                    </p>
                     <p className="text-xs leading-snug text-ink-muted">{step.body}</p>
                   </div>
                 </li>
@@ -148,7 +153,38 @@ export function DinerTableScreen({ tableToken }: DinerTableScreenProps) {
         </Container>
       </div>
 
-      <Container className="grid gap-12 py-12 lg:grid-cols-[1.7fr_1fr] lg:items-start">
+      {/* An order already in the kitchen outranks everything below it, so it
+          gets one full-width line rather than a card in the column. */}
+      {activeOrder ? (
+        <div className="border-b border-line bg-ink text-ink-inverse">
+          <Container className="flex flex-wrap items-center justify-between gap-4 py-4">
+            <div className="flex items-center gap-3">
+              <span
+                aria-hidden
+                className="flex size-9 shrink-0 items-center justify-center rounded-md bg-ink-inverse/10"
+              >
+                <Flame className="size-4" />
+              </span>
+              <div>
+                <p className="text-sm font-semibold capitalize">
+                  Order {activeOrder.status} in the kitchen
+                </p>
+                <p className="text-xs text-ink-inverse/70">
+                  A second fire is blocked until this one is served.
+                </p>
+              </div>
+            </div>
+            <Link
+              href={`/table/${table.code}/tracker`}
+              className={buttonStyles({ variant: "ember", size: "sm" })}
+            >
+              Open live tracker
+            </Link>
+          </Container>
+        </div>
+      ) : null}
+
+      <Container className="grid gap-12 py-12 lg:grid-cols-[minmax(0,1fr)_21rem] lg:items-start lg:gap-14">
         {menu.length === 0 ? (
           // ---- State matrix: empty catalog ------------------------------
           <EmptyState
@@ -162,83 +198,21 @@ export function DinerTableScreen({ tableToken }: DinerTableScreenProps) {
             }
           />
         ) : (
-          <MenuList
+          <MenuBrowser
             menu={menu}
             quantities={quantities}
             pendingItemId={pendingItemId}
             itemErrors={itemErrors}
             onAdd={(item) => void handleAdd(item)}
+            onReview={() => setCartOpen(true)}
+            cartItemCount={totals.itemCount}
           />
         )}
 
-        <aside className="flex flex-col gap-5 lg:sticky lg:top-28" aria-label="Live table cart">
-          <Card marked>
-            <div className="flex items-start justify-between gap-4">
-              <div>
-                <p className="text-label text-ember uppercase">Live table cart</p>
-                <p className="mt-2 font-display text-3xl font-semibold text-ink">
-                  {formatPrice(totals.total)}
-                </p>
-              </div>
-              <span className="rounded-pill bg-sand px-3 py-1.5 text-xs font-semibold text-ink-muted">
-                {totals.itemCount} {totals.itemCount === 1 ? "item" : "items"}
-              </span>
-            </div>
-
-            <p className="mt-3 text-sm leading-relaxed text-ink-muted">
-              {totals.itemCount === 0
-                ? "Empty right now. Anything you add shows up here and on every other phone at the table."
-                : "Every phone at this table sees these lines update live."}
-            </p>
-
-            {soldOutInCart.length > 0 ? (
-              <p className="mt-5 rounded-md border border-alert/35 bg-alert-surface px-3.5 py-3 text-sm font-medium text-alert">
-                Sold out since it was added:{" "}
-                {soldOutInCart.map((item) => item.name).join(", ")}.
-              </p>
-            ) : null}
-
-            <div className="mt-6 flex flex-col gap-3">
-              <Button
-                variant="ember"
-                size="lg"
-                fullWidth
-                disabled={cart.length === 0}
-                onClick={() => setCartOpen(true)}
-                leftIcon={<Flame className="size-5" aria-hidden />}
-              >
-                Review &amp; fire
-              </Button>
-              {cart.length > 0 ? (
-                <Button variant="ghost" size="sm" fullWidth onClick={() => setCartOpen(true)}>
-                  Edit quantities and notes
-                </Button>
-              ) : null}
-            </div>
-          </Card>
-
-          {activeOrder ? (
-            <Card tone="ink">
-              <p className="text-label text-ember uppercase">Order in the kitchen</p>
-              <p className="mt-2 font-display text-subheading capitalize text-ink-inverse">
-                {activeOrder.status}
-              </p>
-              <p className="mt-2 text-sm leading-relaxed text-ink-inverse/65">
-                A second fire is blocked until this order is served.
-              </p>
-              <Link
-                href={`/table/${table.code}/tracker`}
-                className={buttonStyles({
-                  variant: "ember",
-                  size: "md",
-                  fullWidth: true,
-                  className: "mt-5",
-                })}
-              >
-                Open live tracker
-              </Link>
-            </Card>
-          ) : null}
+        {/* Desktop: the cart sits in view the whole time. On a phone it would
+            be half the screen, so there it becomes the bar below instead. */}
+        <aside className="hidden lg:sticky lg:top-28 lg:block" aria-label="Live table cart">
+          <TableCart live={live} onReview={() => setCartOpen(true)} />
         </aside>
       </Container>
 
@@ -284,30 +258,27 @@ function DinerSkeleton() {
       <div className="border-b border-line bg-surface">
         <Container className="py-11 sm:py-14">
           <Skeleton className="h-3 w-44" />
-          <Skeleton className="mt-4 h-9 w-64 max-w-full" />
+          <Skeleton className="mt-4 h-9 w-72 max-w-full" />
           <Skeleton className="mt-5 h-4 w-80 max-w-full" />
-          <Skeleton className="mt-2 h-4 w-64 max-w-full" />
         </Container>
       </div>
 
-      <Container className="grid gap-12 py-12 lg:grid-cols-[1.7fr_1fr] lg:items-start">
-        <div className="flex flex-col">
-          {Array.from({ length: 6 }).map((_, index) => (
-            <div
-              key={index}
-              className="flex items-start justify-between gap-5 border-b border-line py-5 last:border-b-0"
-            >
-              <div className="flex flex-1 flex-col gap-2">
-                <Skeleton className="h-5 w-44" />
-                <Skeleton className="h-4 w-full max-w-md" />
-                <Skeleton className="h-4 w-20" />
+      <Container className="grid gap-12 py-12 lg:grid-cols-[minmax(0,1fr)_21rem] lg:items-start lg:gap-14">
+        <div className="flex flex-col gap-6">
+          <Skeleton className="h-12 w-full rounded-md" />
+          <div className="grid gap-5 sm:grid-cols-2">
+            {Array.from({ length: 4 }).map((_, index) => (
+              <div key={index} className="flex flex-col gap-4 rounded-xl border border-line p-3">
+                <Skeleton className="aspect-[4/3] w-full rounded-lg" />
+                <Skeleton className="h-5 w-36" />
+                <Skeleton className="h-4 w-full" />
+                <Skeleton className="h-9 w-24" />
               </div>
-              <Skeleton className="h-9 w-24 rounded-md" />
-            </div>
-          ))}
+            ))}
+          </div>
         </div>
 
-        <div className="rounded-lg border border-line bg-surface p-6">
+        <div className="hidden rounded-lg border border-line bg-surface p-6 lg:block">
           <Skeleton className="h-5 w-40" />
           <Skeleton className="mt-3 h-4 w-56" />
           <Skeleton className="mt-6 h-13 w-full rounded-md" />

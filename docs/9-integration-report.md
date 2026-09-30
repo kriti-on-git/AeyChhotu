@@ -12,10 +12,10 @@
 ## Prompt spec → implementation
 | Requirement | Where | State |
 |---|---|---|
-| 4-state matrix (loading / empty / error+Retry / success) | `diner-table-screen` (`DinerSkeleton`, empty menu `EmptyState`+Refresh), `live-tracker` (`TrackerSkeleton`, `ErrorState`), `cart-modal` (empty-cart CTA), `menu-list` (empty catalog), `kds-board` (per-column skeletons, "No active orders on the line! 🍳") | ✅ |
+| 4-state matrix (loading / empty / error+Retry / success) | `diner-table-screen` (`DinerSkeleton`, empty menu `EmptyState`+Refresh), `live-tracker` (`TrackerSkeleton`, `ErrorState`), `cart-modal` (empty-cart CTA), `menu-browser` (empty catalog / empty search / empty section), `kds-board` (per-column skeletons, "No active orders on the line! 🍳") | ✅ |
 | Review & Fire intercept (disable + spinner + no double-submit + toast + cart reset + server refetch) | `cart-modal.tsx` `firing` guard, `use-live-table.fire` → `FireFailure` + cart/menu refresh | ✅ |
 | KDS one-tap intercept | `use-live-kds.busy` per-ticket map; `kds-card` `disabled+loading` button | ✅ |
-| `error.fields` inline under inputs | `use-live-table.itemErrors` → `menu-item-row` `role="alert"` line; inventory warning under the item row | ✅ |
+| `error.fields` inline under inputs | `use-live-table.itemErrors` → `dish-card` `role="alert"` line; inventory warning under the dish | ✅ |
 | `allergy_note` bold uppercase red on KDS | `kds-card.tsx` (`border-alert`, `font-bold uppercase text-alert`) | ✅ |
 | Currency `Rs.` | `lib/format.formatPrice` → `Rs. X,XXX.XX` (invariant: stored unit is rupees; paise migration deferred per standing decision) | ✅ |
 | Times in IST | `formatIstTime` / `formatIstDateTime` (`Asia/Kolkata`) — tracker fired label | ✅ |

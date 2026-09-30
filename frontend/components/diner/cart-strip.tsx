@@ -1,7 +1,6 @@
 "use client";
 
 import { ShoppingBasket } from "lucide-react";
-import { buttonStyles } from "@/components/ui/button";
 import { Container } from "@/components/ui/container";
 import { formatPrice } from "@/lib/format";
 
@@ -11,34 +10,44 @@ export interface CartStripProps {
   onView: () => void;
 }
 
-/* A solid ink bar rather than a translucent cream one: on a scrolling menu
-   this is the only fixed element competing for attention, and it owns the
-   single ember action on the screen. */
+/* The phone's version of the cart: one compact bar instead of half the
+   screen, and the whole bar is the tap target that opens the full cart. It
+   only exists below lg, where the sticky column above is hidden. */
 export function CartStrip({ itemCount, total, onView }: CartStripProps) {
   if (itemCount === 0) return null;
 
   return (
-    <div className="fixed inset-x-0 bottom-0 z-30 border-t border-ink/20 bg-ink text-ink-inverse shadow-lg">
-      <Container className="flex items-center justify-between gap-4 py-3.5">
-        <div className="flex min-w-0 items-center gap-3">
-          <span
-            aria-hidden
-            className="flex size-10 shrink-0 items-center justify-center rounded-md bg-ink-inverse/10"
-          >
-            <ShoppingBasket className="size-5" />
+    <div className="fixed inset-x-0 bottom-0 z-30 border-t border-ink/20 bg-ink text-ink-inverse shadow-lg lg:hidden">
+      <Container className="py-3">
+        <button
+          type="button"
+          onClick={onView}
+          aria-label={`Open the table cart: ${itemCount} ${
+            itemCount === 1 ? "item" : "items"
+          }, ${formatPrice(total)}`}
+          className="flex w-full cursor-pointer items-center justify-between gap-4 rounded-md text-left transition-colors duration-[var(--duration-fast)]"
+        >
+          <span className="flex min-w-0 items-center gap-3">
+            <span
+              aria-hidden
+              className="flex size-10 shrink-0 items-center justify-center rounded-md bg-ink-inverse/10"
+            >
+              <ShoppingBasket className="size-5" />
+            </span>
+            <span className="flex min-w-0 flex-col">
+              <span className="font-display text-base font-semibold tabular-nums">
+                {formatPrice(total)}
+              </span>
+              <span className="truncate text-xs text-ink-inverse/65">
+                {itemCount} {itemCount === 1 ? "item" : "items"} · shared with the table
+              </span>
+            </span>
           </span>
-          <div className="flex min-w-0 flex-col">
-            <p className="truncate text-sm font-semibold">
-              {itemCount} {itemCount === 1 ? "item" : "items"} · {formatPrice(total)}
-            </p>
-            <p className="truncate text-xs text-ink-inverse/65">
-              Shared live across every phone at this table
-            </p>
-          </div>
-        </div>
 
-        <button type="button" onClick={onView} className={buttonStyles({ variant: "ember", size: "md" })}>
-          Review &amp; fire
+          <span className="inline-flex h-11 shrink-0 items-center gap-2 rounded-md bg-ember px-5 text-sm font-semibold text-on-ember shadow-xs">
+            Review
+            <span aria-hidden>→</span>
+          </span>
         </button>
       </Container>
     </div>

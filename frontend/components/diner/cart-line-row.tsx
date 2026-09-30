@@ -1,9 +1,9 @@
 "use client";
 
-import { ChevronDown, Minus, Plus, Trash2 } from "lucide-react";
+import { ChevronDown } from "lucide-react";
 import { useState } from "react";
 import { AllergyInput } from "@/components/diner/allergy-input";
-import { IconButton } from "@/components/ui/icon-button";
+import { QuantityStepper } from "@/components/diner/quantity-stepper";
 import { Input } from "@/components/ui/input";
 import { Text } from "@/components/ui/text";
 import type { CartLine, MenuItem } from "@/lib/api/types";
@@ -45,35 +45,12 @@ export function CartLineRow({
           ) : null}
         </div>
 
-        <div className="flex items-center gap-2">
-          <IconButton
-            label={line.quantity === 1 ? `Remove ${item?.name ?? "item"}` : "Decrease quantity"}
-            size="sm"
-            tone="outline"
-            disabled={busy}
-            onClick={() => onQuantityChange(line.quantity - 1)}
-          >
-            {line.quantity === 1 ? (
-              <Trash2 className="size-3.5" aria-hidden />
-            ) : (
-              <Minus className="size-3.5" aria-hidden />
-            )}
-          </IconButton>
-
-          <span className="min-w-6 text-center text-sm font-semibold text-ink" aria-live="polite">
-            {line.quantity}
-          </span>
-
-          <IconButton
-            label="Increase quantity"
-            size="sm"
-            tone="outline"
-            disabled={busy}
-            onClick={() => onQuantityChange(line.quantity + 1)}
-          >
-            <Plus className="size-3.5" aria-hidden />
-          </IconButton>
-        </div>
+        <QuantityStepper
+          quantity={line.quantity}
+          label={item?.name ?? "item"}
+          busy={busy}
+          onChange={onQuantityChange}
+        />
       </div>
 
       <div className="mt-3 flex items-center justify-between gap-4">
