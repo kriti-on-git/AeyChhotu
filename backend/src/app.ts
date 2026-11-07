@@ -237,6 +237,7 @@ export function createApp(options: AppOptions = {}) {
     "/api/v1/billing",
     createBillingMount({
       service: options.billingService ?? getDefaultBillingService(),
+      participants: options.tableService,
     }),
   );
   app.use(

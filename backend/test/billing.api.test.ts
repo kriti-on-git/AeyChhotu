@@ -107,9 +107,26 @@ const guestToken = signToken(
   { role: "guest", terminal_id: null, iat: now, exp: now + 3600 },
   env.kdsTokenSecret,
 );
+const PARTICIPANT_TOKEN = `pc_${"A".repeat(43)}`;
+const fakeParticipants = {
+  async authorizeParticipantToken(raw: string) {
+    if (raw !== PARTICIPANT_TOKEN) return null;
+    return {
+      participant_id: "guest-a",
+      user_id: "guest-a",
+      name: "Asha",
+      table_id: TABLE_ID,
+      table_code: "k7x2p",
+      session_started_at: new Date("2026-01-01T10:00:00.000Z"),
+    };
+  },
+};
 
 before(async () => {
-  const app = createApp({ billingService: service });
+  const app = createApp({
+    billingService: service,
+    tableService: fakeParticipants as never,
+  });
   server = createServer(app);
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const address = server.address() as AddressInfo;
@@ -122,10 +139,15 @@ after(async () => {
   );
 });
 
-async function call(method: string, path: string, token?: string) {
+async function call(
+  method: string,
+  path: string,
+  token?: string,
+  headers: Record<string, string> = {},
+) {
   const response = await fetch(`${baseUrl}${path}`, {
     method,
-    headers: token ? { authorization: `Bearer ${token}` } : {},
+    headers: { ...(token ? { authorization: `Bearer ${token}` } : {}), ...headers },
   });
   return { status: response.status, json: (await response.json()) as any };
 }
@@ -177,6 +199,26 @@ describe("Billing API — generated bill", () => {
     const result = await call("GET", `/api/v1/billing/tables/${UNKNOWN_ID}`, floorToken);
     assert.equal(result.status, 404);
     assert.equal(result.json.error.code, "TABLE_NOT_FOUND");
+  });
+
+  it("lets a participant read only its own table's bill", async () => {
+    const own = await call(
+      "GET",
+      `/api/v1/billing/tables/${TABLE_ID}/guest`,
+      undefined,
+      { "x-participant-token": PARTICIPANT_TOKEN },
+    );
+    assert.equal(own.status, 200);
+    assert.equal(own.json.data.totals.total, "240.00");
+
+    const other = await call(
+      "GET",
+      `/api/v1/billing/tables/${UNKNOWN_ID}/guest`,
+      undefined,
+      { "x-participant-token": PARTICIPANT_TOKEN },
+    );
+    assert.equal(other.status, 403);
+    assert.equal(other.json.error.code, "NOT_TABLE_MEMBER");
   });
 });
 

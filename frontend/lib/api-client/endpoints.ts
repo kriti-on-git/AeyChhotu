@@ -8,6 +8,7 @@
 
 import { apiRequest } from "./apiClient";
 import { storeAdminToken } from "./admin-token";
+import { storeParticipantCredential } from "../api/session";
 import { setRealtimeAuth } from "./realtime-auth";
 import { storeKdsToken } from "./token";
 import type {
@@ -51,6 +52,11 @@ import type {
   DismissedDeniedOrder,
   TableMember,
   TableState,
+  ConversationView,
+  PostConversationMessageInput,
+  PostConversationMessageResult,
+  VoiceInteraction,
+  TableBill,
   KdsDenyResult,
   SessionEntryPayload,
   SessionIdentity,
@@ -76,9 +82,17 @@ export async function initializeSession(
   tableToken: string,
   entry: SessionEntryPayload,
 ): Promise<TableSession> {
-  const { data } = await apiRequest<TableSession>(`${BASE}/sessions/initialize`, {
-    method: "POST",
-    body: { table_token: tableToken, ...entry },
+  const { data } = await apiRequest<TableSession & Partial<TableSessionGrant>>(
+    `${BASE}/sessions/initialize`,
+    {
+      method: "POST",
+      body: { table_token: tableToken, ...entry },
+    },
+  );
+  storeParticipantCredential({
+    participant_id: data.participant_id ?? null,
+    participant_token: data.participant_token ?? null,
+    participant_expires_at: data.participant_expires_at ?? null,
   });
   setRealtimeAuth(data.realtime_token ?? null);
   return data;
@@ -97,6 +111,11 @@ export async function startTableSession(
   const { data } = await apiRequest<TableScan>(`${BASE}/sessions/initialize`, {
     method: "POST",
     body: { table_token: tableToken, ...entry },
+  });
+  storeParticipantCredential({
+    participant_id: data.participant_id ?? null,
+    participant_token: data.participant_token ?? null,
+    participant_expires_at: data.participant_expires_at ?? null,
   });
   setRealtimeAuth(data.realtime_token ?? null);
   return data;
@@ -119,6 +138,7 @@ export async function joinTableWithPin(
     method: "POST",
     body: { table_token: tableToken, pin, ...entry },
   });
+  storeParticipantCredential(data);
   setRealtimeAuth(data.realtime_token ?? null);
   return data;
 }
@@ -133,6 +153,7 @@ export async function joinTableWithPass(
     method: "POST",
     body: { table_token: tableToken, secret, ...entry },
   });
+  storeParticipantCredential(data);
   setRealtimeAuth(data.realtime_token ?? null);
   return data;
 }
@@ -150,6 +171,7 @@ export async function reconnectTableSession(
     method: "POST",
     body: { table_token: tableToken, secret, ...entry },
   });
+  storeParticipantCredential(data);
   setRealtimeAuth(data.realtime_token ?? null);
   return data;
 }
@@ -184,6 +206,7 @@ export async function getMe(): Promise<SessionIdentity> {
 export async function getTableState(tableToken: string): Promise<TableState> {
   const { data } = await apiRequest<TableState>(
     `${BASE}/sessions/${encodeURIComponent(tableToken)}`,
+    { participantAuth: true },
   );
   return data;
 }
@@ -194,6 +217,7 @@ export async function getTableState(tableToken: string): Promise<TableState> {
 export async function getTableMembers(tableToken: string): Promise<TableMember[]> {
   const { data } = await apiRequest<TableMember[]>(
     `${BASE}/sessions/${encodeURIComponent(tableToken)}/members`,
+    { participantAuth: true },
   );
   return data;
 }
@@ -202,6 +226,74 @@ export async function getTableMembers(tableToken: string): Promise<TableMember[]
 export async function checkActiveOrder(tableToken: string): Promise<ActiveCheck> {
   const { data } = await apiRequest<ActiveCheck>(
     `${BASE}/sessions/${encodeURIComponent(tableToken)}/active-check`,
+  );
+  return data;
+}
+
+// ---- Conversation (server-owned history and tools) -------------------
+
+/** POST /api/v1/conversations — this seating's one shared conversation. */
+export async function createConversation(): Promise<ConversationView> {
+  const { data } = await apiRequest<ConversationView>(`${BASE}/conversations`, {
+    method: "POST",
+    participantAuth: true,
+  });
+  return data;
+}
+
+/** GET /api/v1/conversations/:id — shared history for every table member. */
+export async function getConversation(conversationId: string): Promise<ConversationView> {
+  const { data } = await apiRequest<ConversationView>(
+    `${BASE}/conversations/${encodeURIComponent(conversationId)}`,
+    { participantAuth: true },
+  );
+  return data;
+}
+
+/** POST /api/v1/conversations/:id/messages — persists the guest turn, asks
+    the server-owned AI provider, and returns the assistant reply. */
+export async function postConversationMessage(
+  conversationId: string,
+  input: PostConversationMessageInput,
+): Promise<PostConversationMessageResult> {
+  const { data } = await apiRequest<PostConversationMessageResult>(
+    `${BASE}/conversations/${encodeURIComponent(conversationId)}/messages`,
+    { method: "POST", participantAuth: true, body: input, timeoutMs: 45_000 },
+  );
+  return data;
+}
+
+/** POST /voice/start — one active voice interaction per conversation. */
+export async function startConversationVoice(
+  conversationId: string,
+  deviceId: string,
+): Promise<VoiceInteraction> {
+  const { data } = await apiRequest<VoiceInteraction>(
+    `${BASE}/conversations/${encodeURIComponent(conversationId)}/voice/start`,
+    { method: "POST", participantAuth: true, body: { device_id: deviceId } },
+  );
+  return data;
+}
+
+/** POST /voice/:interaction_id/end — initiator-only completion. */
+export async function endConversationVoice(
+  conversationId: string,
+  interactionId: string,
+  deviceId: string,
+): Promise<VoiceInteraction> {
+  const { data } = await apiRequest<VoiceInteraction>(
+    `${BASE}/conversations/${encodeURIComponent(conversationId)}/voice/${encodeURIComponent(interactionId)}/end`,
+    { method: "POST", participantAuth: true, body: { device_id: deviceId } },
+  );
+  return data;
+}
+
+/** GET /api/v1/billing/tables/:table_id/guest — participant-authenticated
+    generated bill. All money arithmetic is the backend's. */
+export async function getTableBill(tableId: string): Promise<TableBill> {
+  const { data } = await apiRequest<TableBill>(
+    `${BASE}/billing/tables/${encodeURIComponent(tableId)}/guest`,
+    { participantAuth: true },
   );
   return data;
 }
@@ -223,7 +315,7 @@ export async function sendHeartbeat(
 ): Promise<DeviceHeartbeat> {
   const { data } = await apiRequest<DeviceHeartbeat>(
     `${BASE}/sessions/${encodeURIComponent(tableToken)}/heartbeat`,
-    { method: "POST", body: { device_id: deviceId } },
+    { method: "POST", body: { device_id: deviceId }, participantAuth: true },
   );
   return data;
 }
@@ -237,7 +329,7 @@ export async function removeHeartbeat(
 ): Promise<HeartbeatRemoval> {
   const { data } = await apiRequest<HeartbeatRemoval>(
     `${BASE}/sessions/${encodeURIComponent(tableToken)}/heartbeat`,
-    { method: "DELETE", body: { device_id: deviceId }, keepalive: true },
+    { method: "DELETE", body: { device_id: deviceId }, keepalive: true, participantAuth: true },
   );
   return data;
 }

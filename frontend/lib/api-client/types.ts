@@ -107,6 +107,11 @@ export interface TableSessionGrant {
       in the bundle and never in a pre-join reply. Null when the deployment
       has no GEMINI_API_KEY, which simply hides the assistant. */
   gemini_api_key: string | null;
+  /** Phase 5.2 server-issued participant credential. Sent as
+      `X-Participant-Token`, never in a URL. */
+  participant_id: string | null;
+  participant_token: string | null;
+  participant_expires_at: string | null;
 }
 
 /** E1 — the reply to a scan of a table that already has a live session.
@@ -119,6 +124,9 @@ export interface TableSessionLocked {
   pin_locked: boolean;
   attempts_remaining: number;
   realtime_token: null;
+  participant_id: null;
+  participant_token: null;
+  participant_expires_at: null;
 }
 
 /** E1 — the discriminated reply to a scan. */
@@ -343,7 +351,7 @@ export interface TableState {
 
 /** GET /api/v1/sessions/:table_token/members — the real roster. */
 export interface TableMember {
-  user_id: string;
+  participant_id: string;
   name: string;
   joined_at: string;
 }
@@ -404,6 +412,122 @@ export interface BillRequest {
   table_id: string;
   bill_status: BillStatus;
   bill_requested_at: string | null;
+}
+
+// ---- Conversation (Phase 5.4 server-owned transcript) -----------------
+
+export type ConversationRole = "guest" | "assistant" | "system";
+export type ConversationKind = "text" | "voice";
+export type VoiceStatus = "active" | "completed" | "cancelled";
+
+export interface ConversationAction {
+  kind: "cart" | "order" | "bill" | "info";
+  label: string;
+  ok: boolean;
+}
+
+export interface Conversation {
+  conversation_id: string;
+  table_id: string;
+  session_started_at: string;
+  created_at: string;
+}
+
+export interface ConversationMessage {
+  message_id: string;
+  conversation_id: string;
+  role: ConversationRole;
+  kind: ConversationKind;
+  text: string;
+  participant: { participant_id: string; name: string } | null;
+  origin_participant_id: string | null;
+  client_message_id: string | null;
+  reply_to_message_id: string | null;
+  actions: ConversationAction[];
+  voice_playback_device_id: string | null;
+  created_at: string;
+}
+
+export interface ConversationView {
+  conversation: Conversation;
+  messages: ConversationMessage[];
+}
+
+export interface PostConversationMessageInput {
+  text: string;
+  client_message_id?: string;
+  kind?: ConversationKind;
+  voice_interaction_id?: string;
+  device_id?: string;
+}
+
+export interface PostConversationMessageResult {
+  conversation_id: string;
+  message: ConversationMessage;
+  assistant: ConversationMessage | null;
+  duplicate: boolean;
+}
+
+export interface VoiceInteraction {
+  interaction_id: string;
+  conversation_id: string;
+  status: VoiceStatus;
+  initiator_participant_id: string;
+  initiator_device_id: string;
+  playback_device_id: string;
+  playback_participant_id: string;
+  started_at: string;
+  ended_at: string | null;
+}
+
+// ---- Generated bill (backend is the only calculator) ------------------
+
+export interface BillLine {
+  order_id: string;
+  menu_item_id: string;
+  name: string;
+  quantity: number;
+  unit_price: string;
+  unit_price_minor: number;
+  line_total: string;
+  line_total_minor: number;
+  added_by: string;
+  allocated_to: string | null;
+  shared: boolean;
+}
+
+export interface BillAllocation {
+  name: string;
+  shared: boolean;
+  line_count: number;
+  quantity: number;
+  subtotal_minor: number;
+  subtotal: string;
+}
+
+export interface BillTotals {
+  subtotal_minor: number;
+  tax_minor: number;
+  discount_minor: number;
+  total_minor: number;
+  subtotal: string;
+  tax: string;
+  discount: string;
+  total: string;
+}
+
+export interface TableBill {
+  bill_id: string;
+  table_id: string;
+  table: { code: string; name: string };
+  status: BillStatus;
+  session_started_at: string | null;
+  bill_requested_at: string | null;
+  bill_paid_at: string | null;
+  currency: "INR";
+  line_items: BillLine[];
+  allocations: BillAllocation[];
+  totals: BillTotals;
 }
 
 /** POST /api/v1/sessions/:table_token/heartbeat */

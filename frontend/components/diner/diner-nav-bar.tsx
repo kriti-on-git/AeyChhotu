@@ -7,7 +7,6 @@ import { Container } from "@/components/ui/container";
 import { Tooltip } from "@/components/ui/tooltip";
 import type { LiveTableValue } from "@/hooks/use-live-table";
 import { getStoredDisplayName } from "@/lib/api/session";
-import { formatPrice } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 export interface DinerNavBarProps {
@@ -41,7 +40,7 @@ export function DinerNavBar({
   onOpenPass,
   onRefresh,
 }: DinerNavBarProps) {
-  const { menuIndex, orders, cart, activeOrder, refreshing } = live;
+  const { activeOrder, refreshing } = live;
   const headerRef = useRef<HTMLElement>(null);
 
   /* The band starts blank and only then adopts the stored name: a name read
@@ -99,31 +98,8 @@ export function DinerNavBar({
     return () => observer.disconnect();
   }, []);
 
-  // Everything the table has already fired, plus whatever is staged now.
-  const firedTotal = orders.reduce(
-    (sum, order) => sum + order.items.reduce((line, item) => line + item.price * item.quantity, 0),
-    0,
-  );
-  const stagedTotal = cart.reduce(
-    (sum, line) => sum + (menuIndex.get(line.menu_item_id)?.price ?? 0) * line.quantity,
-    0,
-  );
-  const totalBill = firedTotal + stagedTotal;
-
-  // Just this guest's share: the lines they added, fired or still staged.
-  const firedMine = orders.reduce(
-    (sum, order) =>
-      sum +
-      order.items
-        .filter((item) => item.added_by === name)
-        .reduce((line, item) => line + item.price * item.quantity, 0),
-    0,
-  );
-  const stagedMine = cart
-    .filter((line) => line.added_by === name)
-    .reduce((sum, line) => sum + (menuIndex.get(line.menu_item_id)?.price ?? 0) * line.quantity, 0);
-  const myBill = firedMine + stagedMine;
-
+  /* No money arithmetic here: the pill opens the backend-generated bill.
+     The drawer is the only surface that prints totals, tax and allocations. */
   return (
     <header
       ref={headerRef}
@@ -159,26 +135,18 @@ export function DinerNavBar({
             </Link>
           </Tooltip>
 
-          {/* The bill is the one action with a number on it, so it is a pill
-              rather than a bare glyph. The amount is the table's total; a
-              phone's band has no room for it next to the identity, so below
-              `sm` the pill collapses back to its icon (the tooltip and the
-              panel still carry both numbers). */}
-          <Tooltip
-            label={`Bill · ${formatPrice(totalBill)} table · your part ${formatPrice(myBill)}`}
-            side="bottom"
-            className="max-w-56"
-          >
+          {/* The pill opens the server-calculated bill. It deliberately carries
+              no amount: a number here would be a second, browser-side total
+              that could disagree with the drawer. */}
+          <Tooltip label="Open the bill" side="bottom">
             <button
               type="button"
               onClick={onOpenBill}
-              aria-label={`Open the bill: ${formatPrice(totalBill)} for the table, your part ${formatPrice(myBill)}`}
-              className="inline-flex h-9 w-9 shrink-0 items-center justify-center gap-2 rounded-pill border border-ink/12 bg-sand/70 text-ink transition-colors duration-[var(--duration-fast)] ease-gentle hover:border-ink/20 hover:bg-sand focus-visible:border-ink/25 focus-visible:bg-sand focus-visible:outline-none sm:h-10 sm:w-auto sm:px-3.5"
+              aria-label="Open the bill"
+              className="inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded-pill border border-ink/12 bg-sand/70 px-2.5 text-ink transition-colors duration-[var(--duration-fast)] ease-gentle hover:border-ink/20 hover:bg-sand focus-visible:border-ink/25 focus-visible:bg-sand focus-visible:outline-none sm:h-10 sm:px-3.5"
             >
               <Receipt className="size-5 shrink-0" aria-hidden />
-              <span className="hidden text-sm font-semibold tabular-nums sm:inline">
-                {formatPrice(totalBill)}
-              </span>
+              <span className="hidden text-sm font-semibold sm:inline">Bill</span>
             </button>
           </Tooltip>
 

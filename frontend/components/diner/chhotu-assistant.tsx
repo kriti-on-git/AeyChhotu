@@ -1,48 +1,37 @@
 "use client";
 
-import type { GoogleGenAI } from "@google/genai";
 import { Check, Loader2, Mic, Send, TriangleAlert } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ChhotuAvatar } from "@/components/brand/chhotu-avatar";
-import { DishPhoto } from "@/components/diner/dish-photo";
 import { Button } from "@/components/ui/button";
 import { Drawer } from "@/components/ui/drawer";
 import { Input } from "@/components/ui/input";
 import type { LiveTableValue } from "@/hooks/use-live-table";
-import { getChhotuClient, isChhotuConfigured } from "@/lib/ai/gemini-client";
-import { ChhotuLiveSession, type ChhotuPhase } from "@/lib/ai/live-session";
-import { buildChhotuSystemPrompt } from "@/lib/ai/system-prompt";
-import { TOOL_DECLARATIONS } from "@/lib/ai/tool-declarations";
-import { describeToolCall, executeTool } from "@/lib/ai/tools";
-import type { ChhotuAction, ChhotuMessage, ChhotuRuntime } from "@/lib/ai/types";
+import { useConversation } from "@/hooks/use-conversation";
 import {
-  fireTableOrder as apiFireOrder,
-  removeCartItem as apiRemoveCartItem,
-  requestTableBill as apiRequestTableBill,
-  submitTableFeedback as apiSubmitTableFeedback,
-  updateCartItem as apiUpdateCartItem,
-  upsertCartItem as apiUpsertCartItem,
+  ApiError,
+  endConversationVoice,
+  startConversationVoice,
+  type ConversationMessage,
 } from "@/lib/api-client";
-import { getStoredDisplayName } from "@/lib/api/session";
-import { getGrantedSession } from "@/lib/api/table-session";
-import { formatPrice } from "@/lib/format";
+import { createId, getDeviceId, getStoredDisplayName } from "@/lib/api/session";
+import { shouldPlayVoice } from "@/lib/conversation/messages";
 import { cn } from "@/lib/utils";
 
-/* Chhotu — the floating waiter, now voice-to-voice.
+/* Chhotu — the floating waiter.
 
-   One Gemini LIVE session carries everything: the microphone goes up as PCM,
-   the spoken answer comes back down, and typed text travels over the same
-   socket (`sendText`). There is no text-only model anywhere in the app.
+   The transcript, AI provider and every tool now live on the backend. This
+   component reads and writes that one shared conversation with the participant
+   token, so two phones at a table see the same messages and only the server
+   can mutate the cart, fire an order or request the bill.
 
-   Tool calls arrive over the socket and run HERE, against the same REST
-   endpoints (and the same table token) as the rest of the diner UI. Any write
-   triggers `live.refresh()` so the cart, bill and KDS-visible state follow
-   without a reload.
+   VOICE: the typed contract is `kind: "voice"` with a server-issued interaction
+   id. Browser speech recognition supplies the transcript and speech synthesis
+   plays the answer, but only on the device named in `voice_playback_device_id`.
+   The backend still enforces one active interaction per conversation, so two
+   guests cannot both hold the microphone.
 
-   Confirmation for fire/bill/clear is PROMPT-ONLY by product decision: the
-   system instruction forbids acting in the request turn, but the server does
-   not hold a pending-action token. The database guards (fire_order RPC,
-   one-active-order index, table scoping) still apply. */
+   No Gemini key is read here and no model call runs in this browser. */
 
 const QUICK_PROMPTS = [
   "What's good tonight?",
@@ -52,10 +41,19 @@ const QUICK_PROMPTS = [
   "Get the bill",
 ] as const;
 
-const INTRO: ChhotuMessage = {
-  id: "intro",
+const INTRO: ConversationMessage = {
+  message_id: "intro",
+  conversation_id: "intro",
   role: "assistant",
+  kind: "text",
   text: "Namaste! I'm Chhotu, your table's waiter. Talk to me or type — ask what's good, add dishes to the shared cart, or check on your order.",
+  participant: null,
+  origin_participant_id: null,
+  client_message_id: null,
+  reply_to_message_id: null,
+  actions: [],
+  voice_playback_device_id: null,
+  created_at: "1970-01-01T00:00:00.000Z",
 };
 
 export interface ChhotuAssistantProps {
@@ -67,249 +65,239 @@ export interface ChhotuAssistantProps {
   className?: string;
 }
 
-function phaseLabel(phase: ChhotuPhase): string | null {
-  switch (phase) {
-    case "connecting":
-      return "Opening the voice line…";
-    case "listening":
-      return "Listening — speak, then tap the mic again when you're done.";
-    case "thinking":
-      return "Chhotu is thinking…";
-    case "speaking":
-      return "Chhotu is speaking…";
-    default:
-      return null;
-  }
+interface SpeechRecognitionResultLike {
+  readonly isFinal: boolean;
+  readonly 0: { readonly transcript: string };
+}
+
+interface SpeechRecognitionEventLike {
+  readonly resultIndex: number;
+  readonly results: {
+    readonly length: number;
+    readonly [index: number]: SpeechRecognitionResultLike;
+  };
+}
+
+interface SpeechRecognitionLike {
+  lang: string;
+  continuous: boolean;
+  interimResults: boolean;
+  onresult: ((event: SpeechRecognitionEventLike) => void) | null;
+  onerror: ((event: { error?: string }) => void) | null;
+  onend: (() => void) | null;
+  start(): void;
+  stop(): void;
+  abort(): void;
+}
+
+type SpeechRecognitionConstructor = new () => SpeechRecognitionLike;
+
+function recognitionConstructor(): SpeechRecognitionConstructor | null {
+  if (typeof window === "undefined") return null;
+  const scope = window as unknown as {
+    SpeechRecognition?: SpeechRecognitionConstructor;
+    webkitSpeechRecognition?: SpeechRecognitionConstructor;
+  };
+  return scope.SpeechRecognition ?? scope.webkitSpeechRecognition ?? null;
+}
+
+function speak(text: string): void {
+  if (typeof window === "undefined" || !("speechSynthesis" in window) || !text.trim()) return;
+  window.speechSynthesis.cancel();
+  const utterance = new SpeechSynthesisUtterance(text);
+  utterance.lang = "en-IN";
+  utterance.rate = 1;
+  window.speechSynthesis.speak(utterance);
 }
 
 export function ChhotuAssistant({ tableToken, live, displayName, className }: ChhotuAssistantProps) {
   const [open, setOpen] = useState(false);
-  const [messages, setMessages] = useState<ChhotuMessage[]>([INTRO]);
   const [input, setInput] = useState("");
-  const [userDraft, setUserDraft] = useState("");
-  const [assistantDraft, setAssistantDraft] = useState("");
-  const [actions, setActions] = useState<ChhotuAction[]>([]);
-  const [phase, setPhase] = useState<ChhotuPhase>("idle");
-  const [activity, setActivity] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [micLevel, setMicLevel] = useState(0);
-  /* The mic keeps streaming while Chhotu thinks and speaks, so the icon is
-     keyed on the mic itself, not on the turn phase. */
+  const [voiceBusy, setVoiceBusy] = useState(false);
   const [micOn, setMicOn] = useState(false);
+  const [localError, setLocalError] = useState<string | null>(null);
+  const [heard, setHeard] = useState("");
 
-  const sessionRef = useRef<ChhotuLiveSession | null>(null);
-  const pendingRef = useRef<Promise<ChhotuLiveSession | null> | null>(null);
+  const conversation = useConversation(live.table?.id ?? null);
+  const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
+  const interactionRef = useRef<{ id: string; deviceId: string } | null>(null);
   const endRef = useRef<HTMLDivElement>(null);
-  const idRef = useRef(0);
-
-  /* The session lives longer than a render, so it reads the newest snapshot
-     through refs: a tool must never act on the cart as it looked when the
-     drawer opened. */
-  const liveRef = useRef(live);
-  const userDraftRef = useRef("");
-  const assistantDraftRef = useRef("");
-  const actionsRef = useRef<ChhotuAction[]>([]);
-  const nameRef = useRef("");
-
-  /* Refs are written from effects, never during render: the session outlives
-     a render but a tool must still see the newest snapshot. */
-  useEffect(() => {
-    liveRef.current = live;
-  }, [live]);
+  const mountedRef = useRef(true);
+  const deviceId = typeof window === "undefined" ? "" : getDeviceId();
+  const guestName = (displayName || (typeof window === "undefined" ? "" : getStoredDisplayName())).trim();
 
   useEffect(() => {
-    nameRef.current = (displayName || getStoredDisplayName()).trim();
-  }, [displayName]);
-
-  /* Released with the table credentials, never baked into the bundle: the
-     gate has granted a session before this component renders. */
-  const apiKey = getGrantedSession(tableToken)?.gemini_api_key ?? null;
-  const configured = isChhotuConfigured(apiKey);
-
-  const push = useCallback((message: Omit<ChhotuMessage, "id">) => {
-    idRef.current += 1;
-    setMessages((current) => [...current, { ...message, id: `chhotu-${idRef.current}` }]);
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
   }, []);
-
-  /** Close the turn: whatever was heard/spoken becomes a pair of bubbles. */
-  const flushTurn = useCallback(() => {
-    const heard = userDraftRef.current.trim();
-    const spoken = assistantDraftRef.current.trim();
-    const turnActions = actionsRef.current;
-
-    userDraftRef.current = "";
-    assistantDraftRef.current = "";
-    actionsRef.current = [];
-    setUserDraft("");
-    setAssistantDraft("");
-    setActions([]);
-
-    if (heard) push({ role: "user", text: heard });
-    /* A tool-only turn (a function call with no spoken answer) used to push a
-       literal "Done.", and every tool round-trip produced another one. The
-       chips already say what happened, so an empty text is left empty. */
-    if (spoken || turnActions.length > 0) {
-      push({
-        role: "assistant",
-        text: spoken,
-        ...(turnActions.length > 0 ? { actions: turnActions } : {}),
-      });
-    }
-  }, [push]);
-
-  /** Lazily open the Live socket, once, for both voice and text. */
-  const ensureSession = useCallback(async (): Promise<ChhotuLiveSession | null> => {
-    if (sessionRef.current) return sessionRef.current;
-    if (pendingRef.current) return pendingRef.current;
-
-    const ai: GoogleGenAI | null = getChhotuClient(apiKey);
-    if (!ai) return null;
-
-    const guestName = nameRef.current || (displayName || getStoredDisplayName()).trim();
-
-    const connect = (async () => {
-      const tableCode = liveRef.current.table?.code ?? tableToken;
-      const session = new ChhotuLiveSession({
-        client: ai,
-        systemInstruction: buildChhotuSystemPrompt(guestName, tableCode),
-        // A warm male waiter voice; the console keeps Aoede.
-        voiceName: "Puck",
-        tools: TOOL_DECLARATIONS,
-        describe: describeToolCall,
-        // Fresh snapshot per tool call, so an 86 or a tablemate's edit is seen.
-        execute: (name, args) =>
-          executeTool(name, args, buildRuntime(liveRef.current, tableToken, guestName)),
-        callbacks: {
-          onPhase: setPhase,
-          onUserSpeech: (delta) => {
-            userDraftRef.current += delta;
-            setUserDraft(userDraftRef.current);
-          },
-          onAssistantSpeech: (delta) => {
-            assistantDraftRef.current += delta;
-            setAssistantDraft(assistantDraftRef.current);
-          },
-          onTurnComplete: flushTurn,
-          onActivity: setActivity,
-          onActions: (next) => {
-            actionsRef.current = [...actionsRef.current, ...next];
-            setActions(actionsRef.current);
-          },
-          onMicLevel: setMicLevel,
-          onMutated: () => {
-            void liveRef.current.refresh();
-          },
-          onError: setError,
-        },
-      });
-
-      await session.connect();
-      sessionRef.current = session;
-      return session;
-    })();
-
-    pendingRef.current = connect;
-    try {
-      return await connect;
-    } finally {
-      pendingRef.current = null;
-    }
-  }, [apiKey, displayName, flushTurn, tableToken]);
-
-  const teardown = useCallback(() => {
-    sessionRef.current?.close();
-    sessionRef.current = null;
-    userDraftRef.current = "";
-    assistantDraftRef.current = "";
-    actionsRef.current = [];
-    setUserDraft("");
-    setAssistantDraft("");
-    setActions([]);
-    setActivity(null);
-    setMicLevel(0);
-    setMicOn(false);
-    setPhase("idle");
-  }, []);
-
-  useEffect(() => () => teardown(), [teardown]);
 
   useEffect(() => {
     if (!open) return;
     endRef.current?.scrollIntoView({ block: "end" });
-  }, [open, messages, activity, userDraft, assistantDraft]);
+  }, [open, conversation.messages, conversation.sending, heard]);
 
-  const listening = phase === "listening";
-  const connecting = phase === "connecting";
+  const stopVoice = useCallback((notifyServer: boolean) => {
+    const recognition = recognitionRef.current;
+    recognitionRef.current = null;
+    if (recognition) {
+      recognition.onresult = null;
+      recognition.onerror = null;
+      recognition.onend = null;
+      try {
+        recognition.abort();
+      } catch {
+        /* Already stopped. */
+      }
+    }
 
-  async function send(text: string) {
+    const interaction = interactionRef.current;
+    interactionRef.current = null;
+    setMicOn(false);
+    setVoiceBusy(false);
+    setHeard("");
+
+    if (notifyServer && interaction) {
+      void endConversationVoice(
+        conversation.conversationId ?? "",
+        interaction.id,
+        interaction.deviceId,
+      ).catch(() => undefined);
+    }
+  }, [conversation.conversationId]);
+
+  useEffect(() => () => stopVoice(true), [stopVoice]);
+
+  const send = async (text: string) => {
     const trimmed = text.trim();
-    if (!trimmed || connecting) return;
+    if (!trimmed || conversation.phase !== "ready" || conversation.sending) return;
 
     setInput("");
-    setError(null);
-
-    if (!configured) {
-      push({
-        role: "assistant",
-        text: "Chhotu isn't switched on for this build yet. You can still browse the menu and add dishes yourself.",
-      });
-      return;
-    }
-
-    let session: ChhotuLiveSession | null = null;
-    try {
-      session = await ensureSession();
-    } catch {
-      push({
-        role: "assistant",
-        text: "I couldn't open the voice line. Check your connection and try again — nothing was changed.",
-      });
-      return;
-    }
-
-    if (!session) {
-      push({ role: "assistant", text: "Chhotu isn't available right now. Please order from the menu." });
-      return;
-    }
-
-    // Typed words are not transcribed back by the server, so echo them here.
-    push({ role: "user", text: trimmed });
-    session.sendText(trimmed);
-  }
+    setLocalError(null);
+    await conversation.send({
+      text: trimmed,
+      client_message_id: createId("chat"),
+    });
+    if (mountedRef.current) void live.refresh();
+  };
 
   async function toggleMic() {
-    setError(null);
+    setLocalError(null);
 
-    if (!configured) {
-      push({
-        role: "assistant",
-        text: "Chhotu isn't switched on for this build yet. You can still browse the menu and add dishes yourself.",
-      });
+    if (micOn) {
+      stopVoice(true);
       return;
     }
 
-    let session: ChhotuLiveSession | null = null;
+    if (!conversation.conversationId || conversation.phase !== "ready") {
+      setLocalError("Chhotu is not connected to this table yet.");
+      return;
+    }
+
+    const Recognition = recognitionConstructor();
+    if (!Recognition) {
+      setLocalError("Voice input is not supported in this browser. Type your message instead.");
+      return;
+    }
+
+    let interaction: { id: string; deviceId: string };
     try {
-      session = await ensureSession();
-    } catch {
-      setError("The voice line could not be opened. Check your connection and try again.");
+      const started = await startConversationVoice(conversation.conversationId, deviceId);
+      interaction = { id: started.interaction_id, deviceId };
+      interactionRef.current = interaction;
+    } catch (err) {
+      setLocalError(
+        err instanceof ApiError
+          ? err.message
+          : "The voice line could not be opened. Type your message instead.",
+      );
       return;
     }
 
-    if (!session) return;
+    const recognition = new Recognition();
+    recognitionRef.current = recognition;
+    recognition.lang = "en-IN";
+    recognition.continuous = false;
+    recognition.interimResults = true;
 
-    if (session.micActive) {
-      session.stopMic();
+    let finalText = "";
+    recognition.onresult = (event) => {
+      let interim = "";
+      for (let index = event.resultIndex; index < event.results.length; index += 1) {
+        const result = event.results[index];
+        if (!result) continue;
+        if (result.isFinal) finalText += result[0].transcript;
+        else interim += result[0].transcript;
+      }
+      setHeard(finalText || interim);
+    };
+
+    recognition.onerror = (event) => {
+      if (!mountedRef.current) return;
+      setLocalError(
+        event.error === "not-allowed"
+          ? "Microphone permission was denied. Allow it, then tap the mic again."
+          : "I could not hear that. Tap the mic and try again.",
+      );
+      stopVoice(true);
+    };
+
+    recognition.onend = () => {
+      if (!mountedRef.current) return;
       setMicOn(false);
-      return;
-    }
+      const text = finalText.trim();
+      if (!text) {
+        stopVoice(true);
+        return;
+      }
 
-    await session.startMic();
-    setMicOn(session.micActive);
+      setVoiceBusy(true);
+      void conversation
+        .send({
+          text,
+          kind: "voice",
+          voice_interaction_id: interaction.id,
+          device_id: interaction.deviceId,
+          client_message_id: createId("voice"),
+        })
+        .then((reply) => {
+          if (!mountedRef.current) return;
+          if (reply && shouldPlayVoice(reply, deviceId)) speak(reply.text);
+          void live.refresh();
+        })
+        .finally(() => {
+          if (!mountedRef.current) return;
+          setVoiceBusy(false);
+          stopVoice(true);
+        });
+    };
+
+    try {
+      recognition.start();
+      setMicOn(true);
+    } catch {
+      setLocalError("The microphone could not start. Type your message instead.");
+      stopVoice(true);
+    }
   }
 
-  const canSend = input.trim().length > 0 && !connecting;
-  const statusLine = error ?? phaseLabel(phase);
+  const visibleMessages =
+    conversation.messages.length > 0
+      ? conversation.messages.filter((message) => message.role !== "system")
+      : [INTRO];
+  const statusLine =
+    localError ??
+    conversation.error ??
+    (conversation.phase === "ended"
+      ? "This table session has ended."
+      : voiceBusy
+        ? "Chhotu is thinking…"
+        : micOn
+          ? heard
+            ? `Hearing: ${heard}`
+            : "Listening — speak, then pause."
+          : null);
 
   return (
     <>
@@ -330,7 +318,7 @@ export function ChhotuAssistant({ tableToken, live, displayName, className }: Ch
       <Drawer
         open={open}
         onClose={() => {
-          teardown();
+          stopVoice(true);
           setOpen(false);
         }}
         title="Chhotu"
@@ -340,8 +328,11 @@ export function ChhotuAssistant({ tableToken, live, displayName, className }: Ch
           <div className="flex w-full flex-col gap-2">
             {statusLine ? (
               <p
-                role={error ? "alert" : "status"}
-                className={cn("text-xs font-medium", error ? "text-alert" : "text-ink-muted")}
+                role={localError || conversation.error ? "alert" : "status"}
+                className={cn(
+                  "text-xs font-medium",
+                  localError || conversation.error ? "text-alert" : "text-ink-muted",
+                )}
               >
                 {statusLine}
               </p>
@@ -356,7 +347,7 @@ export function ChhotuAssistant({ tableToken, live, displayName, className }: Ch
             >
               <Input
                 aria-label="Message Chhotu"
-                placeholder={listening ? "Listening…" : "Ask for a dish, or say what to add…"}
+                placeholder={micOn ? "Listening…" : "Ask for a dish, or say what to add…"}
                 value={input}
                 maxLength={500}
                 onChange={(event) => setInput(event.target.value)}
@@ -365,23 +356,27 @@ export function ChhotuAssistant({ tableToken, live, displayName, className }: Ch
 
               <Button
                 type="button"
-                variant={listening ? "ember" : "soft"}
+                variant={micOn ? "ember" : "soft"}
                 size="md"
-                aria-label={listening ? "Stop listening" : "Talk to Chhotu"}
-                aria-pressed={listening}
+                aria-label={micOn ? "Stop listening" : "Talk to Chhotu"}
+                aria-pressed={micOn}
                 onClick={() => void toggleMic()}
-                disabled={connecting}
-                className={cn("h-12 shrink-0 px-3", listening && "ring-2 ring-ember/40")}
-                leftIcon={<MicLevelIcon active={micOn} level={micLevel} />}
+                disabled={conversation.sending || voiceBusy || conversation.phase !== "ready"}
+                className={cn("h-12 shrink-0 px-3", micOn && "ring-2 ring-ember/40")}
+                leftIcon={micOn ? <Loader2 className="size-4 animate-spin" aria-hidden /> : <Mic className="size-4" aria-hidden />}
               >
-                <span className="sr-only">{listening ? "Stop listening" : "Voice"}</span>
+                <span className="sr-only">{micOn ? "Stop listening" : "Voice"}</span>
               </Button>
 
               <Button
                 type="submit"
                 variant="ember"
                 size="md"
-                disabled={!canSend}
+                disabled={
+                  !input.trim() ||
+                  conversation.sending ||
+                  conversation.phase !== "ready"
+                }
                 aria-label="Send message"
                 className="h-12 shrink-0 px-3"
                 leftIcon={<Send className="size-4" aria-hidden />}
@@ -393,51 +388,39 @@ export function ChhotuAssistant({ tableToken, live, displayName, className }: Ch
         }
       >
         <div className="flex flex-col gap-4">
-          {!configured ? (
-            <p className="rounded-md border border-pending/30 bg-pending-surface px-3 py-2 text-sm text-ink">
-              Chhotu isn&apos;t configured in this build. The menu and cart still work normally.
+          {conversation.phase === "loading" ? (
+            <p className="flex items-center gap-2 text-sm text-ink-muted" role="status">
+              <Loader2 className="size-4 animate-spin text-ember" aria-hidden />
+              Opening this table's conversation…
             </p>
           ) : null}
 
           <ul className="flex flex-col gap-3" aria-live="polite">
-            {messages.map((message) => (
-              <MessageBubble key={message.id} message={message} />
+            {visibleMessages.map((message) => (
+              <MessageBubble key={message.message_id} message={message} />
             ))}
 
-            {userDraft ? (
-              <MessageBubble
-                message={{ id: "draft-user", role: "user", text: userDraft }}
-                live
-              />
-            ) : null}
-
-            {assistantDraft ? (
-              <MessageBubble
-                message={{
-                  id: "draft-assistant",
-                  role: "assistant",
-                  text: assistantDraft,
-                  ...(actions.length > 0 ? { actions } : {}),
-                }}
-                live
-              />
+            {conversation.sending || voiceBusy ? (
+              <li className="flex items-center gap-2 text-sm text-ink-muted" role="status">
+                <Loader2 className="size-4 shrink-0 animate-spin text-ember" aria-hidden />
+                <span>Chhotu is checking the table…</span>
+              </li>
             ) : null}
           </ul>
 
-          {activity ? (
-            <div className="flex items-center gap-2 text-sm text-ink-muted" role="status">
-              <Loader2 className="size-4 shrink-0 animate-spin text-ember" aria-hidden />
-              <span>{activity}</span>
-            </div>
+          {conversation.phase === "error" ? (
+            <Button variant="outline" size="sm" onClick={() => void conversation.refresh()}>
+              Try the conversation again
+            </Button>
           ) : null}
 
-          {messages.length === 1 && !userDraft && !assistantDraft ? (
+          {conversation.messages.length === 0 && !conversation.sending ? (
             <div role="group" aria-label="Quick requests" className="flex flex-wrap gap-2 pt-1">
               {QUICK_PROMPTS.map((prompt) => (
                 <button
                   key={prompt}
                   type="button"
-                  disabled={connecting}
+                  disabled={conversation.phase !== "ready" || conversation.sending}
                   onClick={() => void send(prompt)}
                   className="cursor-pointer rounded-pill border border-line-strong bg-paper px-3 py-1.5 text-xs font-medium text-ink transition-colors duration-[var(--duration-fast)] ease-gentle hover:border-ember/40 hover:bg-ember-soft/50 focus-visible:border-ember focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50"
                 >
@@ -454,8 +437,9 @@ export function ChhotuAssistant({ tableToken, live, displayName, className }: Ch
   );
 }
 
-function MessageBubble({ message, live = false }: { message: ChhotuMessage; live?: boolean }) {
+function MessageBubble({ message }: { message: ConversationMessage }) {
   const fromChhotu = message.role === "assistant";
+  const isIntro = message.message_id === "intro";
 
   return (
     <li className={cn("flex flex-col gap-1.5", fromChhotu ? "items-start" : "items-end")}>
@@ -472,97 +456,34 @@ function MessageBubble({ message, live = false }: { message: ChhotuMessage; live
             )}
           >
             {message.text}
-            {live ? (
-              <span aria-hidden className="ml-1 inline-block size-1.5 animate-pulse-soft rounded-pill bg-ember align-middle" />
-            ) : null}
           </div>
         ) : null}
       </div>
 
-      {message.actions && message.actions.length > 0 ? (
+      {!isIntro && fromChhotu && message.participant === null ? null : null}
+
+      {message.actions.length > 0 ? (
         <ul className="flex w-full flex-wrap gap-1.5">
-          {message.actions.map((action, index) =>
-            action.dishes && action.dishes.length > 0 ? (
-              /* A dish result is shown, not just announced: the same plate
-                 treatment the menu uses, so a recommendation reads like the
-                 menu instead of a list of names. */
-              <li key={`${message.id}-dishes-${index}`} className="w-full">
-                <p className="mb-1.5 text-xs font-medium text-ink-muted">{action.label}</p>
-                <ul className="flex gap-2 overflow-x-auto pb-1">
-                  {action.dishes.map((dish) => (
-                    <li key={dish.id} className="w-32 shrink-0">
-                      <DishPhoto item={dish} sizes="128px" muted={!dish.is_available} />
-                      <p className="mt-1 truncate font-display text-xs text-ink">{dish.name}</p>
-                      <p className="text-[11px] text-ink-subtle">
-                        {formatPrice(dish.price)}
-                        {dish.is_available ? "" : " · ran out"}
-                      </p>
-                    </li>
-                  ))}
-                </ul>
-              </li>
-            ) : (
-              <li
-                key={`${message.id}-action-${index}`}
-                className={cn(
-                  "inline-flex items-center gap-1.5 rounded-pill border px-2.5 py-1 text-xs font-medium",
-                  action.ok
-                    ? "border-ready/35 bg-ready-surface text-ready"
-                    : "border-alert/35 bg-alert-surface text-alert",
-                )}
-              >
-                {action.ok ? (
-                  <Check className="size-3" aria-hidden />
-                ) : (
-                  <TriangleAlert className="size-3" aria-hidden />
-                )}
-                {action.label}
-              </li>
-            ),
-          )}
+          {message.actions.map((action, index) => (
+            <li
+              key={`${message.message_id}-action-${index}`}
+              className={cn(
+                "inline-flex items-center gap-1.5 rounded-pill border px-2.5 py-1 text-xs font-medium",
+                action.ok
+                  ? "border-ready/35 bg-ready-surface text-ready"
+                  : "border-alert/35 bg-alert-surface text-alert",
+              )}
+            >
+              {action.ok ? (
+                <Check className="size-3" aria-hidden />
+              ) : (
+                <TriangleAlert className="size-3" aria-hidden />
+              )}
+              {action.label}
+            </li>
+          ))}
         </ul>
       ) : null}
     </li>
-  );
-}
-
-/** Bind the table and guest name OUTSIDE the model's reach. */
-function buildRuntime(live: LiveTableValue, tableToken: string, userName: string): ChhotuRuntime {
-  return {
-    userName,
-    menu: live.menu,
-    cart: live.cart,
-    orders: live.orders,
-    billStatus: live.billStatus,
-    addCartItem: (input) => apiUpsertCartItem({ table_token: tableToken, ...input }),
-    updateCartItem: (cartItemId, patch) =>
-      apiUpdateCartItem(cartItemId, { table_token: tableToken, ...patch }),
-    removeCartItem: (cartItemId) =>
-      apiRemoveCartItem({ table_token: tableToken, cart_item_id: cartItemId }),
-    fireOrder: () => apiFireOrder(tableToken),
-    requestBill: () => apiRequestTableBill(tableToken),
-    leaveFeedback: (input) => apiSubmitTableFeedback(tableToken, input),
-    refresh: () => live.refresh(),
-    now: Date.now,
-  };
-}
-
-/** The mic's own feedback: three bars that move with the guest's voice, so it
-    is obvious the phone is hearing them. Minimal by design — no waveform. */
-function MicLevelIcon({ active, level }: { active: boolean; level: number }) {
-  if (!active) return <Mic className="size-4" aria-hidden />;
-  return (
-    <span aria-hidden className="flex h-4 items-end gap-[3px]">
-      {[0, 1, 2].map((index) => (
-        <span
-          key={index}
-          className="h-4 w-[3px] origin-bottom animate-mic-live rounded-pill bg-current"
-          style={{
-            animationDelay: `${index * 130}ms`,
-            animationDuration: `${Math.round(950 - Math.min(1, level) * 450)}ms`,
-          }}
-        />
-      ))}
-    </span>
   );
 }

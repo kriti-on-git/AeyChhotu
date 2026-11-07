@@ -10,6 +10,7 @@ import { clearAdminToken, getAdminToken } from "./admin-token";
 import { ApiError } from "./errors";
 import type { ApiEnvelope, PageMeta } from "./types";
 import { clearKdsToken, getKdsToken } from "./token";
+import { getParticipantToken } from "../api/session";
 
 /** §6 — hard connection ceiling for every outbound operation. */
 export const REQUEST_TIMEOUT_MS = 20_000;
@@ -118,6 +119,12 @@ export interface RequestOptions {
       Separate from `auth` so a shift token can never be sent to /admin and an
       admin token can never be sent to /kds. */
   adminAuth?: boolean;
+  /** Inject `X-Participant-Token` from the session layer (session/conversation
+      routes). The token is never added to the URL. */
+  participantAuth?: boolean;
+  /** Additional per-request headers. Applied last, so a caller can add a
+      contract header without changing this function. */
+  headers?: Record<string, string>;
   timeoutMs?: number;
   /** Keep the request alive across a page unload (presence disconnect). */
   keepalive?: boolean;
@@ -264,6 +271,17 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
       );
     }
     headers["Authorization"] = `Bearer ${token}`;
+  }
+
+  if (options.participantAuth) {
+    const participantToken = getParticipantToken();
+    if (participantToken) headers["X-Participant-Token"] = participantToken;
+  }
+
+  if (options.headers) {
+    for (const [key, value] of Object.entries(options.headers)) {
+      headers[key] = value;
+    }
   }
 
   const controller = new AbortController();
