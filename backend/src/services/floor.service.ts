@@ -1,11 +1,8 @@
 import { pool } from "../db/pool.js";
 import { AppError } from "../errors/app-error.js";
 import { buildMeta, iso, type PageMeta } from "../lib/util.js";
-import {
-  checkAndAutoReleaseTable,
-  clearTableSession,
-  type BillStatus,
-} from "./sessions.service.js";
+import { clearTableSession, type BillStatus } from "./sessions.service.js";
+import { getDefaultBillingService } from "./billing.service.js";
 
 /* Module 4 — E17 GET /api/v1/floor/tables (Floor View summary) and the
    settle action that takes payment and hands the table to auto-release. */
@@ -190,32 +187,7 @@ export interface SettleTableResult {
 }
 
 export async function settleTableBill(tableId: string): Promise<SettleTableResult> {
-  const paid = await pool.query<{
-    id: string;
-    bill_status: "paid";
-    bill_paid_at: Date;
-  }>(
-    `UPDATE restaurant_tables
-        SET bill_status  = 'paid',
-            bill_paid_at = now()
-      WHERE id = $1 AND deleted_at IS NULL
-      RETURNING id, bill_status, bill_paid_at`,
-    [tableId],
-  );
-
-  const row = paid.rows[0];
-  if (!row) {
-    throw new AppError(404, "TABLE_NOT_FOUND", "Invalid table id parsed.");
-  }
-
-  const { released } = await checkAndAutoReleaseTable(tableId);
-
-  return {
-    table_id: row.id,
-    bill_status: "paid",
-    bill_paid_at: iso(row.bill_paid_at),
-    released,
-  };
+  return getDefaultBillingService().settleBill(tableId);
 }
 
 /* PATCH /api/v1/floor/tables/:table_id/clear.

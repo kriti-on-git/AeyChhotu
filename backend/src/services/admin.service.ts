@@ -1,12 +1,11 @@
-import { randomInt, timingSafeEqual } from "node:crypto";
-import { env } from "../config/env.js";
+import { randomInt } from "node:crypto";
 import { pool } from "../db/pool.js";
 import { AppError } from "../errors/app-error.js";
-import { signToken, type ShiftClaims } from "../lib/jwt.js";
 import { iso } from "../lib/util.js";
-import { resolveCategoryForWrite } from "./catalog.service.js";
-import { imageDtoFromRow } from "./menu-image.service.js";
-import { denyPendingOrdersForItem } from "./orders.service.js";
+import { pinMatches } from "../modules/staff/staff.service.js";
+import type { AdminLoginResult } from "../modules/staff/staff.types.js";
+import { getDefaultStaffService } from "./staff.service.js";
+import { getDefaultMenuService } from "./menu.service.js";
 import { clearTableSession, type BillStatus } from "./sessions.service.js";
 
 /* Module 5 — Executive Admin Engine.
@@ -25,8 +24,6 @@ import { clearTableSession, type BillStatus } from "./sessions.service.js";
  * ticket still points at its table and its dishes, and a re-priced dish must
  * not rewrite last week's bill (004).
  */
-
-const TOKEN_TTL_SECONDS = 8 * 60 * 60; // one management shift
 
 /** Codes are lowercase alphanumeric, 5–8 chars: short enough to type into the
     manual-entry dialog, long enough that guessing one is not a shortcut. */
@@ -48,46 +45,21 @@ export function generateTableCode(length = 6): string {
   return code;
 }
 
-/** Constant-time PIN comparison; both sides are fixed-length digit strings. */
+/** Constant-time PIN comparison; both sides are fixed-length digit strings.
+    Kept as a legacy name; the primitive and its rule live in the Staff module. */
 export function adminPinMatches(attempt: string, expected: string): boolean {
-  const a = Buffer.from(attempt);
-  const b = Buffer.from(expected);
-  return a.length === b.length && timingSafeEqual(a, b);
+  return pinMatches(attempt, expected);
 }
 
-export interface AdminLoginResult {
-  token: string;
-  token_type: "Bearer";
-  expires_in: number;
-  role: "admin";
-  message: string;
-}
+export type { AdminLoginResult };
 
 /* POST /api/v1/auth/admin-login.
    Issues the role:"admin" claim the router enforces. The JWT is signed with
    the same HMAC secret as the shift token — the difference is the `role`
-   claim, which requireRole() checks on every admin request. */
-export async function authenticateAdmin(pin: string): Promise<AdminLoginResult> {
-  if (!adminPinMatches(pin, env.adminPin)) {
-    // Static message: the attempted PIN is never echoed, hashed or logged.
-    throw new AppError(401, "INVALID_ADMIN_PIN", "That manager PIN is not correct.");
-  }
-
-  const now = Math.floor(Date.now() / 1000);
-  const claims: ShiftClaims = {
-    role: "admin",
-    terminal_id: null,
-    iat: now,
-    exp: now + TOKEN_TTL_SECONDS,
-  };
-
-  return {
-    token: signToken(claims, env.kdsTokenSecret),
-    token_type: "Bearer",
-    expires_in: TOKEN_TTL_SECONDS,
-    role: "admin",
-    message: "Manager console unlocked.",
-  };
+   claim, which requireRole() checks on every admin request. Delegates to the
+   Staff module so both login walls share one implementation. */
+export function authenticateAdmin(pin: string): Promise<AdminLoginResult> {
+  return getDefaultStaffService().authenticateAdmin(pin);
 }
 
 // ---------------------------------------------------------------------------
@@ -670,273 +642,32 @@ export async function archiveTable(tableId: string): Promise<{ table_id: string 
 // Menu catalog
 // ---------------------------------------------------------------------------
 
-export interface AdminMenuItem {
-  menu_item_id: string;
-  name: string;
-  price: number;
-  /** The legacy label, kept in step with the folder's name. */
-  category: string;
-  category_id: string | null;
-  description: string;
-  vegetarian: boolean;
-  is_available: boolean;
-  /** Uploaded photo URLs, or null when the dish still uses the curated
-      frontend photography. */
-  image_url: string | null;
-  image_small_url: string | null;
-  blur_data_url: string | null;
-  /** Kitchen-maintained dish metadata (sql/015). */
-  ingredients: string[];
-  spice_level: number;
-  allergens: string[];
-  diet_tags: string[];
-  portion_description: string;
-}
+/* The catalogue's rules and SQL live in the Menu module. These names stay as
+   delegations so the admin controller and the existing admin suite keep
+   working unchanged until the console itself migrates. */
 
-interface AdminMenuRow {
-  id: string;
-  name: string;
-  price: number;
-  category: string;
-  category_id: string | null;
-  description: string;
-  vegetarian: boolean;
-  is_available: boolean;
-  ingredients: string[];
-  spice_level: number;
-  allergens: string[];
-  diet_tags: string[];
-  portion_description: string;
-  storage_driver: string | null;
-  original_key: string | null;
-  small_key: string | null;
-  tiny_key: string | null;
-  blur_data_url: string | null;
-}
+import type { AdminMenuItem, CreateMenuItemInput } from "../modules/menu/menu.types.js";
 
-const MENU_COLUMNS = `mi.id,
-       mi.name,
-       mi.price::float8 AS price,
-       mi.category,
-       mi.category_id,
-       mi.description,
-       mi.vegetarian,
-       mi.is_available,
-       mi.ingredients,
-       mi.spice_level,
-       mi.allergens,
-       mi.diet_tags,
-       mi.portion_description,
-       img.storage_driver,
-       img.original_key,
-       img.small_key,
-       img.tiny_key,
-       img.blur_data_url`;
-
-const MENU_FROM = `FROM menu_items mi
-  LEFT JOIN menu_item_images img ON img.menu_item_id = mi.id`;
-
-function menuRowToDto(row: AdminMenuRow): AdminMenuItem {
-  const image =
-    row.storage_driver && row.original_key && row.small_key && row.tiny_key
-      ? imageDtoFromRow({
-          menu_item_id: row.id,
-          storage_driver: row.storage_driver,
-          original_key: row.original_key,
-          small_key: row.small_key,
-          tiny_key: row.tiny_key,
-          blur_data_url: row.blur_data_url ?? "",
-        })
-      : null;
-
-  return {
-    menu_item_id: row.id,
-    name: row.name,
-    price: Number(row.price),
-    category: row.category,
-    category_id: row.category_id,
-    description: row.description,
-    vegetarian: row.vegetarian,
-    is_available: row.is_available,
-    ingredients: row.ingredients ?? [],
-    spice_level: row.spice_level ?? 0,
-    allergens: row.allergens ?? [],
-    diet_tags: row.diet_tags ?? [],
-    portion_description: row.portion_description ?? "",
-    image_url: image?.image_url ?? null,
-    image_small_url: image?.image_small_url ?? null,
-    blur_data_url: image?.blur_data_url ?? null,
-  };
-}
-
-async function getAdminMenuItem(menuItemId: string): Promise<AdminMenuItem> {
-  const res = await pool.query<AdminMenuRow>(
-    `SELECT ${MENU_COLUMNS} ${MENU_FROM}
-      WHERE mi.id = $1 AND mi.deleted_at IS NULL`,
-    [menuItemId],
-  );
-
-  const row = res.rows[0];
-  if (!row) {
-    throw new AppError(404, "MENU_ITEM_NOT_FOUND", "Unknown menu item.");
-  }
-  return menuRowToDto(row);
-}
-
-/* GET /api/v1/admin/menu — includes 86'd dishes (the console must be able to
-   bring one back), excludes archived ones. */
-export async function listAdminMenu(): Promise<AdminMenuItem[]> {
-  const res = await pool.query<AdminMenuRow>(
-    `SELECT ${MENU_COLUMNS} ${MENU_FROM}
-      WHERE mi.deleted_at IS NULL
-      ORDER BY mi.category, mi.name`,
-  );
-  return res.rows.map((row) => menuRowToDto(row));
-}
-
-export interface CreateMenuItemInput {
-  name: string;
-  price: number;
-  category_id?: string | null;
-  category?: string;
-  description: string;
-  vegetarian: boolean;
-  is_available: boolean;
-  ingredients?: string[];
-  spice_level?: number;
-  allergens?: string[];
-  diet_tags?: string[];
-  portion_description?: string;
-}
-
-/* POST /api/v1/admin/menu */
-export async function createMenuItem(input: CreateMenuItemInput): Promise<AdminMenuItem> {
-  const folder = await resolveCategoryForWrite({
-    category_id: input.category_id ?? undefined,
-    category: input.category,
-  });
-
-  const res = await pool.query<{ id: string }>(
-    `INSERT INTO menu_items (
-       name, price, category, category_id, description, vegetarian, is_available,
-       ingredients, spice_level, allergens, diet_tags, portion_description
-     )
-          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-       RETURNING id`,
-    [
-      input.name.trim(),
-      input.price,
-      folder.category,
-      folder.category_id,
-      input.description.trim(),
-      input.vegetarian,
-      input.is_available,
-      input.ingredients ?? [],
-      input.spice_level ?? 0,
-      input.allergens ?? [],
-      input.diet_tags ?? [],
-      (input.portion_description ?? "").trim(),
-    ],
-  );
-
-  const id = res.rows[0]?.id;
-  if (!id) {
-    throw new AppError(500, "INTERNAL_ERROR", "The dish could not be created.");
-  }
-  return getAdminMenuItem(id);
-}
-
+export type { AdminMenuItem, CreateMenuItemInput };
 export type UpdateMenuItemInput = Partial<CreateMenuItemInput>;
 
-/* PATCH /api/v1/admin/menu/:menu_item_id — only the supplied fields change.
-   COALESCE carries this because every column is NOT NULL and no patch value
-   is ever NULL: `false` and `0` and `""` are all legitimate and must win over
-   the stored value, which COALESCE does (only SQL NULL defers). */
-export async function updateMenuItem(
+export function listAdminMenu(): Promise<AdminMenuItem[]> {
+  return getDefaultMenuService().listAdminItems();
+}
+
+export function createMenuItem(input: CreateMenuItemInput): Promise<AdminMenuItem> {
+  return getDefaultMenuService().createItem(input);
+}
+
+export function updateMenuItem(
   menuItemId: string,
   input: UpdateMenuItemInput,
 ): Promise<AdminMenuItem> {
-  /* A folder change carries both halves: the id and the label it implies. */
-  const folder =
-    input.category_id !== undefined || input.category !== undefined
-      ? await resolveCategoryForWrite({
-          category_id: input.category_id ?? undefined,
-          category: input.category,
-        })
-      : null;
-
-  const res = await pool.query<{ id: string }>(
-    `UPDATE menu_items
-        SET name         = COALESCE($2, name),
-            price        = COALESCE($3, price),
-            category     = COALESCE($4, category),
-            description  = COALESCE($5, description),
-            vegetarian   = COALESCE($6, vegetarian),
-            is_available = COALESCE($7, is_available),
-            category_id  = CASE WHEN $8::boolean THEN $9 ELSE category_id END,
-            ingredients        = COALESCE($10, ingredients),
-            spice_level        = COALESCE($11, spice_level),
-            allergens          = COALESCE($12, allergens),
-            diet_tags          = COALESCE($13, diet_tags),
-            portion_description = COALESCE($14, portion_description)
-      WHERE id = $1 AND deleted_at IS NULL
-      RETURNING id`,
-    [
-      menuItemId,
-      input.name !== undefined ? input.name.trim() : null,
-      input.price ?? null,
-      folder ? folder.category : null,
-      input.description !== undefined ? input.description.trim() : null,
-      input.vegetarian ?? null,
-      input.is_available ?? null,
-      folder !== null,
-      folder ? folder.category_id : null,
-      input.ingredients ?? null,
-      input.spice_level ?? null,
-      input.allergens ?? null,
-      input.diet_tags ?? null,
-      input.portion_description !== undefined ? input.portion_description.trim() : null,
-    ],
-  );
-
-  if (!res.rows[0]) {
-    throw new AppError(404, "MENU_ITEM_NOT_FOUND", "Unknown menu item.");
-  }
-
-  const updated = await getAdminMenuItem(menuItemId);
-
-  /* The console's 86 switch must behave exactly like E14: anything still
-     PENDING that contains this dish is refused automatically. Without this,
-     a manager could take a dish off the menu while a fired round sat waiting
-     for it, and the kitchen would have no way to say so. */
-  if (input.is_available === false) {
-    await denyPendingOrdersForItem(menuItemId, updated.name);
-  }
-
-  return updated;
+  return getDefaultMenuService().updateItem(menuItemId, input);
 }
 
-/* DELETE /api/v1/admin/menu/:menu_item_id — soft delete (order history keeps
-   pointing at the row, and ON DELETE RESTRICT would refuse a hard delete).
-   Archiving also marks the dish unavailable, so any PENDING round holding it
-   is denied with the same reason as an E14 86. */
-export async function archiveMenuItem(menuItemId: string): Promise<{ menu_item_id: string }> {
-  const res = await pool.query<{ id: string; name: string }>(
-    `UPDATE menu_items
-        SET deleted_at = now(), is_available = false
-      WHERE id = $1 AND deleted_at IS NULL
-      RETURNING id, name`,
-    [menuItemId],
-  );
-
-  const row = res.rows[0];
-  if (!row) {
-    throw new AppError(404, "MENU_ITEM_NOT_FOUND", "Unknown menu item.");
-  }
-
-  await denyPendingOrdersForItem(row.id, row.name);
-
-  return { menu_item_id: row.id };
+export function archiveMenuItem(menuItemId: string): Promise<{ menu_item_id: string }> {
+  return getDefaultMenuService().archiveItem(menuItemId);
 }
 
 // ---------------------------------------------------------------------------
