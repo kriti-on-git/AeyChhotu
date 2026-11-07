@@ -1,19 +1,29 @@
 /* Conversation module — service.
 
    The service owns the room rules and nothing else:
-     * authorize the guest against the table roster before every read/write;
+     * authorize the participant credential BEFORE any read/write, inside the
+       same transaction that writes, after Table has locked the table row;
      * one conversation per seating;
      * one message per client retry key;
      * one active voice interaction, owned by participant + device;
      * AI context is the persisted transcript, and tool calls go through the
        injected tool port (which calls existing business services).
 
-   It never touches SQL or Socket.IO. Broadcast failures are reported through
-   onPublishError, because a saved message must not be rolled back by a phone
-   that happened to be offline. */
+   PHASE 5.2 CHANGES
+     * authorization is `X-Participant-Token` only. The table pass and a
+       client-supplied participant id no longer authorize anything.
+     * every write is transactional and writes its realtime event to the
+       outbox in the same transaction. The service never publishes directly.
+     * the guest message commits BEFORE the AI provider is called, and the
+       assistant reply is inserted in a NEW transaction that revalidates the
+       same seating and conversation. A clear that wins the race makes the
+       late reply a no-op: no row, no outbox event, no recreated conversation. */
 
 import { AppError } from "../../errors/app-error.js";
 import { iso } from "../../lib/util.js";
+import type { DbTransaction } from "../../infrastructure/database/DatabaseManager.js";
+import type { ConversationOutboxPort } from "../realtime-outbox/realtime-outbox.types.js";
+import type { ParticipantPrincipal } from "../table/table.types.js";
 import type {
   AiContextMessage,
   AiToolResult,
@@ -25,7 +35,7 @@ import type {
   ConversationMembership,
   ConversationMessage,
   ConversationMessageRow,
-  ConversationRealtimePort,
+  ConversationParticipantPort,
   ConversationRepositoryPort,
   ConversationRow,
   ConversationServicePort,
@@ -34,7 +44,6 @@ import type {
   PostMessageResult,
   VoiceInteraction,
   VoiceInteractionRow,
-  VoiceStatus,
 } from "./conversation.types.js";
 
 const TRANSCRIPT_LIMIT = 200;
@@ -43,10 +52,12 @@ const AI_TOOL_ROUNDS = 4;
 
 export interface ConversationServiceDeps {
   readonly repository: ConversationRepositoryPort;
-  readonly realtime: ConversationRealtimePort;
+  /** Table's transactional participant guard. */
+  readonly participants: ConversationParticipantPort;
   readonly tools: ConversationToolPort;
+  /** Written in the same transaction as each business row. */
+  readonly outbox: ConversationOutboxPort;
   readonly aiProvider?: ConversationAiProvider | null;
-  readonly onPublishError?: (err: unknown) => void;
 }
 
 function conversationDto(row: ConversationRow): Conversation {
@@ -139,6 +150,16 @@ function voiceDto(row: VoiceInteractionRow): VoiceInteraction {
   };
 }
 
+function membershipOf(principal: ParticipantPrincipal): ConversationMembership {
+  return {
+    table_id: principal.table_id,
+    table_code: principal.table_code,
+    session_started_at: principal.session_started_at,
+    participant_id: principal.participant_id,
+    participant_name: principal.name,
+  };
+}
+
 function sameSeating(left: ConversationRow, right: ConversationMembership): boolean {
   return (
     left.table_id === right.table_id &&
@@ -148,17 +169,17 @@ function sameSeating(left: ConversationRow, right: ConversationMembership): bool
 
 export class ConversationService implements ConversationServicePort {
   private readonly repository: ConversationRepositoryPort;
-  private readonly realtime: ConversationRealtimePort;
+  private readonly participants: ConversationParticipantPort;
   private readonly tools: ConversationToolPort;
+  private readonly outbox: ConversationOutboxPort;
   private readonly aiProvider: ConversationAiProvider | null;
-  private readonly onPublishError: (err: unknown) => void;
 
   constructor(deps: ConversationServiceDeps) {
     this.repository = deps.repository;
-    this.realtime = deps.realtime;
+    this.participants = deps.participants;
     this.tools = deps.tools;
+    this.outbox = deps.outbox;
     this.aiProvider = deps.aiProvider ?? null;
-    this.onPublishError = deps.onPublishError ?? (() => undefined);
   }
 
   /* ------------------------------------------------------------- access */
@@ -167,11 +188,14 @@ export class ConversationService implements ConversationServicePort {
     conversation: Conversation;
     messages: ConversationMessage[];
   }> {
-    const membership = await this.requireMembership(credentials);
-    const row = await this.repository.findOrCreateConversation(
-      membership.table_id,
-      membership.session_started_at,
-    );
+    const row = await this.repository.transaction(async (tx) => {
+      const membership = await this.requireMembership(tx, credentials);
+      return this.repository.findOrCreateConversation(
+        tx,
+        membership.table_id,
+        membership.session_started_at,
+      );
+    });
     return this.view(row);
   }
 
@@ -179,8 +203,10 @@ export class ConversationService implements ConversationServicePort {
     conversationId: string,
     credentials: ConversationCredentials,
   ): Promise<{ conversation: Conversation; messages: ConversationMessage[] }> {
-    const membership = await this.requireMembership(credentials);
-    const conversation = await this.requireConversation(conversationId, membership);
+    const conversation = await this.repository.transaction(async (tx) => {
+      const membership = await this.requireMembership(tx, credentials);
+      return this.requireConversation(tx, conversationId, membership);
+    });
     return this.view(conversation);
   }
 
@@ -191,9 +217,6 @@ export class ConversationService implements ConversationServicePort {
     credentials: ConversationCredentials,
     input: PostMessageInput,
   ): Promise<PostMessageResult> {
-    const membership = await this.requireMembership(credentials);
-    const conversation = await this.requireConversation(conversationId, membership);
-
     const text = input.text.trim();
     if (!text) {
       throw new AppError(400, "VALIDATION_ERROR", "A message cannot be empty.", {
@@ -207,51 +230,82 @@ export class ConversationService implements ConversationServicePort {
     }
 
     const kind = input.kind ?? "text";
-    if (kind === "voice") {
-      await this.assertVoiceOwnership(conversationId, membership, input);
-    }
 
-    const clientMessageId = input.client_message_id?.trim() || null;
-    if (clientMessageId !== null) {
-      const existing = await this.repository.findMessageByClientId(
+    /* Transaction 1: authorize under the table lock, then persist the guest
+       turn AND its outbox row atomically. Nothing external happens here. */
+    const prepared = await this.repository.transaction(async (tx) => {
+      const membership = await this.requireMembership(tx, credentials);
+      const conversation = await this.requireConversation(tx, conversationId, membership);
+
+      if (kind === "voice") {
+        await this.assertVoiceOwnership(tx, conversationId, membership, input);
+      }
+
+      const clientMessageId = input.client_message_id?.trim() || null;
+      if (clientMessageId !== null) {
+        const existing = await this.repository.findMessageByClientId(
+          tx,
+          conversationId,
+          clientMessageId,
+        );
+        if (existing) {
+          return { duplicate: existing, row: null, membership, conversation };
+        }
+      }
+
+      const row = await this.repository.insertMessage(tx, {
         conversationId,
+        tableId: conversation.table_id,
+        role: "guest",
+        kind,
+        participantId: membership.participant_id,
+        participantName: membership.participant_name,
+        text,
         clientMessageId,
-      );
-      if (existing) return this.duplicateResult(conversationId, existing);
-    }
+        replyToMessageId: null,
+        actions: [],
+        metadata: { origin_participant_id: membership.participant_id },
+      });
 
-    const row = await this.repository.insertMessage({
-      conversationId,
-      tableId: conversation.table_id,
-      role: "guest",
-      kind,
-      participantId: membership.participant_id,
-      participantName: membership.participant_name,
-      text,
-      clientMessageId,
-      replyToMessageId: null,
-      actions: [],
-      metadata: { origin_participant_id: membership.participant_id },
+      if (row === null) {
+        if (clientMessageId === null) {
+          throw new AppError(409, "DUPLICATE_MESSAGE", "The message was already stored.");
+        }
+        const existing = await this.repository.findMessageByClientId(
+          tx,
+          conversationId,
+          clientMessageId,
+        );
+        if (!existing) {
+          throw new AppError(409, "DUPLICATE_MESSAGE", "The message was already stored.");
+        }
+        return { duplicate: existing, row: null, membership, conversation };
+      }
+
+      await this.outbox.enqueueConversationEvent(tx, {
+        tableId: conversation.table_id,
+        sessionStartedAt: conversation.session_started_at,
+        conversationId,
+        event: "conversation.message.created",
+        payload: {
+          table_id: conversation.table_id,
+          conversation_id: conversationId,
+          message: messageDto(row),
+        },
+      });
+
+      return { duplicate: null, row, membership, conversation };
     });
 
-    if (row === null) {
-      // A concurrent retry with the same key won. Return its message and the
-      // answer already produced for it; never run the AI a second time.
-      if (clientMessageId === null) {
-        throw new AppError(409, "DUPLICATE_MESSAGE", "The message was already stored.");
-      }
-      const existing = await this.repository.findMessageByClientId(
-        conversationId,
-        clientMessageId,
-      );
-      if (!existing) {
-        throw new AppError(409, "DUPLICATE_MESSAGE", "The message was already stored.");
-      }
-      return this.duplicateResult(conversationId, existing);
+    if (prepared.duplicate !== null) {
+      return this.duplicateResult(conversationId, prepared.duplicate);
     }
 
-    const guestMessage = messageDto(row);
-    this.publish(conversation.table_id, "conversation.message.created", guestMessage);
+    const guestRow = prepared.row;
+    if (guestRow === null) {
+      throw new AppError(409, "DUPLICATE_MESSAGE", "The message was already stored.");
+    }
+    const guestMessage = messageDto(guestRow);
 
     if (this.aiProvider === null) {
       return {
@@ -262,9 +316,10 @@ export class ConversationService implements ConversationServicePort {
       };
     }
 
+    /* Provider work happens OUTSIDE every transaction. */
     let turn: { text: string; actions: ConversationAction[]; toolRounds: number };
     try {
-      turn = await this.answer(conversation, membership);
+      turn = await this.answer(prepared.conversation, prepared.membership, credentials);
     } catch (err) {
       if (err instanceof AppError) throw err;
       throw new AppError(
@@ -284,41 +339,81 @@ export class ConversationService implements ConversationServicePort {
     }
 
     const voice = kind === "voice" ? input : null;
-    const assistantRow = await this.repository.insertMessage({
-      conversationId,
-      tableId: conversation.table_id,
-      role: "assistant",
-      kind,
-      participantId: null,
-      participantName: "Chhotu",
-      text: turn.text.trim(),
-      clientMessageId: null,
-      replyToMessageId: row.id,
-      actions: turn.actions,
-      metadata: {
-        tool_rounds: turn.toolRounds,
-        origin_participant_id: membership.participant_id,
-        ...(voice
-          ? {
-              voice_interaction_id: voice.voice_interaction_id,
-              voice_playback_device_id: voice.device_id ?? null,
-              voice_playback_participant_id: membership.participant_id,
-            }
-          : {}),
-      },
+
+    /* Transaction 2: revalidate the SAME seating/conversation. A clear or a
+       new seating that committed during the provider call makes this a
+       no-op; it can never recreate a deleted conversation. */
+    const assistantRow = await this.repository.transaction(async (tx) => {
+      const membership = await this.resolveMembership(tx, credentials);
+      if (membership === null) return null;
+      if (membership.table_id !== prepared.membership.table_id) return null;
+      if (
+        membership.session_started_at.getTime() !==
+        prepared.membership.session_started_at.getTime()
+      ) {
+        return null;
+      }
+
+      const conversation = await this.repository.findConversation(tx, conversationId);
+      if (conversation === null || !sameSeating(conversation, membership)) return null;
+
+      const row = await this.repository.insertMessage(tx, {
+        conversationId,
+        tableId: conversation.table_id,
+        role: "assistant",
+        kind,
+        participantId: null,
+        participantName: "Chhotu",
+        text: turn.text.trim(),
+        clientMessageId: null,
+        replyToMessageId: guestRow.id,
+        actions: turn.actions,
+        metadata: {
+          tool_rounds: turn.toolRounds,
+          origin_participant_id: membership.participant_id,
+          ...(voice
+            ? {
+                voice_interaction_id: voice.voice_interaction_id,
+                voice_playback_device_id: voice.device_id ?? null,
+                voice_playback_participant_id: membership.participant_id,
+              }
+            : {}),
+        },
+      });
+
+      if (row === null) return null;
+
+      await this.outbox.enqueueConversationEvent(tx, {
+        tableId: conversation.table_id,
+        sessionStartedAt: conversation.session_started_at,
+        conversationId,
+        event: "conversation.message.created",
+        payload: {
+          table_id: conversation.table_id,
+          conversation_id: conversationId,
+          message: messageDto(row),
+        },
+      });
+
+      return row;
     });
 
     if (assistantRow === null) {
-      throw new AppError(500, "INTERNAL_ERROR", "The assistant reply could not be stored.");
+      /* Late response after clear/new seating: discard it silently. The guest
+         message that committed before the clear is handled by the clear
+         transaction itself. */
+      return {
+        conversation_id: conversationId,
+        message: guestMessage,
+        assistant: null,
+        duplicate: false,
+      };
     }
-
-    const assistant = messageDto(assistantRow);
-    this.publish(conversation.table_id, "conversation.message.created", assistant);
 
     return {
       conversation_id: conversationId,
       message: guestMessage,
-      assistant,
+      assistant: messageDto(assistantRow),
       duplicate: false,
     };
   }
@@ -330,8 +425,6 @@ export class ConversationService implements ConversationServicePort {
     credentials: ConversationCredentials,
     deviceId: string,
   ): Promise<VoiceInteraction> {
-    const membership = await this.requireMembership(credentials);
-    const conversation = await this.requireConversation(conversationId, membership);
     const device = deviceId.trim();
     if (!device) {
       throw new AppError(400, "VALIDATION_ERROR", "A device id is required.", {
@@ -339,34 +432,49 @@ export class ConversationService implements ConversationServicePort {
       });
     }
 
-    const row = await this.repository.insertVoice({
-      conversationId,
-      participantId: membership.participant_id,
-      deviceId: device,
+    const row = await this.repository.transaction(async (tx) => {
+      const membership = await this.requireMembership(tx, credentials);
+      const conversation = await this.requireConversation(tx, conversationId, membership);
+
+      const inserted = await this.repository.insertVoice(tx, {
+        conversationId,
+        participantId: membership.participant_id,
+        deviceId: device,
+      });
+
+      if (inserted === null) {
+        const active = await this.repository.findActiveVoice(tx, conversationId);
+        throw new AppError(
+          409,
+          "VOICE_IN_PROGRESS",
+          "Someone else is already using the table's voice line.",
+          active
+            ? {
+                interaction_id: active.id,
+                initiator_participant_id: active.initiator_participant_id,
+                initiator_device_id: active.initiator_device_id,
+              }
+            : undefined,
+        );
+      }
+
+      await this.outbox.enqueueConversationEvent(tx, {
+        tableId: conversation.table_id,
+        sessionStartedAt: conversation.session_started_at,
+        conversationId,
+        event: "conversation.voice.started",
+        payload: {
+          table_id: conversation.table_id,
+          conversation_id: conversationId,
+          interaction: voiceDto(inserted),
+          playback_scope: "initiator",
+        },
+      });
+
+      return inserted;
     });
 
-    if (row === null) {
-      const active = await this.repository.findActiveVoice(conversationId);
-      throw new AppError(
-        409,
-        "VOICE_IN_PROGRESS",
-        "Someone else is already using the table's voice line.",
-        active
-          ? {
-              interaction_id: active.id,
-              initiator_participant_id: active.initiator_participant_id,
-              initiator_device_id: active.initiator_device_id,
-            }
-          : undefined,
-      );
-    }
-
-    const dto = voiceDto(row);
-    this.publish(conversation.table_id, "conversation.voice.started", {
-      ...dto,
-      playback_scope: "initiator",
-    });
-    return dto;
+    return voiceDto(row);
   }
 
   async endVoice(
@@ -375,57 +483,79 @@ export class ConversationService implements ConversationServicePort {
     credentials: ConversationCredentials,
     deviceId: string,
   ): Promise<VoiceInteraction> {
-    const membership = await this.requireMembership(credentials);
-    const conversation = await this.requireConversation(conversationId, membership);
-    const voice = await this.repository.findVoice(interactionId);
+    const device = deviceId.trim();
 
-    if (!voice || voice.conversation_id !== conversationId) {
-      throw new AppError(404, "VOICE_NOT_FOUND", "Unknown voice interaction.");
-    }
-    if (
-      voice.initiator_participant_id !== membership.participant_id ||
-      voice.initiator_device_id !== deviceId.trim()
-    ) {
-      throw new AppError(
-        403,
-        "VOICE_NOT_INITIATOR",
-        "Only the guest who started this voice interaction can end it.",
-      );
-    }
+    const row = await this.repository.transaction(async (tx) => {
+      const membership = await this.requireMembership(tx, credentials);
+      const conversation = await this.requireConversation(tx, conversationId, membership);
+      const voice = await this.repository.findVoice(tx, interactionId);
 
-    if (voice.status !== "active") return voiceDto(voice);
+      if (!voice || voice.conversation_id !== conversationId) {
+        throw new AppError(404, "VOICE_NOT_FOUND", "Unknown voice interaction.");
+      }
+      if (
+        voice.initiator_participant_id !== membership.participant_id ||
+        voice.initiator_device_id !== device
+      ) {
+        throw new AppError(
+          403,
+          "VOICE_NOT_INITIATOR",
+          "Only the guest who started this voice interaction can end it.",
+        );
+      }
 
-    const ended = await this.repository.endVoice({
-      interactionId,
-      conversationId,
-      participantId: membership.participant_id,
-      deviceId: deviceId.trim(),
+      if (voice.status !== "active") return voice;
+
+      const ended = await this.repository.endVoice(tx, {
+        interactionId,
+        conversationId,
+        participantId: membership.participant_id,
+        deviceId: device,
+      });
+
+      if (ended === null) {
+        const current = await this.repository.findVoice(tx, interactionId);
+        if (current && current.status === "completed") return current;
+        throw new AppError(409, "VOICE_NOT_ACTIVE", "That voice interaction is no longer active.");
+      }
+
+      await this.outbox.enqueueConversationEvent(tx, {
+        tableId: conversation.table_id,
+        sessionStartedAt: conversation.session_started_at,
+        conversationId,
+        event: "conversation.voice.ended",
+        payload: {
+          table_id: conversation.table_id,
+          conversation_id: conversationId,
+          interaction: voiceDto(ended),
+          playback_scope: "initiator",
+        },
+      });
+
+      return ended;
     });
 
-    if (ended === null) {
-      const current = await this.repository.findVoice(interactionId);
-      if (current && current.status === "completed") return voiceDto(current);
-      throw new AppError(409, "VOICE_NOT_ACTIVE", "That voice interaction is no longer active.");
-    }
-
-    const dto = voiceDto(ended);
-    this.publish(conversation.table_id, "conversation.voice.ended", {
-      ...dto,
-      playback_scope: "initiator",
-    });
-    return dto;
+    return voiceDto(row);
   }
 
   /* ------------------------------------------------------------- internal */
 
+  private async resolveMembership(
+    tx: DbTransaction,
+    credentials: ConversationCredentials,
+  ): Promise<ConversationMembership | null> {
+    const principal = await this.participants.authorizeParticipantInTransaction(
+      tx,
+      credentials.participantToken,
+    );
+    return principal === null ? null : membershipOf(principal);
+  }
+
   private async requireMembership(
+    tx: DbTransaction,
     credentials: ConversationCredentials,
   ): Promise<ConversationMembership> {
-    const membership = await this.repository.findMembership(
-      credentials.tableToken,
-      credentials.sessionSecret,
-      credentials.participantId,
-    );
+    const membership = await this.resolveMembership(tx, credentials);
     if (membership === null) {
       throw new AppError(
         403,
@@ -437,10 +567,11 @@ export class ConversationService implements ConversationServicePort {
   }
 
   private async requireConversation(
+    tx: DbTransaction,
     conversationId: string,
     membership: ConversationMembership,
   ): Promise<ConversationRow> {
-    const conversation = await this.repository.findConversation(conversationId);
+    const conversation = await this.repository.findConversation(tx, conversationId);
     if (conversation === null || !sameSeating(conversation, membership)) {
       // NotFound also for an old seating: the next party must not learn that
       // a previous conversation exists.
@@ -477,7 +608,35 @@ export class ConversationService implements ConversationServicePort {
     };
   }
 
+  private async assertSeatingActive(
+    conversation: ConversationRow,
+    credentials: ConversationCredentials,
+  ): Promise<void> {
+    const active = await this.repository.transaction(async (tx) => {
+      const membership = await this.resolveMembership(tx, credentials);
+      if (membership === null) return false;
+      if (membership.table_id !== conversation.table_id) return false;
+      if (
+        membership.session_started_at.getTime() !==
+        conversation.session_started_at.getTime()
+      ) {
+        return false;
+      }
+      const current = await this.repository.findConversation(tx, conversation.id);
+      return current !== null && sameSeating(current, membership);
+    });
+
+    if (!active) {
+      throw new AppError(
+        409,
+        "SESSION_ENDED",
+        "This table session ended before the assistant finished.",
+      );
+    }
+  }
+
   private async assertVoiceOwnership(
+    tx: DbTransaction,
     conversationId: string,
     membership: ConversationMembership,
     input: PostMessageInput,
@@ -491,7 +650,7 @@ export class ConversationService implements ConversationServicePort {
       );
     }
 
-    const voice = await this.repository.findVoice(input.voice_interaction_id);
+    const voice = await this.repository.findVoice(tx, input.voice_interaction_id);
     if (!voice || voice.conversation_id !== conversationId) {
       throw new AppError(404, "VOICE_NOT_FOUND", "Unknown voice interaction.");
     }
@@ -513,6 +672,7 @@ export class ConversationService implements ConversationServicePort {
   private async answer(
     conversation: ConversationRow,
     membership: ConversationMembership,
+    credentials: ConversationCredentials,
   ): Promise<{ text: string; actions: ConversationAction[]; toolRounds: number }> {
     const rows = await this.repository.listMessages(conversation.id, AI_CONTEXT_LIMIT);
     const messages: AiContextMessage[] = rows
@@ -529,7 +689,7 @@ export class ConversationService implements ConversationServicePort {
     for (let round = 0; round <= AI_TOOL_ROUNDS; round += 1) {
       const turn: AiTurn = await this.aiProvider!.respond({
         conversation: conversationDto(conversation),
-        membership,
+        participant_name: membership.participant_name,
         messages,
         tools: this.tools.declarations,
         ...(toolResults ? { tool_results: toolResults } : {}),
@@ -547,6 +707,10 @@ export class ConversationService implements ConversationServicePort {
 
       const results: AiToolResult[] = [];
       for (const call of calls) {
+        /* Re-authorize against the live seating immediately before each tool.
+           A clear/revocation during the provider call therefore cannot let a
+           queued tool mutate the next party's table. */
+        await this.assertSeatingActive(conversation, credentials);
         const execution = await this.tools.execute(call.name, call.arguments, {
           tableToken: membership.table_code,
           participantName: membership.participant_name,
@@ -568,14 +732,4 @@ export class ConversationService implements ConversationServicePort {
       "The assistant could not finish its tool work. Your message was saved.",
     );
   }
-
-  private publish(tableId: string, event: string, data: unknown): void {
-    try {
-      this.realtime.toTable(tableId, event, data);
-    } catch (err) {
-      this.onPublishError(err);
-    }
-  }
 }
-
-export type { VoiceStatus };

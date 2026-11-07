@@ -2,40 +2,48 @@
 
    Health and self-test are read-only catalog probes. They never create a
    conversation, send a message, start a voice interaction or call the AI
-   provider, so a check cannot perturb a live table. */
+   provider, so a check cannot perturb a live table.
+
+   The module exposes a `cleanup` port. Table's clear transaction calls it
+   with the SAME `DbTransaction`, which is what makes conversation purge and
+   table reset atomic. */
 
 import type {
   ComponentHealth,
   ManagedComponent,
   SelfTestResult,
 } from "../../bootstrap/lifecycle.js";
-import type { DbPort } from "../../infrastructure/database/DatabaseManager.js";
+import type { DbPort, DbTransaction } from "../../infrastructure/database/DatabaseManager.js";
+import type { ConversationOutboxPort } from "../realtime-outbox/realtime-outbox.types.js";
+import type { SessionCleanupPort } from "../table/index.js";
 import { ConversationRepository } from "./conversation.repository.js";
 import { ConversationService } from "./conversation.service.js";
 import { ConversationToolset } from "./conversation.tools.js";
 import type {
   ConversationAiProvider,
   ConversationBusinessPorts,
-  ConversationRealtimePort,
+  ConversationParticipantPort,
   ConversationSchemaPresence,
   ConversationServicePort,
 } from "./conversation.types.js";
 
 export interface ConversationModuleOptions {
   readonly db: DbPort;
-  readonly realtime: ConversationRealtimePort;
+  readonly participants: ConversationParticipantPort;
+  readonly outbox: ConversationOutboxPort;
   readonly menu: ConversationBusinessPorts["menu"];
   readonly cart: ConversationBusinessPorts["cart"];
   readonly orders: ConversationBusinessPorts["orders"];
   readonly tables: ConversationBusinessPorts["tables"];
   readonly aiProvider?: ConversationAiProvider | null;
-  readonly onPublishError?: (err: unknown) => void;
 }
 
 export interface ConversationModule extends ManagedComponent {
   readonly name: "conversation";
   readonly dependencies: readonly string[];
   readonly service: ConversationServicePort;
+  /** Shared with Table's clear transaction. */
+  readonly cleanup: SessionCleanupPort;
   health(): Promise<ComponentHealth>;
   selfTest(): Promise<SelfTestResult>;
   diagnostics(): unknown;
@@ -53,11 +61,16 @@ export function createConversationModule(
   });
   const service = new ConversationService({
     repository,
-    realtime: options.realtime,
+    participants: options.participants,
     tools,
+    outbox: options.outbox,
     aiProvider: options.aiProvider ?? null,
-    onPublishError: options.onPublishError,
   });
+
+  const cleanup: SessionCleanupPort = {
+    purgeSeating: (tx: DbTransaction, tableId: string, sessionStartedAt: Date | null) =>
+      repository.purgeSeating(tx, tableId, sessionStartedAt),
+  };
 
   let lastSchema: ConversationSchemaPresence | null = null;
 
@@ -71,6 +84,7 @@ export function createConversationModule(
     name: "conversation",
     dependencies: ["database"],
     service,
+    cleanup,
 
     async health(): Promise<ComponentHealth> {
       try {

@@ -55,6 +55,8 @@ export const env = {
   staffPin: config.staffPin,
   adminPin: config.adminPin,
   kdsTokenSecret: config.kdsTokenSecret,
+  trustProxy: config.trustProxy,
   supabaseJwtSecret: config.supabaseJwtSecret,
   geminiApiKey: config.geminiApiKey,
+  geminiTextModel: config.geminiTextModel,
 } as const;

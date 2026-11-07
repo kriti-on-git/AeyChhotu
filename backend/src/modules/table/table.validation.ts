@@ -5,6 +5,7 @@
    cart and order contracts share the same capability format. */
 
 import { z } from "zod";
+import { uuid } from "../../validation/primitives.js";
 import { tableToken } from "../../validation/primitives.js";
 
 /* When the CLIENT opened the page. Older than last_cleared_at ⇒ STALE_SESSION. */
@@ -79,6 +80,18 @@ export const heartbeatSchema = z.object({
     .trim()
     .min(1, "device_id is required.")
     .max(64, "device_id must be 64 characters or fewer."),
+});
+
+/** Server-issued participant bearer credential (Phase 5.2). */
+export const participantTokenSchema = z
+  .string()
+  .trim()
+  .regex(/^pc_[A-Za-z0-9_-]{43}$/, "Must be a participant credential issued by this server.");
+
+/** POST /api/v1/sessions/:table_token/participants/:participant_id/revoke */
+export const participantRevokeParamsSchema = z.object({
+  table_token: tableToken,
+  participant_id: uuid("participant_id"),
 });
 
 /** POST /api/v1/sessions/:table_token/feedback — a session-scoped review. */

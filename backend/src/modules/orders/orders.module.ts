@@ -22,12 +22,14 @@ import type {
   OrdersSchemaPresence,
   OrdersServicePort,
   OrdersTablePort,
+  OrdersWorkflowPort,
 } from "./orders.types.js";
 
 export interface OrdersModuleOptions {
   readonly db: DbPort;
   readonly tables: OrdersTablePort;
   readonly events?: OrdersEventPublisher;
+  readonly workflow?: OrdersWorkflowPort;
   readonly onPublishError?: (err: unknown) => void;
 }
 
@@ -41,7 +43,7 @@ export interface OrdersModule extends ManagedComponent {
 }
 
 export function createOrdersModule(options: OrdersModuleOptions): OrdersModule {
-  const repository = new OrdersRepository(options.db);
+  const repository = new OrdersRepository(options.db, options.workflow);
   const service = new OrdersService({
     repository,
     tables: options.tables,

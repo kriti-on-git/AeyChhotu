@@ -53,6 +53,71 @@ export interface TableMemberInput {
   name: string;
 }
 
+/** The roster row as stored. `id` is the participant identity; `user_id` is
+    never exposed over HTTP after Phase 5.2. */
+export type MemberIdentityRow = {
+  id: string;
+  user_id: string;
+  name: string;
+  joined_at: Date;
+};
+
+/** Server-issued participant credential. The raw token appears only here and
+    in the grant response; the database stores its SHA-256 digest. */
+export interface ParticipantCredential {
+  participant_id: string;
+  participant_token: string;
+  participant_expires_at: string;
+}
+
+/** Internal issuance result (token still unhashed, expiry as a DB timestamp). */
+export interface ParticipantTokenIssuance {
+  participant_token: string;
+  participant_expires_at: Date;
+}
+
+/**
+ * A validated participant principal. Derived entirely from the credential and
+ * the server-side roster; never from a request body or header other than the
+ * token itself.
+ */
+export interface ParticipantPrincipal {
+  participant_id: string;
+  /** Internal only: the legacy device identity. Never returned over HTTP. */
+  user_id: string;
+  name: string;
+  table_id: string;
+  table_code: string;
+  session_started_at: Date;
+}
+
+/** Clear-time cleanup that must share the clear transaction. */
+export interface SessionCleanupPort {
+  purgeSeating(
+    tx: DbTransaction,
+    tableId: string,
+    sessionStartedAt: Date | null,
+  ): Promise<void>;
+}
+
+/** The two outbox writes Table owns, both inside the clear transaction. */
+export interface TableSessionOutboxPort {
+  suppressConversationEvents(
+    tx: DbTransaction,
+    tableId: string,
+    sessionStartedAt: Date | null,
+  ): Promise<void>;
+  enqueueSessionEnded(
+    tx: DbTransaction,
+    input: {
+      tableId: string;
+      sessionStartedAt: Date | null;
+      reason: "auto_release" | "staff_clear" | "admin_clear";
+      billStatus: BillStatus;
+    },
+  ): Promise<void>;
+}
+
 /** Extra context every session entry point accepts. */
 export interface SessionEntryOptions {
   /** When the CLIENT opened the page. Older than last_cleared_at ⇒ stale. */
@@ -72,6 +137,11 @@ export interface GrantedSession {
   bill_status: BillStatus;
   realtime_token: string | null;
   gemini_api_key: string | null;
+  /** Server-issued credential; null only for deployments without a token
+      store (compatibility seam) or when no member identity was supplied. */
+  participant_id: string | null;
+  participant_token: string | null;
+  participant_expires_at: string | null;
 }
 
 /** The reply to a scan of a table that already has a live session. */
@@ -83,6 +153,10 @@ export interface LockedSession {
   pin_locked: boolean;
   attempts_remaining: number;
   realtime_token: null;
+  /** A live table never hands a credential to a new scanner. */
+  participant_id: null;
+  participant_token: null;
+  participant_expires_at: null;
 }
 
 export type InitializeResult = GrantedSession | LockedSession;
@@ -131,7 +205,7 @@ export interface TableStateResult {
 }
 
 export interface TableMember {
-  user_id: string;
+  participant_id: string;
   name: string;
   joined_at: string;
 }
@@ -182,6 +256,7 @@ export type TableStateRow = {
 };
 
 export type MemberRow = {
+  id: string;
   user_id: string;
   name: string;
   joined_at: Date;
@@ -224,13 +299,24 @@ export interface TableRepositoryPort {
     tx: DbTransaction,
     tableId: string,
     member: TableMemberInput | undefined,
-  ): Promise<void>;
+  ): Promise<MemberIdentityRow | null>;
   /** Reconnect is best-effort: a roster write must not fail a valid refresh. */
-  upsertMemberBestEffort(tableId: string, member: TableMemberInput | undefined): Promise<void>;
+  upsertMemberBestEffort(
+    tableId: string,
+    member: TableMemberInput | undefined,
+  ): Promise<MemberIdentityRow | null>;
   listMembers(tableId: string): Promise<MemberRow[]>;
 
-  recordHeartbeat(tableId: string, deviceId: string): Promise<PresenceRow | null>;
-  removePresence(tableId: string, deviceId: string): Promise<void>;
+  recordHeartbeat(
+    tableId: string,
+    deviceId: string,
+    participantId: string | null,
+  ): Promise<PresenceRow | null>;
+  removePresence(
+    tableId: string,
+    deviceId: string,
+    participantId: string | null,
+  ): Promise<boolean>;
 
   lockTable(tx: DbTransaction, tableId: string): Promise<LockedTableRow | null>;
   releaseCandidate(
@@ -274,14 +360,36 @@ export interface TableServicePort {
     input: { table_token: string; secret: string } & SessionEntryOptions,
   ): Promise<GrantedSession>;
   getTableState(tableToken: string): Promise<TableStateResult>;
-  listTableMembers(tableToken: string): Promise<TableMember[]>;
+  listTableMembers(tableToken: string, participantToken: string): Promise<TableMember[]>;
   activeCheck(tableToken: string): Promise<ActiveCheckResult>;
   requestTableBill(tableToken: string): Promise<BillRequestResult>;
-  recordHeartbeat(tableToken: string, deviceId: string): Promise<HeartbeatResult>;
+  recordHeartbeat(
+    tableToken: string,
+    participantToken: string,
+    deviceId: string,
+  ): Promise<HeartbeatResult>;
   removeHeartbeat(
     tableToken: string,
+    participantToken: string,
     deviceId: string,
   ): Promise<{ table_id: string; device_id: string; released: boolean }>;
+
+  /** Non-locking validation used by the realtime handshake. */
+  authorizeParticipantToken(rawToken: string): Promise<ParticipantPrincipal | null>;
+  /** Digest-only revalidation for already-connected sockets. */
+  authorizeParticipantTokenHash(tokenHash: string): Promise<ParticipantPrincipal | null>;
+  /** Locked validation used by conversation/session writes. */
+  authorizeParticipantInTransaction(
+    tx: DbTransaction,
+    rawToken: string,
+  ): Promise<ParticipantPrincipal | null>;
+  /** Self-revocation: every token the presented credential owns. */
+  revokeOwnParticipantTokens(rawToken: string): Promise<{ revoked: number }>;
+  /** Staff-authorized revocation of another participant's credentials. */
+  revokeParticipantTokensAsStaff(
+    tableToken: string,
+    participantId: string,
+  ): Promise<{ revoked: number }>;
   checkAndAutoReleaseTable(tableId: string): Promise<AutoReleaseResult>;
   clearTableSession(tableId: string, options: ClearTableConfig): Promise<ClearTableResult>;
 }

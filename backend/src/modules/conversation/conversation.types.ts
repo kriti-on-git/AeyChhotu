@@ -18,21 +18,31 @@
    SECRETS: a table session secret is accepted only for authorization. It is
    never stored in a message, returned in a DTO or given to the AI provider. */
 
-import type { RealtimePublisher } from "../../infrastructure/realtime/RealtimePublisher.js";
+import type { DbTransaction } from "../../infrastructure/database/DatabaseManager.js";
+import type { ConversationOutboxPort } from "../realtime-outbox/realtime-outbox.types.js";
 import type { CartServicePort } from "../cart/cart.types.js";
 import type { MenuServicePort } from "../menu/menu.types.js";
 import type { OrdersServicePort } from "../orders/orders.types.js";
-import type { TableServicePort } from "../table/table.types.js";
+import type { ParticipantPrincipal, TableServicePort } from "../table/table.types.js";
 
 export type ConversationRole = "guest" | "assistant" | "system";
 export type ConversationKind = "text" | "voice";
 export type VoiceStatus = "active" | "completed" | "cancelled";
 
+/* Phase 5.2: the ONLY credential is the server-issued participant token.
+   The table token and shared table pass no longer authorize a conversation,
+   and a client-supplied participant id has no effect. */
 export type ConversationCredentials = {
-  readonly tableToken: string;
-  readonly sessionSecret: string;
-  readonly participantId: string;
+  readonly participantToken: string;
 };
+
+/** The narrow transactional authorizer Table exposes to Conversation. */
+export interface ConversationParticipantPort {
+  authorizeParticipantInTransaction(
+    tx: DbTransaction,
+    rawToken: string,
+  ): Promise<ParticipantPrincipal | null>;
+}
 
 /** Resolved from the roster, never trusted from the request body. */
 export type ConversationMembership = {
@@ -179,7 +189,9 @@ export type AiTurn = {
 
 export type AiRespondInput = {
   readonly conversation: Conversation;
-  readonly membership: ConversationMembership;
+  /** Server-derived display name only. Never a table token, secret, or
+      participant credential. */
+  readonly participant_name: string;
   readonly messages: readonly AiContextMessage[];
   readonly tools: readonly AiToolDeclaration[];
   /** Present only on a continuation after tool execution. */
@@ -235,64 +247,84 @@ export interface ConversationBusinessPorts {
   readonly tables: ConversationTablePort;
 }
 
-export type ConversationRealtimePort = Pick<RealtimePublisher, "toTable">;
-
 /* ---------------------------------------------------------- repository */
 
 export interface ConversationRepositoryPort {
-  /** Validates token + pass AND proves the participant is on the roster. */
-  findMembership(
-    tableToken: string,
-    sessionSecret: string,
-    participantId: string,
-  ): Promise<ConversationMembership | null>;
+  transaction<T>(fn: (tx: DbTransaction) => Promise<T>): Promise<T>;
 
-  findConversation(conversationId: string): Promise<ConversationRow | null>;
+  findConversation(
+    tx: DbTransaction,
+    conversationId: string,
+  ): Promise<ConversationRow | null>;
   findOrCreateConversation(
+    tx: DbTransaction,
     tableId: string,
     sessionStartedAt: Date,
   ): Promise<ConversationRow>;
 
   listMessages(conversationId: string, limit: number): Promise<ConversationMessageRow[]>;
   findMessageByClientId(
+    tx: DbTransaction,
     conversationId: string,
     clientMessageId: string,
   ): Promise<ConversationMessageRow | null>;
   findAssistantReply(messageId: string): Promise<ConversationMessageRow | null>;
   /** Returns null when the dedupe constraint won the race. */
-  insertMessage(input: {
-    conversationId: string;
-    tableId: string;
-    role: ConversationRole;
-    kind: ConversationKind;
-    participantId: string | null;
-    participantName: string;
-    text: string;
-    clientMessageId: string | null;
-    replyToMessageId: string | null;
-    actions: readonly ConversationAction[];
-    metadata: Readonly<Record<string, unknown>>;
-  }): Promise<ConversationMessageRow | null>;
+  insertMessage(
+    tx: DbTransaction,
+    input: {
+      conversationId: string;
+      tableId: string;
+      role: ConversationRole;
+      kind: ConversationKind;
+      participantId: string | null;
+      participantName: string;
+      text: string;
+      clientMessageId: string | null;
+      replyToMessageId: string | null;
+      actions: readonly ConversationAction[];
+      metadata: Readonly<Record<string, unknown>>;
+    },
+  ): Promise<ConversationMessageRow | null>;
 
-  findVoice(interactionId: string): Promise<VoiceInteractionRow | null>;
-  findActiveVoice(conversationId: string): Promise<VoiceInteractionRow | null>;
+  findVoice(tx: DbTransaction, interactionId: string): Promise<VoiceInteractionRow | null>;
+  findActiveVoice(
+    tx: DbTransaction,
+    conversationId: string,
+  ): Promise<VoiceInteractionRow | null>;
   /** Null means another active interaction owns the room (unique index). */
-  insertVoice(input: {
-    conversationId: string;
-    participantId: string;
-    deviceId: string;
-  }): Promise<VoiceInteractionRow | null>;
-  endVoice(input: {
-    interactionId: string;
-    conversationId: string;
-    participantId: string;
-    deviceId: string;
-  }): Promise<VoiceInteractionRow | null>;
+  insertVoice(
+    tx: DbTransaction,
+    input: {
+      conversationId: string;
+      participantId: string;
+      deviceId: string;
+    },
+  ): Promise<VoiceInteractionRow | null>;
+  endVoice(
+    tx: DbTransaction,
+    input: {
+      interactionId: string;
+      conversationId: string;
+      participantId: string;
+      deviceId: string;
+    },
+  ): Promise<VoiceInteractionRow | null>;
+
+  /** Clear-time purge sharing Table's transaction. */
+  purgeSeating(
+    tx: DbTransaction,
+    tableId: string,
+    sessionStartedAt: Date | null,
+  ): Promise<void>;
 
   schemaObjects(): Promise<ConversationSchemaPresence>;
 }
 
 /* ------------------------------------------------------------- service */
+
+/** Conversation writes the outbox in the business transaction. */
+export type ConversationOutboxWriter = ConversationOutboxPort;
 
 export interface ConversationServicePort {
   getOrCreate(credentials: ConversationCredentials): Promise<ConversationView>;

@@ -19,6 +19,8 @@
    query generic accepts it without a cast. */
 
 import type { PageMeta } from "../../lib/util.js";
+import type { DbTransaction } from "../../infrastructure/database/DatabaseManager.js";
+import type { OrderWorkflowOutboxPort } from "../order-workflow/order-workflow.types.js";
 import type { TableServicePort } from "../table/table.types.js";
 
 /* ----------------------------------------------------------- fire_result */
@@ -181,6 +183,9 @@ export type OrdersTablePort = Pick<TableServicePort, "requireTable">;
 
 /** Internal domain facts. Implemented at the composition root over the
     in-process event bus; a publish failure can never fail the order. */
+/** The fire transaction hand-off to the durable order workflow outbox. */
+export type OrdersWorkflowPort = Pick<OrderWorkflowOutboxPort, "enqueueOrderCreated">;
+
 export interface OrdersEventPublisher {
   orderCreated(payload: { orderId: string; tableId: string; itemCount: number }): void;
   ticketCreated(payload: { ticketId: string; orderId: string; tableId: string }): void;

@@ -51,6 +51,8 @@ import {
   KITCHEN_ROOM,
   LEAVE_CHANNEL,
   MAX_PAYLOAD_CHARS,
+  MENU_ROOM,
+  publicMenuPayload,
   READY_CHANNEL,
   ROOM_PATTERN,
   SERVER_EVENT_CHANNEL,
@@ -76,6 +78,10 @@ export interface GuestPrincipal {
   /** Database id from the validated table session — never client-supplied. */
   readonly tableId: string;
   readonly tableToken: string;
+  /** Server-side roster identity derived from the participant credential. */
+  readonly participantId: string;
+  /** SHA-256 digest only: revalidation never needs the raw token again. */
+  readonly tokenHash: string;
 }
 
 export type RealtimePrincipal = StaffPrincipal | GuestPrincipal;
@@ -87,9 +93,10 @@ export type RealtimePrincipal = StaffPrincipal | GuestPrincipal;
 export interface RealtimeAuthenticator {
   authenticateStaff(token: string): StaffPrincipal | null;
   authenticateGuest(input: {
-    readonly tableToken: string;
-    readonly secret: string;
+    readonly participantToken: string;
   }): Promise<GuestPrincipal | null>;
+  /** Periodic check that the credential is still live for this seating. */
+  revalidateGuest?(input: { readonly tokenHash: string }): Promise<boolean>;
 }
 
 export type RealtimeState = "new" | "listening" | "closed";
@@ -110,6 +117,8 @@ interface TrackedClient {
   readonly kind: RealtimePrincipal["kind"];
   readonly role: StaffRole | null;
   readonly table_id: string | null;
+  /** Guest credential digest, used only for periodic revalidation. */
+  readonly token_hash: string | null;
   readonly connected_at: string;
   readonly rooms: Set<string>;
 }
@@ -158,7 +167,8 @@ interface RealtimeErrorPayload {
     | "INVALID_HANDSHAKE"
     | "INVALID_PAYLOAD"
     | "ROOM_FORBIDDEN"
-    | "UNKNOWN_EVENT";
+    | "UNKNOWN_EVENT"
+    | "RATE_LIMITED";
   readonly message: string;
   readonly fields?: Readonly<Record<string, string>>;
   readonly room?: string;
@@ -218,12 +228,10 @@ const handshakeSchema = z.discriminatedUnion("kind", [
   }),
   z.object({
     kind: z.literal("guest"),
-    table_token: z
+    participant_token: z
       .string()
-      .regex(/^[a-z0-9]{4,16}$/, "table_token must be a 4-16 character lowercase table token."),
-    secret: z
-      .string()
-      .regex(/^[A-Za-z0-9]{20}$/, "secret must be the 20-character table pass."),
+      .trim()
+      .regex(/^pc_[A-Za-z0-9_-]{43}$/, "A participant credential is required."),
   }),
 ]);
 
@@ -254,9 +262,11 @@ function staffRoomFor(role: StaffRole): string {
   return ADMIN_ROOM;
 }
 
-/** The complete set of rooms a principal may ever occupy. */
+/** The complete set of rooms a principal may ever occupy. A guest may only
+    see its own table room and the public catalogue; room names from the
+    client are never used unless they appear in this list. */
 export function allowedRooms(principal: RealtimePrincipal): readonly string[] {
-  if (principal.kind === "guest") return [tableRoom(principal.tableId)];
+  if (principal.kind === "guest") return [tableRoom(principal.tableId), MENU_ROOM];
   return [STAFF_ROOM, staffRoomFor(principal.role)];
 }
 
@@ -276,6 +286,9 @@ export class IOManager implements ManagedComponent, RealtimePublisher {
   private logger: Logger | null = null;
   private clock: Clock = systemClock;
   private lastError: string | null = null;
+  private revalidationTimer: NodeJS.Timeout | null = null;
+  /** Process-local handshake budget, per /64-corrected client address. */
+  private readonly handshakeBuckets = new Map<string, { count: number; resetAt: number }>();
 
   private readonly clients = new Map<string, TrackedClient>();
   private readonly counters = {
@@ -350,6 +363,12 @@ export class IOManager implements ManagedComponent, RealtimePublisher {
     });
     io.on("connection", (socket) => this.onConnection(socket));
 
+    /* Expired/revoked guest credentials are disconnected without waiting for
+       the client to reconnect. The interval is process-local, like the
+       adapter; the documented deployment is one API instance. */
+    this.revalidationTimer = setInterval(() => void this.revalidateGuests(), 60_000);
+    this.revalidationTimer.unref();
+
     this.state = "listening";
     this.logger?.info("realtime_listening", { path: this.path });
   }
@@ -357,6 +376,11 @@ export class IOManager implements ManagedComponent, RealtimePublisher {
   /** Disconnects every client, closes the Socket.IO server, is idempotent. */
   async shutdown(): Promise<void> {
     if (this.state === "closed") return;
+
+    if (this.revalidationTimer !== null) {
+      clearInterval(this.revalidationTimer);
+      this.revalidationTimer = null;
+    }
 
     const io = this.io;
     this.io = null;
@@ -383,6 +407,17 @@ export class IOManager implements ManagedComponent, RealtimePublisher {
   private async authenticate(
     socket: TypedSocket,
   ): Promise<{ principal: RealtimePrincipal } | { error: Error & { data: unknown } }> {
+    /* Handshake limiting is separate from the REST limiters: a socket never
+       passes through Express. The response is generic and never reveals
+       whether a token or table exists. */
+    if (!this.allowHandshake(socket.handshake.address)) {
+      this.counters.rejected += 1;
+      this.lastError = "handshake rate limited";
+      return {
+        error: authFailure("RATE_LIMITED", "Too many connection attempts. Please wait."),
+      };
+    }
+
     const parsed = handshakeSchema.safeParse(socket.handshake.auth);
     if (!parsed.success) {
       this.counters.rejected += 1;
@@ -391,7 +426,7 @@ export class IOManager implements ManagedComponent, RealtimePublisher {
       return {
         error: authFailure(
           "INVALID_HANDSHAKE",
-          'Provide { kind: "staff", token } or { kind: "guest", table_token, secret }.',
+          'Provide { kind: "staff", token } or { kind: "guest", participant_token }.',
         ),
       };
     }
@@ -413,8 +448,7 @@ export class IOManager implements ManagedComponent, RealtimePublisher {
     let principal: GuestPrincipal | null = null;
     try {
       principal = await this.options.authenticator.authenticateGuest({
-        tableToken: credential.table_token,
-        secret: credential.secret,
+        participantToken: credential.participant_token,
       });
     } catch (err) {
       // An infrastructure failure during validation is not a credential
@@ -452,6 +486,7 @@ export class IOManager implements ManagedComponent, RealtimePublisher {
       kind: principal.kind,
       role: principal.kind === "staff" ? principal.role : null,
       table_id: principal.kind === "guest" ? principal.tableId : null,
+      token_hash: principal.kind === "guest" ? principal.tokenHash : null,
       connected_at: this.clock.now().toISOString(),
       rooms: new Set(rooms),
     });
@@ -582,8 +617,30 @@ export class IOManager implements ManagedComponent, RealtimePublisher {
     return this.publish(STAFF_ROOM, event, data);
   }
 
+  /** Public catalogue room. Internal catalogue fields are stripped first. */
+  toMenu(event: string, data: unknown): PublishResult {
+    return this.publish(MENU_ROOM, event, publicMenuPayload(data));
+  }
+
   toRoom(room: string, event: string, data: unknown): PublishResult {
     return this.publish(room, event, data);
+  }
+
+  /** True while the transport can actually deliver. The outbox uses this so a
+      boot-time poll does not mark events published with no listener. */
+  isAvailable(): boolean {
+    return this.state === "listening" && this.io !== null;
+  }
+
+  /**
+   * Clear: the terminal `table.session.ended` event is emitted through the
+   * outbox FIRST; this runs after that publish commits and only then drops
+   * the room's sockets.
+   */
+  disconnectTable(tableId: string): void {
+    const io = this.io;
+    if (io === null || this.state !== "listening") return;
+    io.in(tableRoom(tableId)).disconnectSockets(true);
   }
 
   /**
@@ -720,5 +777,50 @@ export class IOManager implements ManagedComponent, RealtimePublisher {
 
   getState(): RealtimeState {
     return this.state;
+  }
+
+  /* ------------------------------------------------------ revalidation */
+
+  private allowHandshake(address: string | undefined): boolean {
+    const key = address && address.length > 0 ? address : "unknown";
+    const now = Date.now();
+    const windowMs = 60_000;
+    const limit = 30;
+
+    const bucket = this.handshakeBuckets.get(key);
+    if (bucket === undefined || now >= bucket.resetAt) {
+      if (this.handshakeBuckets.size > 2_000) this.handshakeBuckets.clear();
+      this.handshakeBuckets.set(key, { count: 1, resetAt: now + windowMs });
+      return true;
+    }
+
+    bucket.count += 1;
+    return bucket.count <= limit;
+  }
+
+  private async revalidateGuests(): Promise<void> {
+    const check = this.options.authenticator.revalidateGuest;
+    const io = this.io;
+    if (check === undefined || io === null) return;
+
+    for (const client of [...this.clients.values()]) {
+      if (client.kind !== "guest" || client.token_hash === null) continue;
+
+      let valid = false;
+      try {
+        valid = await check({ tokenHash: client.token_hash });
+      } catch {
+        valid = false;
+      }
+      if (valid) continue;
+
+      const socket = io.sockets.sockets.get(client.socket_id);
+      if (socket === undefined) continue;
+      socket.emit(ERROR_CHANNEL, {
+        code: "UNAUTHORIZED",
+        message: "This participant credential is no longer valid.",
+      });
+      socket.disconnect(true);
+    }
   }
 }

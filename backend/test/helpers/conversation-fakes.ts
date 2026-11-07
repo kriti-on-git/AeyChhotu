@@ -1,6 +1,11 @@
 /* Shared doubles for Conversation tests. Not a *.test.ts file, so the runner
-   never executes it. */
+   never executes it.
 
+   Phase 5.2: credentials are participant tokens only. The fake guard is the
+   single place tokens are mapped to server-side memberships, which mirrors
+   Table's transactional authorizer without a database. */
+
+import type { DbTransaction } from "../../src/infrastructure/database/DatabaseManager.js";
 import type {
   AiRespondInput,
   AiToolDeclaration,
@@ -10,6 +15,8 @@ import type {
   ConversationCredentials,
   ConversationMembership,
   ConversationMessageRow,
+  ConversationOutboxWriter,
+  ConversationParticipantPort,
   ConversationRepositoryPort,
   ConversationRow,
   ConversationToolContext,
@@ -17,6 +24,7 @@ import type {
   ConversationToolPort,
   VoiceInteractionRow,
 } from "../../src/modules/conversation/conversation.types.js";
+import type { ParticipantPrincipal } from "../../src/modules/table/table.types.js";
 import type { RealtimeEnvelope, PublishResult } from "../../src/infrastructure/realtime/RealtimePublisher.js";
 
 export const TABLE_ID = "11111111-1111-4111-8111-111111111111";
@@ -28,14 +36,16 @@ export const CONVERSATION_ID = "22222222-2222-4222-8222-222222222222";
 export const MENU_ITEM_ID = "33333333-3333-4333-8333-333333333333";
 export const CART_ITEM_ID = "44444444-4444-4444-8444-444444444444";
 
+export const TOKEN_A = `pc_${"A".repeat(43)}`;
+export const TOKEN_B = `pc_${"B".repeat(43)}`;
+export const INVALID_TOKEN = `pc_${"Z".repeat(43)}`;
+
 const SESSION_STARTED_AT = new Date("2026-01-01T10:00:00.000Z");
 
 export function credentials(participantId = PARTICIPANT_A): ConversationCredentials {
-  return {
-    tableToken: TABLE_CODE,
-    sessionSecret: TABLE_SECRET,
-    participantId,
-  };
+  if (participantId === PARTICIPANT_B) return { participantToken: TOKEN_B };
+  if (participantId === PARTICIPANT_A) return { participantToken: TOKEN_A };
+  return { participantToken: INVALID_TOKEN };
 }
 
 export function membership(participantId = PARTICIPANT_A): ConversationMembership {
@@ -48,38 +58,80 @@ export function membership(participantId = PARTICIPANT_A): ConversationMembershi
   };
 }
 
+export function principal(participantId = PARTICIPANT_A): ParticipantPrincipal {
+  return {
+    participant_id: participantId,
+    user_id: participantId === PARTICIPANT_A ? "device-a" : "device-b",
+    name: participantId === PARTICIPANT_A ? "Asha" : "Ravi",
+    table_id: TABLE_ID,
+    table_code: TABLE_CODE,
+    session_started_at: SESSION_STARTED_AT,
+  };
+}
+
+/** Maps the two fixed test tokens to roster identities. */
+export class FakeParticipantGuard implements ConversationParticipantPort {
+  sessionStartedAt = SESSION_STARTED_AT;
+  revoked = new Set<string>();
+
+  async authorizeParticipantInTransaction(
+    _tx: DbTransaction,
+    rawToken: string,
+  ): Promise<ParticipantPrincipal | null> {
+    if (this.revoked.has(rawToken)) return null;
+    const participantId =
+      rawToken === TOKEN_A ? PARTICIPANT_A : rawToken === TOKEN_B ? PARTICIPANT_B : null;
+    if (participantId === null) return null;
+    return { ...principal(participantId), session_started_at: this.sessionStartedAt };
+  }
+}
+
+export class FakeOutbox implements ConversationOutboxWriter {
+  readonly events: Array<{
+    tableId: string;
+    sessionStartedAt: Date | null;
+    conversationId: string | null;
+    event: string;
+    payload: Readonly<Record<string, unknown>>;
+  }> = [];
+
+  async enqueueConversationEvent(
+    _tx: DbTransaction,
+    input: {
+      tableId: string;
+      sessionStartedAt: Date | null;
+      conversationId: string | null;
+      event: string;
+      payload: Readonly<Record<string, unknown>>;
+    },
+  ): Promise<void> {
+    this.events.push({ ...input });
+  }
+}
+
 export class FakeConversationRepository implements ConversationRepositoryPort {
   sessionStartedAt = SESSION_STARTED_AT;
   conversation: ConversationRow | null = null;
   messages: ConversationMessageRow[] = [];
   voices: VoiceInteractionRow[] = [];
+  failPurge = false;
 
   private sequence = 0;
   private clock = 0;
 
-  async findMembership(
-    tableToken: string,
-    sessionSecret: string,
-    participantId: string,
-  ): Promise<ConversationMembership | null> {
-    if (
-      tableToken !== TABLE_CODE ||
-      sessionSecret !== TABLE_SECRET ||
-      (participantId !== PARTICIPANT_A && participantId !== PARTICIPANT_B)
-    ) {
-      return null;
-    }
-    return {
-      ...membership(participantId),
-      session_started_at: this.sessionStartedAt,
-    };
+  async transaction<T>(fn: (tx: DbTransaction) => Promise<T>): Promise<T> {
+    return fn({ query: async () => ({ rows: [], rowCount: 0 }) } as unknown as DbTransaction);
   }
 
-  async findConversation(conversationId: string): Promise<ConversationRow | null> {
+  async findConversation(
+    _tx: DbTransaction,
+    conversationId: string,
+  ): Promise<ConversationRow | null> {
     return this.conversation?.id === conversationId ? this.conversation : null;
   }
 
   async findOrCreateConversation(
+    _tx: DbTransaction,
     tableId: string,
     sessionStartedAt: Date,
   ): Promise<ConversationRow> {
@@ -104,6 +156,7 @@ export class FakeConversationRepository implements ConversationRepositoryPort {
   }
 
   async findMessageByClientId(
+    _tx: DbTransaction,
     conversationId: string,
     clientMessageId: string,
   ): Promise<ConversationMessageRow | null> {
@@ -125,19 +178,22 @@ export class FakeConversationRepository implements ConversationRepositoryPort {
     );
   }
 
-  async insertMessage(input: {
-    conversationId: string;
-    tableId: string;
-    role: ConversationMessageRow["role"];
-    kind: ConversationMessageRow["kind"];
-    participantId: string | null;
-    participantName: string;
-    text: string;
-    clientMessageId: string | null;
-    replyToMessageId: string | null;
-    actions: readonly unknown[];
-    metadata: Readonly<Record<string, unknown>>;
-  }): Promise<ConversationMessageRow | null> {
+  async insertMessage(
+    _tx: DbTransaction,
+    input: {
+      conversationId: string;
+      tableId: string;
+      role: ConversationMessageRow["role"];
+      kind: ConversationMessageRow["kind"];
+      participantId: string | null;
+      participantName: string;
+      text: string;
+      clientMessageId: string | null;
+      replyToMessageId: string | null;
+      actions: readonly unknown[];
+      metadata: Readonly<Record<string, unknown>>;
+    },
+  ): Promise<ConversationMessageRow | null> {
     if (
       input.clientMessageId !== null &&
       this.messages.some(
@@ -170,11 +226,17 @@ export class FakeConversationRepository implements ConversationRepositoryPort {
     return row;
   }
 
-  async findVoice(interactionId: string): Promise<VoiceInteractionRow | null> {
+  async findVoice(
+    _tx: DbTransaction,
+    interactionId: string,
+  ): Promise<VoiceInteractionRow | null> {
     return this.voices.find((voice) => voice.id === interactionId) ?? null;
   }
 
-  async findActiveVoice(conversationId: string): Promise<VoiceInteractionRow | null> {
+  async findActiveVoice(
+    _tx: DbTransaction,
+    conversationId: string,
+  ): Promise<VoiceInteractionRow | null> {
     return (
       this.voices.find(
         (voice) =>
@@ -183,12 +245,15 @@ export class FakeConversationRepository implements ConversationRepositoryPort {
     );
   }
 
-  async insertVoice(input: {
-    conversationId: string;
-    participantId: string;
-    deviceId: string;
-  }): Promise<VoiceInteractionRow | null> {
-    if (await this.findActiveVoice(input.conversationId)) return null;
+  async insertVoice(
+    tx: DbTransaction,
+    input: {
+      conversationId: string;
+      participantId: string;
+      deviceId: string;
+    },
+  ): Promise<VoiceInteractionRow | null> {
+    if (await this.findActiveVoice(tx, input.conversationId)) return null;
 
     const row: VoiceInteractionRow = {
       id: `55555555-5555-4555-8555-${String(this.voices.length + 1).padStart(12, "0")}`,
@@ -203,12 +268,15 @@ export class FakeConversationRepository implements ConversationRepositoryPort {
     return row;
   }
 
-  async endVoice(input: {
-    interactionId: string;
-    conversationId: string;
-    participantId: string;
-    deviceId: string;
-  }): Promise<VoiceInteractionRow | null> {
+  async endVoice(
+    _tx: DbTransaction,
+    input: {
+      interactionId: string;
+      conversationId: string;
+      participantId: string;
+      deviceId: string;
+    },
+  ): Promise<VoiceInteractionRow | null> {
     const row = this.voices.find(
       (voice) =>
         voice.id === input.interactionId &&
@@ -221,6 +289,26 @@ export class FakeConversationRepository implements ConversationRepositoryPort {
     row.status = "completed";
     row.ended_at = this.timestamp();
     return row;
+  }
+
+  async purgeSeating(
+    _tx: DbTransaction,
+    tableId: string,
+    sessionStartedAt: Date | null,
+  ): Promise<void> {
+    if (this.failPurge) throw new Error("conversation purge failed");
+    if (this.conversation === null) return;
+    if (this.conversation.table_id !== tableId) return;
+    if (
+      sessionStartedAt !== null &&
+      this.conversation.session_started_at.getTime() !== sessionStartedAt.getTime()
+    ) {
+      return;
+    }
+    const id = this.conversation.id;
+    this.voices = this.voices.filter((voice) => voice.conversation_id !== id);
+    this.messages = this.messages.filter((message) => message.conversation_id !== id);
+    this.conversation = null;
   }
 
   async schemaObjects() {

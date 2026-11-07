@@ -90,8 +90,11 @@ export function getTableState(tableToken: string): Promise<TableStateResult> {
   return getDefaultTableService().getTableState(tableToken);
 }
 
-export function listTableMembers(tableToken: string): Promise<TableMember[]> {
-  return getDefaultTableService().listTableMembers(tableToken);
+export function listTableMembers(
+  tableToken: string,
+  participantToken = "",
+): Promise<TableMember[]> {
+  return getDefaultTableService().listTableMembers(tableToken, participantToken);
 }
 
 export function activeCheck(tableToken: string): Promise<ActiveCheckResult> {
@@ -105,15 +108,17 @@ export function requestTableBill(tableToken: string): Promise<BillRequestResult>
 export function recordHeartbeat(
   tableToken: string,
   deviceId: string,
+  participantToken = "",
 ): Promise<HeartbeatResult> {
-  return getDefaultTableService().recordHeartbeat(tableToken, deviceId);
+  return getDefaultTableService().recordHeartbeat(tableToken, participantToken, deviceId);
 }
 
 export function removeHeartbeat(
   tableToken: string,
   deviceId: string,
+  participantToken = "",
 ): Promise<{ table_id: string; device_id: string; released: boolean }> {
-  return getDefaultTableService().removeHeartbeat(tableToken, deviceId);
+  return getDefaultTableService().removeHeartbeat(tableToken, participantToken, deviceId);
 }
 
 export function checkAndAutoReleaseTable(tableId: string): Promise<AutoReleaseResult> {

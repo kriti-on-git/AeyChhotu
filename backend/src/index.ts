@@ -7,15 +7,26 @@ import type { InitContext } from "./bootstrap/InitContext.js";
 import type { ManagedComponent } from "./bootstrap/lifecycle.js";
 import { TOKENS } from "./bootstrap/tokens.js";
 import { pool } from "./db/pool.js";
+import { configureLegacyDatabase } from "./db/legacy-db-port.js";
 import { registerDomainEvents, type DomainEventMap } from "./events/domain-events.js";
-import { DatabaseManager } from "./infrastructure/database/DatabaseManager.js";
+import {
+  createDbPoolAdapter,
+  DatabaseManager,
+} from "./infrastructure/database/DatabaseManager.js";
 import { EventManager } from "./infrastructure/events/EventManager.js";
 import { HealthManager } from "./infrastructure/health/HealthManager.js";
 import { IOManager } from "./infrastructure/realtime/IOManager.js";
 import type { TableEventPublisher } from "./modules/table/table.events.js";
 import { configureTableService, createTableModule } from "./modules/table/table.module.js";
+import { NOOP_SESSION_CLEANUP } from "./modules/table/table.participant-tokens.js";
 import { createReadTokenIssuer } from "./modules/table/table.read-token.js";
+import type { SessionCleanupPort, TableServicePort } from "./modules/table/table.types.js";
 import { TABLE_TOKENS } from "./modules/table/table.tokens.js";
+import { createRealtimeOutboxModule } from "./modules/realtime-outbox/index.js";
+import {
+  createOrderWorkflowModule,
+  type OrderWorkflowHandler,
+} from "./modules/order-workflow/index.js";
 import { createMenuModule } from "./modules/menu/menu.module.js";
 import { MENU_TOKENS } from "./modules/menu/menu.tokens.js";
 import { createInventoryModule } from "./modules/inventory/inventory.module.js";
@@ -23,6 +34,7 @@ import { INVENTORY_TOKENS } from "./modules/inventory/inventory.tokens.js";
 import { createStaffModule } from "./modules/staff/staff.module.js";
 import { STAFF_TOKENS } from "./modules/staff/staff.tokens.js";
 import { createConversationModule } from "./modules/conversation/conversation.module.js";
+import { GeminiConversationProvider } from "./modules/conversation/conversation.gemini.js";
 import { CONVERSATION_TOKENS } from "./modules/conversation/conversation.tokens.js";
 import { createCartModule } from "./modules/cart/cart.module.js";
 import { CART_TOKENS } from "./modules/cart/cart.tokens.js";
@@ -54,13 +66,13 @@ import { checkAndAutoReleaseTable } from "./services/sessions.service.js";
 /* App entry point — the composition root for THIS application.
 
    It is the only file that knows the app is made of an Express server, a
-   Postgres pool and two periodic jobs. AppBootstrap itself imports no business
+   single DatabaseManager-owned Postgres pool and two periodic jobs. AppBootstrap itself imports no business
    code; everything arrives through `componentFactory`, and shutdown order is
    the reverse of this list:
 
      health  →  database  →  events  →  staff  →  table  →  orders  →  tickets
-             →  kitchen  →  billing  →  menu  →  inventory  →  cart
-             →  conversation  →  database.pool  →  jobs.auto-release-sweeper
+             →  kitchen  →  order-workflow  →  billing  →  menu  →  inventory
+             →  cart  →  conversation  →  jobs.auto-release-sweeper
              →  jobs.table-activity-sampler  →  http.server  →  realtime
 
    Initialization has no side effects on the outside world (no timers, no
@@ -78,7 +90,15 @@ const HTTP_DRAIN_MS = 8_000;
    (TOKENS.database). Created here, registered on the container inside the
    factory below, and initialized first so any component that resolves it sees
    a ready pool. */
-const database = new DatabaseManager();
+const database = new DatabaseManager({
+  /* Adopt the process's existing pool: DatabaseManager owns its lifecycle,
+     health and transactions, so there is no second connection pool. */
+  poolFactory: () => createDbPoolAdapter(pool),
+});
+
+/* Legacy compatibility services resolve this exact manager, not a hidden
+   pool of their own. */
+configureLegacyDatabase(database);
 
 /* The internal domain bus. It carries in-process facts ("an order was
    created"), never socket traffic — a dropped socket is routine, a dropped
@@ -173,6 +193,28 @@ function createComponents(ctx: InitContext): readonly ManagedComponent[] {
   ctx.container.registerValue(TOKENS.database, database);
   registerDomainEvents(events);
 
+  let server: Server | null = null;
+  let tableService: TableServicePort | null = null;
+  let conversationCleanup: SessionCleanupPort = NOOP_SESSION_CLEANUP;
+  let workflowHandler: OrderWorkflowHandler | null = null;
+
+  /* Socket.IO is constructed before the module graph so the outbox can
+     address it, but nothing starts until the whole graph has initialized.
+     The authenticator resolves Table lazily for the same reason. */
+  const realtime = new IOManager({
+    serverProvider: () => server,
+    authenticator: createRealtimeAuthenticator(ctx.config, () => tableService),
+    isOriginAllowed: originAllowed,
+  });
+
+  /* Phase 5.2 conversation/session outbox. The publisher is late-bound and
+     the dispatcher refuses to publish until Socket.IO is listening. */
+  const outboxModule = createRealtimeOutboxModule({
+    db: database,
+    publisher: () => realtime,
+    logger: ctx.logger.child({ component: "realtime-outbox" }),
+  });
+
   /* The Table module is created here, before any request is served, and is
      registered on the container and on the compatibility seam so the legacy
      services and the HTTP controller share one service instance. */
@@ -181,7 +223,13 @@ function createComponents(ctx: InitContext): readonly ManagedComponent[] {
     events: tableEventPublisher(events),
     issueReadToken: createReadTokenIssuer(ctx.config.supabaseJwtSecret),
     assistantKey: ctx.config.geminiApiKey,
+    outbox: outboxModule.service,
+    cleanup: {
+      purgeSeating: (tx, tableId, sessionStartedAt) =>
+        conversationCleanup.purgeSeating(tx, tableId, sessionStartedAt),
+    },
   });
+  tableService = tableModule.service;
   configureTableService(tableModule.service);
   ctx.container.registerValue(TABLE_TOKENS.service, tableModule.service);
 
@@ -198,6 +246,15 @@ function createComponents(ctx: InitContext): readonly ManagedComponent[] {
   configureStaffService(staffModule.service);
   ctx.container.registerValue(STAFF_TOKENS.service, staffModule.service);
 
+  /* Durable Orders -> Kitchen hand-off. The enqueue port exists before Orders
+     so OrdersRepository can write it inside the fire transaction; the handler
+     is late-bound because Kitchen is constructed later in this graph. */
+  const orderWorkflowModule = createOrderWorkflowModule({
+    db: database,
+    handler: () => workflowHandler,
+    logger: ctx.logger.child({ component: "order-workflow" }),
+  });
+
   /* The Orders module owns firing, history and the denied-round lifecycle.
      It consumes Table only to resolve a table token; the atomic create stays
      in fire_order(), inside Postgres. */
@@ -205,6 +262,7 @@ function createComponents(ctx: InitContext): readonly ManagedComponent[] {
     db: database,
     tables: tableModule.service,
     events: ordersEventPublisher(events),
+    workflow: orderWorkflowModule.service,
     onPublishError: (err) => ctx.logger.warn("order_event_publish_failed", { error: err }),
   });
   configureOrdersService(ordersModule.service);
@@ -243,18 +301,6 @@ function createComponents(ctx: InitContext): readonly ManagedComponent[] {
 
   let sweepTimer: NodeJS.Timeout | null = null;
   let activityTimer: NodeJS.Timeout | null = null;
-  let server: Server | null = null;
-
-  /* Socket.IO rides the same HTTP server the API binds to, so it is built
-     here where that server is in scope. It starts after http.server and shuts
-     down before it (reverse order), which lets every socket be disconnected
-     while the listener is still alive. Credentials are validated by the
-     existing JWT / table-session rules through the injected authenticator. */
-  const realtime = new IOManager({
-    serverProvider: () => server,
-    authenticator: createRealtimeAuthenticator(ctx.config),
-    isOriginAllowed: originAllowed,
-  });
 
   /* The Kitchen module owns the KDS surface: it reads the Ticket board, asks
      Ticket to perform every move, and announces committed moves to the
@@ -270,6 +316,17 @@ function createComponents(ctx: InitContext): readonly ManagedComponent[] {
   configureKitchenService(kitchenModule.service);
   ctx.container.registerValue(KITCHEN_TOKENS.service, kitchenModule.service);
 
+  /* The outbox handler is the Kitchen intake port. It is read-only: the
+     ticket already exists from fire_order(), so replays cannot duplicate it. */
+  workflowHandler = {
+    handleOrderCreated: ({ orderId, tableId }) =>
+      kitchenModule.service.handleIncomingTicket({
+        ticketId: orderId,
+        orderId,
+        tableId,
+      }),
+  };
+
   /* Billing owns bill generation, exact money arithmetic and settlement. It
      reads the frozen order lines through its repository and asks Table's
      release engine after payment; it never clears a table or writes orders. */
@@ -281,12 +338,6 @@ function createComponents(ctx: InitContext): readonly ManagedComponent[] {
   });
   configureBillingService(billingModule.service);
   ctx.container.registerValue(BILLING_TOKENS.service, billingModule.service);
-
-  /* Orders publishes this only after fire_order() commits, so the intake
-     notification can never describe a ticket that does not exist. */
-  events.on("ticket.created", (payload) =>
-    kitchenModule.service.handleIncomingTicket(payload),
-  );
 
   /* The Cart module consumes Menu only for a dish's availability/name and
      Table only for session scope. Realtime publication is best-effort: a
@@ -302,20 +353,26 @@ function createComponents(ctx: InitContext): readonly ManagedComponent[] {
   ctx.container.registerValue(CART_TOKENS.service, cartModule.service);
 
   /* Conversation owns the shared transcript and voice coordination. Its AI
-     tools call the Menu/Cart/Orders/Table services above, never SQL, and all
-     broadcasts go through RealtimePublisher. The browser's Gemini Live
-     session remains the audio transport; no second key is released. */
+     tools call the Menu/Cart/Orders/Table services above, never SQL. Writes
+     are transactional and their realtime events go to the outbox in the same
+     transaction; the service never publishes directly. */
+  const conversationAiProvider = ctx.config.geminiApiKey
+    ? new GeminiConversationProvider({
+        apiKey: ctx.config.geminiApiKey,
+        model: ctx.config.geminiTextModel,
+      })
+    : null;
   const conversationModule = createConversationModule({
     db: database,
-    realtime,
+    participants: tableModule.service,
+    outbox: outboxModule.service,
     menu: menuModule.service,
     cart: cartModule.service,
     orders: ordersModule.service,
     tables: tableModule.service,
-    aiProvider: null,
-    onPublishError: (err) =>
-      ctx.logger.warn("conversation_publish_failed", { error: err }),
+    aiProvider: conversationAiProvider,
   });
+  conversationCleanup = conversationModule.cleanup;
   ctx.container.registerValue(CONVERSATION_TOKENS.service, conversationModule.service);
 
   /* Auto-release sweeper (sql/007_bill_and_auto_release.sql).
@@ -329,7 +386,7 @@ function createComponents(ctx: InitContext): readonly ManagedComponent[] {
      conditions under a row lock. */
   const sweepPaidTables = async (): Promise<void> => {
     try {
-      const res = await pool.query<{ id: string }>(
+      const res = await database.query<{ id: string }>(
         "SELECT id FROM restaurant_tables WHERE bill_status = 'paid' AND deleted_at IS NULL",
       );
 
@@ -362,33 +419,19 @@ function createComponents(ctx: InitContext): readonly ManagedComponent[] {
     ordersModule,
     ticketsModule,
     kitchenModule,
+    orderWorkflowModule,
     billingModule,
     menuModule,
     inventoryModule,
     cartModule,
     conversationModule,
-    {
-      name: "database.pool",
-      dependencies: [],
-      /* The legacy pool is a shutdown shim, not a second health probe: the
-         DatabaseManager probe already proves this process can reach Postgres
-         with the same credentials, and probing the shim would double the
-         database load for no extra signal. */
-      health: () => ({
-        state: "HEALTHY",
-        message: "Legacy pool shim attached; the shared database probe covers connectivity.",
-      }),
-      /* TRANSITIONAL: this ends the legacy pool that backend/src/db/pool.ts
-         still hands to the un-migrated services. It disappears together with
-         that module when the first repository replaces its `pool.query`. */
-      /* No init(): a boot must not depend on the database being up. */
-      shutdown: async () => {
-        await pool.end();
-      },
-    },
+    /* Registered after its consumers but before the jobs/HTTP tail: reverse
+       shutdown stops this dispatcher before the database closes. Construction
+       stays early because Table and Conversation receive its service. */
+    outboxModule,
     {
       name: "jobs.auto-release-sweeper",
-      dependencies: ["database.pool"],
+      dependencies: ["database"],
       health: () =>
         sweepTimer === null
           ? { state: "DEGRADED", message: "The auto-release sweep timer is not running." }
@@ -406,7 +449,7 @@ function createComponents(ctx: InitContext): readonly ManagedComponent[] {
     },
     {
       name: "jobs.table-activity-sampler",
-      dependencies: ["database.pool"],
+      dependencies: ["database"],
       health: () =>
         activityTimer === null
           ? { state: "DEGRADED", message: "The table-activity sampler is not running." }
@@ -447,6 +490,7 @@ function createComponents(ctx: InitContext): readonly ManagedComponent[] {
           inventoryService: inventoryModule.service,
           staffService: staffModule.service,
           conversationService: conversationModule.service,
+          health,
         });
 
         await new Promise<void>((resolve, reject) => {

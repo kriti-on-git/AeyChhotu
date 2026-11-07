@@ -22,6 +22,10 @@
 export type SameSitePolicy = "Strict" | "Lax" | "None";
 export type ImageStorageDriver = "postgres" | "supabase";
 
+/** Express `trust proxy` value. Deliberately never a blind `true`: trusting
+    every forwarded header lets a client spoof req.ip and evade IP limits. */
+export type TrustProxyConfig = false | number | string;
+
 /** Optional Supabase-backed dish-photo storage (sql/010). Declared here so
     the media module can receive it through InitContext later instead of
     reading process.env from inside a service. */
@@ -44,8 +48,12 @@ export interface AppConfig {
   readonly staffPin: string;
   readonly adminPin: string;
   readonly kdsTokenSecret: string;
+  /** How many proxy hops (or which loopback/subnet) set X-Forwarded-For. */
+  readonly trustProxy: TrustProxyConfig;
   readonly supabaseJwtSecret: string | null;
   readonly geminiApiKey: string | null;
+  /** Text model for server-owned conversations. Never a client input. */
+  readonly geminiTextModel: string;
   readonly imageStorage: ImageStorageConfig;
 }
 
@@ -148,6 +156,32 @@ function parseSameSite(source: NodeJS.ProcessEnv, issues: string[]): SameSitePol
   return "None";
 }
 
+/* The deployment's proxy chain is configuration, not a guess. Render (and the
+   documented reverse-proxy setup) puts exactly one hop in front of the API,
+   so production defaults to `1`. Local development defaults to `loopback`, so
+   X-Forwarded-For from a browser is never trusted. Setting TRUST_PROXY=true
+   is allowed but explicit: it means "trust every hop", which is only correct
+   when the API is unreachable except through a trusted proxy. */
+function parseTrustProxy(
+  source: NodeJS.ProcessEnv,
+  nodeEnv: string,
+  issues: string[],
+): TrustProxyConfig {
+  const raw = read(source, "TRUST_PROXY");
+  if (raw === undefined) return nodeEnv === "production" ? 1 : "loopback";
+
+  const lower = raw.toLowerCase();
+  if (lower === "false" || lower === "off" || lower === "0") return false;
+  if (/^\d+$/.test(raw)) return Number(raw);
+  if (lower === "true") {
+    issues.push(
+      "TRUST_PROXY=true trusts every forwarded header; set the number of proxy hops instead.",
+    );
+    return false;
+  }
+  return raw;
+}
+
 /* The fifth of the app's env vars that used to be read straight from
    process.env inside services/menu-image.service.ts. Selecting "supabase"
    without a URL and a service-role key silently falls back to Postgres, which
@@ -173,6 +207,7 @@ export function loadConfig(source: NodeJS.ProcessEnv = process.env): AppConfig {
   const issues: string[] = [];
 
   const nodeEnv = read(source, "NODE_ENV") ?? "development";
+  const trustProxy = parseTrustProxy(source, nodeEnv, issues);
   const port = parsePort(source, issues);
   const clientUrls = parseClientUrls(source, issues);
   const cookieSameSite = parseSameSite(source, issues);
@@ -199,8 +234,10 @@ export function loadConfig(source: NodeJS.ProcessEnv = process.env): AppConfig {
     staffPin,
     adminPin,
     kdsTokenSecret,
+    trustProxy,
     supabaseJwtSecret: read(source, "SUPABASE_JWT_SECRET") ?? null,
     geminiApiKey: read(source, "GEMINI_API_KEY") ?? null,
+    geminiTextModel: read(source, "GEMINI_TEXT_MODEL") ?? "gemini-2.5-flash",
     imageStorage: Object.freeze(parseImageStorage(source)),
   };
 

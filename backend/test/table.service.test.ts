@@ -21,16 +21,23 @@ import {
   generateSessionPin,
 } from "../src/modules/table/table.service.js";
 import type { TableEventPublisher } from "../src/modules/table/table.events.js";
+import {
+  hashParticipantToken,
+  type ParticipantTokenStorePort,
+} from "../src/modules/table/table.participant-tokens.js";
 import type {
   ActiveOrderRow,
   BillRow,
   LockedTableRow,
+  MemberIdentityRow,
   MemberRow,
   OrderCounts,
   PresenceRow,
   ReleaseCandidateRow,
   SchemaPresence,
+  SessionCleanupPort,
   SessionRow,
+  TableSessionOutboxPort,
   TableMemberInput,
   TableRecord,
   TableRepositoryPort,
@@ -46,6 +53,7 @@ interface FakeOrder {
 }
 
 const PRESENCE_WINDOW_MS = 45_000;
+const TOKEN = `pc_${"A".repeat(43)}`;
 
 function row(overrides: Partial<SessionRow> = {}): SessionRow {
   return {
@@ -130,35 +138,56 @@ class FakeTableRepository implements TableRepositoryPort {
     _tx: DbTransaction,
     tableId: string,
     member: TableMemberInput | undefined,
-  ): Promise<void> {
-    await this.upsertMemberBestEffort(tableId, member);
+  ): Promise<MemberIdentityRow | null> {
+    return this.upsertMemberBestEffort(tableId, member);
   }
 
   async upsertMemberBestEffort(
     tableId: string,
     member: TableMemberInput | undefined,
-  ): Promise<void> {
+  ): Promise<MemberIdentityRow | null> {
     const userId = member?.user_id?.trim();
-    if (!userId || !member || this.table === null || this.table.id !== tableId) return;
+    if (!userId || !member || this.table === null || this.table.id !== tableId) return null;
 
     const existing = this.members.find((entry) => entry.user_id === userId);
-    if (existing) existing.name = member.name;
-    else this.members.push({ user_id: userId, name: member.name, joined_at: new Date() });
+    if (existing) {
+      existing.name = member.name;
+      return existing;
+    }
+    const created: MemberRow = {
+      id: `member-${this.members.length + 1}`,
+      user_id: userId,
+      name: member.name,
+      joined_at: new Date(),
+    };
+    this.members.push(created);
+    return created;
   }
 
   async listMembers(tableId: string): Promise<MemberRow[]> {
     return this.table?.id === tableId ? [...this.members] : [];
   }
 
-  async recordHeartbeat(tableId: string, deviceId: string): Promise<PresenceRow | null> {
+  async recordHeartbeat(
+    tableId: string,
+    deviceId: string,
+    participantId: string | null,
+  ): Promise<PresenceRow | null> {
+    void participantId;
     if (this.table === null || this.table.id !== tableId) return null;
     const now = new Date();
     this.presence.set(deviceId, now);
     return { device_id: deviceId, last_seen: now };
   }
 
-  async removePresence(tableId: string, deviceId: string): Promise<void> {
-    if (this.table?.id === tableId) this.presence.delete(deviceId);
+  async removePresence(
+    tableId: string,
+    deviceId: string,
+    participantId: string | null,
+  ): Promise<boolean> {
+    void participantId;
+    if (this.table?.id !== tableId) return false;
+    return this.presence.delete(deviceId);
   }
 
   async lockTable(_tx: DbTransaction, tableId: string): Promise<LockedTableRow | null> {
@@ -301,9 +330,64 @@ interface RecordedEvents {
   readonly names: string[];
 }
 
+class FakeParticipantTokens implements ParticipantTokenStorePort {
+  constructor(private readonly repository: FakeTableRepository) {}
+
+  transaction<T>(fn: (tx: DbTransaction) => Promise<T>): Promise<T> {
+    return this.repository.transaction(fn);
+  }
+
+  async issue(): Promise<{ participant_token: string; participant_expires_at: Date }> {
+    return {
+      participant_token: TOKEN,
+      participant_expires_at: new Date(Date.now() + 12 * 60 * 60 * 1_000),
+    };
+  }
+
+  private principal(rawToken: string) {
+    const table = this.repository.table;
+    if (rawToken !== TOKEN || table === null) return null;
+    return {
+      participant_id: this.repository.members[0]?.id ?? "member-1",
+      user_id: this.repository.members[0]?.user_id ?? "u1",
+      name: this.repository.members[0]?.name ?? "Asha",
+      table_id: table.id,
+      table_code: table.code,
+      session_started_at: table.session_started_at ?? new Date(0),
+    };
+  }
+
+  async authorizeInTransaction(
+    _tx: DbTransaction,
+    rawToken: string,
+  ): Promise<ReturnType<typeof this.principal>> {
+    return this.principal(rawToken);
+  }
+
+  async authorizeByHash(tokenHash: string) {
+    return tokenHash === hashParticipantToken(TOKEN) ? this.principal(TOKEN) : null;
+  }
+
+  async touch(): Promise<void> {}
+
+  async revokeSelf(): Promise<number> {
+    return 0;
+  }
+
+  async revokeForMember(): Promise<number> {
+    return 0;
+  }
+
+  async deleteForTable(): Promise<void> {}
+}
+
 function serviceWith(
   repository: FakeTableRepository,
   events: RecordedEvents = { names: [] },
+  options: {
+    cleanup?: SessionCleanupPort;
+    outbox?: TableSessionOutboxPort;
+  } = {},
 ): { service: TableService; repository: FakeTableRepository; events: RecordedEvents } {
   const publisher: TableEventPublisher = {
     sessionStarted: ({ tableId }) => events.names.push(`started:${tableId}`),
@@ -312,7 +396,14 @@ function serviceWith(
   };
 
   return {
-    service: new TableService({ repository, events: publisher, assistantKey: null }),
+    service: new TableService({
+      repository,
+      events: publisher,
+      participants: new FakeParticipantTokens(repository),
+      cleanup: options.cleanup,
+      outbox: options.outbox,
+      assistantKey: null,
+    }),
     repository,
     events,
   };
@@ -611,11 +702,21 @@ describe("TableService — state, roster and presence", () => {
     const repository = new FakeTableRepository();
     const { service } = serviceWith(repository);
     repository.members = [
-      { user_id: "u1", name: "Asha", joined_at: new Date("2026-11-05T10:00:00Z") },
-      { user_id: "u2", name: "Ravi", joined_at: new Date("2026-11-05T10:01:00Z") },
+      {
+        id: "member-1",
+        user_id: "u1",
+        name: "Asha",
+        joined_at: new Date("2026-11-05T10:00:00Z"),
+      },
+      {
+        id: "member-2",
+        user_id: "u2",
+        name: "Ravi",
+        joined_at: new Date("2026-11-05T10:01:00Z"),
+      },
     ];
 
-    const members = await service.listTableMembers("k7x2p");
+    const members = await service.listTableMembers("k7x2p", TOKEN);
 
     assert.deepEqual(
       members.map((member) => member.name),
@@ -628,11 +729,11 @@ describe("TableService — state, roster and presence", () => {
     repository.table = row({ status: "active", bill_status: "paid" });
     const { service, events } = serviceWith(repository);
 
-    const beat = await service.recordHeartbeat("k7x2p", "device-1");
+    const beat = await service.recordHeartbeat("k7x2p", TOKEN, "device-1");
     assert.equal(beat.device_id, "device-1");
     assert.equal((await service.getTableState("k7x2p")).active_devices, 1);
 
-    const removed = await service.removeHeartbeat("k7x2p", "device-1");
+    const removed = await service.removeHeartbeat("k7x2p", TOKEN, "device-1");
     assert.equal(removed.released, true);
     assert.equal(repository.table?.status, "empty");
     assert.deepEqual(events.names, ["cleared:table-1:auto_release"]);
@@ -689,6 +790,37 @@ describe("TableService — clear (staff/admin)", () => {
     });
     assert.equal(forced.outcome, "cleared");
     assert.equal(repository.table?.status, "empty");
+  });
+
+  it("rolls back the whole clear when conversation cleanup fails", async () => {
+    const repository = new FakeTableRepository();
+    repository.table = row({
+      status: "active",
+      bill_status: "paid",
+      session_started_at: new Date("2026-11-05T10:00:00Z"),
+    });
+    repository.members = [
+      {
+        id: "member-1",
+        user_id: "u1",
+        name: "Asha",
+        joined_at: new Date("2026-11-05T10:00:00Z"),
+      },
+    ];
+    const cleanup: SessionCleanupPort = {
+      purgeSeating: async () => {
+        throw new Error("conversation purge failed");
+      },
+    };
+    const { service } = serviceWith(repository, { names: [] }, { cleanup });
+
+    await assert.rejects(
+      () => service.clearTableSession("table-1", { allowUnpaid: false }),
+      /conversation purge failed/,
+    );
+
+    assert.equal(repository.table?.status, "active");
+    assert.equal(repository.members.length, 1);
   });
 
   it("refuses a staff clear of an unpaid seating, but allows the manager override", async () => {

@@ -23,6 +23,7 @@ import {
   JOIN_CHANNEL,
   KITCHEN_ROOM,
   LEAVE_CHANNEL,
+  MENU_ROOM,
   MAX_PAYLOAD_CHARS,
   READY_CHANNEL,
   SERVER_EVENT_CHANNEL,
@@ -40,10 +41,11 @@ import { initContext } from "./helpers/init-context.js";
 
 const TABLE_ID = "11111111-1111-4111-8111-111111111111";
 const OTHER_TABLE_ID = "22222222-2222-4222-8222-222222222222";
-const SECRET = "A".repeat(20);
+const GUEST_TOKEN = `pc_${"A".repeat(43)}`;
+const OTHER_GUEST_TOKEN = `pc_${"B".repeat(43)}`;
 
-const GUEST_AUTH = { kind: "guest", table_token: "table01", secret: SECRET } as const;
-const OTHER_GUEST_AUTH = { kind: "guest", table_token: "table02", secret: SECRET } as const;
+const GUEST_AUTH = { kind: "guest", participant_token: GUEST_TOKEN } as const;
+const OTHER_GUEST_AUTH = { kind: "guest", participant_token: OTHER_GUEST_TOKEN } as const;
 const KITCHEN_AUTH = { kind: "staff", token: "kitchen-token" } as const;
 const FLOOR_AUTH = { kind: "staff", token: "floor-token" } as const;
 const ADMIN_AUTH = { kind: "staff", token: "admin-token" } as const;
@@ -59,11 +61,24 @@ const authenticator: RealtimeAuthenticator = {
     if (token === "admin-token") return { kind: "staff", role: "admin", terminalId: null };
     return null;
   },
-  async authenticateGuest({ tableToken, secret }) {
-    if (secret !== SECRET) return null;
-    if (tableToken === "table01") return { kind: "guest", tableId: TABLE_ID, tableToken };
-    if (tableToken === "table02") {
-      return { kind: "guest", tableId: OTHER_TABLE_ID, tableToken };
+  async authenticateGuest({ participantToken }) {
+    if (participantToken === GUEST_TOKEN) {
+      return {
+        kind: "guest",
+        tableId: TABLE_ID,
+        tableToken: "table01",
+        participantId: "guest-a",
+        tokenHash: "hash-a",
+      };
+    }
+    if (participantToken === OTHER_GUEST_TOKEN) {
+      return {
+        kind: "guest",
+        tableId: OTHER_TABLE_ID,
+        tableToken: "table02",
+        participantId: "guest-b",
+        tokenHash: "hash-b",
+      };
     }
     return null;
   },
@@ -251,10 +266,11 @@ describe("IOManager — handshake and connection", () => {
       const { socket, ready } = await connectReady(url, GUEST_AUTH);
       try {
         assert.equal(ready.kind, "guest");
-        assert.deepEqual(ready.rooms, [tableRoom(TABLE_ID)]);
+        assert.deepEqual(ready.rooms, [tableRoom(TABLE_ID), MENU_ROOM]);
         assert.equal(manager.diagnostics().clients[0]?.kind, "guest");
         assert.equal(manager.diagnostics().clients[0]?.table_id, TABLE_ID);
         assert.equal(manager.diagnostics().rooms[tableRoom(TABLE_ID)], 1);
+        assert.equal(manager.diagnostics().rooms[MENU_ROOM], 1);
         assert.equal(manager.diagnostics().rooms[KITCHEN_ROOM], undefined);
       } finally {
         socket.close();
@@ -276,12 +292,11 @@ describe("IOManager — handshake and connection", () => {
     });
   });
 
-  it("refuses a guest whose table pass is wrong", async () => {
+  it("refuses a guest whose participant token is unknown", async () => {
     await withRealtime(async ({ manager, url }) => {
       const failure = await connectRejected(url, {
         kind: "guest",
-        table_token: "table01",
-        secret: "B".repeat(20),
+        participant_token: `pc_${"Z".repeat(43)}`,
       });
 
       assert.equal(failure.code, "UNAUTHORIZED");
@@ -289,6 +304,42 @@ describe("IOManager — handshake and connection", () => {
       assert.equal(diagnostics.connections, 0);
       assert.equal(diagnostics.counters.rejected, 1);
       assert.equal(diagnostics.counters.accepted, 0);
+    });
+  });
+
+  it("refuses expired and revoked guest credentials", async () => {
+    await withRealtime(async ({ url }) => {
+      for (const participantToken of [`pc_${"E".repeat(43)}`, `pc_${"R".repeat(43)}`]) {
+        const failure = await connectRejected(url, {
+          kind: "guest",
+          participant_token: participantToken,
+        });
+        assert.equal(failure.code, "UNAUTHORIZED");
+      }
+    });
+  });
+
+  it("limits handshakes by server-observed IP, not client-supplied identity", async () => {
+    await withRealtime(async ({ manager, url }) => {
+      for (let attempt = 0; attempt < 30; attempt += 1) {
+        const failure = await connectRejected(url, {
+          kind: "guest",
+          participant_token: `pc_${"Z".repeat(43)}`,
+          /* A client cannot move the bucket by claiming an address or device. */
+          address: `203.0.113.${attempt + 1}`,
+          device_id: `bypass-device-${attempt + 1}`,
+          participant_id: `bypass-member-${attempt + 1}`,
+        });
+        assert.equal(failure.code, "UNAUTHORIZED", `attempt ${attempt + 1}`);
+      }
+
+      const limited = await connectRejected(url, GUEST_AUTH);
+      assert.equal(limited.code, "RATE_LIMITED");
+      assert.match(limited.message, /Too many connection attempts/);
+      assert.equal(limited.message.includes(GUEST_TOKEN), false);
+      assert.equal(limited.message.includes(TABLE_ID), false);
+      assert.equal(manager.diagnostics().connections, 0);
+      assert.equal(manager.diagnostics().counters.rejected, 31);
     });
   });
 
@@ -305,8 +356,7 @@ describe("IOManager — handshake and connection", () => {
     await withRealtime(async ({ manager, url }) => {
       const failure = await connectRejected(url, {
         kind: "guest",
-        table_token: "TABLE!",
-        secret: "short",
+        participant_token: "short",
       });
 
       assert.equal(failure.code, "INVALID_HANDSHAKE");
@@ -585,6 +635,62 @@ describe("IOManager — controlled publishing", () => {
     });
   });
 
+  it("publishes only public catalogue metadata to the menu room", async () => {
+    await withRealtime(async ({ manager, url }) => {
+      const diner = await connectReady(url, GUEST_AUTH);
+      const kitchen = await connectReady(url, KITCHEN_AUTH);
+      try {
+        const envelope = waitFor<Envelope>(diner.socket, SERVER_EVENT_CHANNEL);
+        const kitchenNothing = expectNoMessage(kitchen.socket);
+
+        const result = manager.toMenu("menu.updated", {
+          items: [
+            {
+              id: "m-1",
+              name: "Dal Tadka",
+              price: 180,
+              description: "Yellow lentils",
+              is_available: true,
+              image_url: "/menu/dal.jpg",
+              cost: 60,
+              stock_quantity: 4,
+              supplier_name: "Hidden Supplier",
+              supplier_contact: "+91-0000000000",
+              internal_notes: "do not show",
+              admin_notes: "admin only",
+              participant_token: GUEST_TOKEN,
+              session_secret: "abcdefghijklmnopqrst",
+            },
+          ],
+          api_key: "provider-key",
+        });
+
+        assert.equal(result.room, MENU_ROOM);
+        const message = await envelope;
+        assert.deepEqual(message.data, {
+          items: [
+            {
+              id: "m-1",
+              name: "Dal Tadka",
+              price: 180,
+              description: "Yellow lentils",
+              is_available: true,
+              image_url: "/menu/dal.jpg",
+            },
+          ],
+        });
+        const serialized = JSON.stringify(message.data);
+        for (const privateValue of [GUEST_TOKEN, "abcdefghijklmnopqrst", "Hidden Supplier", "provider-key"]) {
+          assert.equal(serialized.includes(privateValue), false);
+        }
+        await kitchenNothing;
+      } finally {
+        diner.socket.close();
+        kitchen.socket.close();
+      }
+    });
+  });
+
   it("refuses a non-domain event name", async () => {
     await withRealtime(async ({ manager }) => {
       expectRealtimeError(
@@ -682,7 +788,7 @@ describe("IOManager — shutdown", () => {
         assert.equal(diagnostics.counters.rejected, 1);
         assert.equal(diagnostics.connections, 1);
         assert.equal(diagnostics.path, "/socket.io");
-        assert.deepEqual(diagnostics.clients[0]?.rooms, [tableRoom(TABLE_ID)]);
+        assert.deepEqual(diagnostics.clients[0]?.rooms, [tableRoom(TABLE_ID), MENU_ROOM]);
         assert.equal(diagnostics.lastError, "staff token rejected");
       } finally {
         diner.socket.close();

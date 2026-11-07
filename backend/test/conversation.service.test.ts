@@ -11,7 +11,8 @@ import type { ConversationToolPort } from "../src/modules/conversation/conversat
 import {
   FakeAiProvider,
   FakeConversationRepository,
-  FakeRealtime,
+  FakeOutbox,
+  FakeParticipantGuard,
   FakeToolPort,
   ThrowingAiProvider,
   CONVERSATION_ID,
@@ -28,7 +29,8 @@ function harness(options: {
   tools?: ConversationToolPort;
 } = {}) {
   const repository = new FakeConversationRepository();
-  const realtime = new FakeRealtime();
+  const participants = new FakeParticipantGuard();
+  const outbox = new FakeOutbox();
   const tools = options.tools ?? new FakeToolPort();
   const provider =
     options.provider === "none"
@@ -38,11 +40,12 @@ function harness(options: {
         : new FakeAiProvider(options.turns ?? [{ text: "Namaste! Try the dosa." }]);
   const service = new ConversationService({
     repository,
-    realtime,
+    participants,
+    outbox,
     tools,
     aiProvider: provider,
   });
-  return { repository, realtime, tools, provider, service };
+  return { repository, participants, outbox, tools, provider, service };
 }
 
 async function expectAppError(promise: Promise<unknown>, code: string, status: number) {
@@ -74,10 +77,11 @@ describe("conversation creation and membership", () => {
   });
 
   it("hides a conversation from the next seating", async () => {
-    const { service, repository } = harness();
+    const { service, repository, participants } = harness();
     const created = await service.getOrCreate(credentials(PARTICIPANT_A));
 
     repository.sessionStartedAt = new Date("2026-01-01T12:00:00.000Z");
+    participants.sessionStartedAt = new Date("2026-01-01T12:00:00.000Z");
     await expectAppError(
       service.getConversation(created.conversation.conversation_id, credentials(PARTICIPANT_A)),
       "CONVERSATION_NOT_FOUND",
@@ -88,7 +92,7 @@ describe("conversation creation and membership", () => {
 
 describe("shared messages", () => {
   it("persists a guest message and the assistant answer, broadcasting both", async () => {
-    const { service, repository, realtime, provider } = harness();
+    const { service, repository, outbox, provider } = harness();
     const created = await service.getOrCreate(credentials(PARTICIPANT_A));
 
     const result = await service.postMessage(
@@ -111,10 +115,10 @@ describe("shared messages", () => {
     );
 
     assert.deepEqual(
-      realtime.events.map((event) => event.event),
+      outbox.events.map((event) => event.event),
       ["conversation.message.created", "conversation.message.created"],
     );
-    assert.ok(realtime.events.every((event) => event.tableId === TABLE_ID));
+    assert.ok(outbox.events.every((event) => event.tableId === TABLE_ID));
   });
 
   it("shows the same history to every member of the room", async () => {
@@ -138,7 +142,7 @@ describe("shared messages", () => {
   });
 
   it("stores a retried client message once and never answers it twice", async () => {
-    const { service, repository, realtime, provider } = harness();
+    const { service, repository, outbox, provider } = harness();
     const created = await service.getOrCreate(credentials(PARTICIPANT_A));
 
     const first = await service.postMessage(
@@ -157,7 +161,7 @@ describe("shared messages", () => {
     assert.equal(retry.assistant?.message_id, first.assistant?.message_id);
     assert.equal(repository.messages.length, 2);
     assert.equal((provider as FakeAiProvider).inputs.length, 1);
-    assert.equal(realtime.events.length, 2);
+    assert.equal(outbox.events.length, 2);
   });
 
   it("handles concurrent retries with one persisted message", async () => {
@@ -184,7 +188,7 @@ describe("shared messages", () => {
   });
 
   it("keeps the guest message when the AI provider fails", async () => {
-    const { service, repository, realtime } = harness({ provider: "throwing" });
+    const { service, repository, outbox } = harness({ provider: "throwing" });
     const created = await service.getOrCreate(credentials(PARTICIPANT_A));
 
     await expectAppError(
@@ -196,7 +200,40 @@ describe("shared messages", () => {
     );
     assert.equal(repository.messages.length, 1);
     assert.equal(repository.messages[0]?.role, "guest");
-    assert.equal(realtime.events.length, 1);
+    assert.equal(outbox.events.length, 1);
+  });
+
+  it("discards a late assistant reply after the seating credential is revoked", async () => {
+    const repository = new FakeConversationRepository();
+    const participants = new FakeParticipantGuard();
+    const outbox = new FakeOutbox();
+    const provider = {
+      async respond(): Promise<{ text: string }> {
+        participants.revoked.add(credentials(PARTICIPANT_A).participantToken);
+        return { text: "This answer arrived too late." };
+      },
+    };
+    const service = new ConversationService({
+      repository,
+      participants,
+      outbox,
+      tools: new FakeToolPort(),
+      aiProvider: provider,
+    });
+    const created = await service.getOrCreate(credentials(PARTICIPANT_A));
+
+    const result = await service.postMessage(
+      created.conversation.conversation_id,
+      credentials(PARTICIPANT_A),
+      { text: "Still there?" },
+    );
+
+    assert.equal(result.assistant, null);
+    assert.equal(repository.messages.filter((message) => message.role === "assistant").length, 0);
+    assert.deepEqual(
+      outbox.events.map((event) => event.event),
+      ["conversation.message.created"],
+    );
   });
 
   it("stores the guest message without an answer when no provider is configured", async () => {
@@ -229,7 +266,7 @@ describe("AI tool execution", () => {
       },
       { text: "Added two dosas for the table." },
     ]);
-    const { service, repository, realtime } = harness({ provider: "fake", tools });
+    const { service, repository, outbox, participants } = harness({ provider: "fake", tools });
     // Replace the provider created by the harness with the scripted one.
     const created = await service.getOrCreate(credentials(PARTICIPANT_A));
 
@@ -237,7 +274,8 @@ describe("AI tool execution", () => {
     // service so this test controls every turn precisely.
     const scriptedService = new ConversationService({
       repository,
-      realtime,
+      participants,
+      outbox,
       tools,
       aiProvider: provider,
     });
@@ -267,6 +305,42 @@ describe("AI tool execution", () => {
     assert.equal(repository.messages.filter((message) => message.role === "assistant").length, 1);
   });
 
+  it("re-authorizes the seating before executing a queued tool", async () => {
+    const tools = new FakeToolPort();
+    const participants = new FakeParticipantGuard();
+    const provider = {
+      async respond() {
+        // A clear/revocation wins while the provider is thinking.
+        participants.revoked.add(credentials(PARTICIPANT_A).participantToken);
+        return {
+          text: "",
+          tool_calls: [
+            { id: "late", name: "add_to_cart", arguments: { menu_item_id: MENU_ITEM_ID } },
+          ],
+        };
+      },
+    };
+    const repository = new FakeConversationRepository();
+    const service = new ConversationService({
+      repository,
+      participants,
+      outbox: new FakeOutbox(),
+      tools,
+      aiProvider: provider,
+    });
+    const created = await service.getOrCreate(credentials(PARTICIPANT_A));
+
+    await expectAppError(
+      service.postMessage(created.conversation.conversation_id, credentials(PARTICIPANT_A), {
+        text: "Add a dosa",
+      }),
+      "SESSION_ENDED",
+      409,
+    );
+    assert.equal(tools.calls.length, 0);
+    assert.equal(repository.messages.filter((message) => message.role === "assistant").length, 0);
+  });
+
   it("refuses an endless tool loop without persisting a bogus answer", async () => {
     const provider: import("../src/modules/conversation/conversation.types.js").ConversationAiProvider = {
       async respond() {
@@ -279,7 +353,8 @@ describe("AI tool execution", () => {
     const repository = new FakeConversationRepository();
     const service = new ConversationService({
       repository,
-      realtime: new FakeRealtime(),
+      participants: new FakeParticipantGuard(),
+      outbox: new FakeOutbox(),
       tools: new FakeToolPort(),
       aiProvider: provider,
     });
@@ -298,7 +373,7 @@ describe("AI tool execution", () => {
 
 describe("voice coordination", () => {
   it("allows one active interaction and names the initiating device", async () => {
-    const { service, realtime } = harness();
+    const { service, outbox } = harness();
     const created = await service.getOrCreate(credentials(PARTICIPANT_A));
 
     const started = await service.startVoice(
@@ -309,9 +384,11 @@ describe("voice coordination", () => {
     assert.equal(started.playback_device_id, "phone-a");
     assert.equal(started.playback_participant_id, PARTICIPANT_A);
 
-    assert.equal(realtime.events.at(-1)?.event, "conversation.voice.started");
-    assert.deepEqual(realtime.events.at(-1)?.data, {
-      ...started,
+    assert.equal(outbox.events.at(-1)?.event, "conversation.voice.started");
+    assert.deepEqual(outbox.events.at(-1)?.payload, {
+      table_id: TABLE_ID,
+      conversation_id: created.conversation.conversation_id,
+      interaction: started,
       playback_scope: "initiator",
     });
 
@@ -327,7 +404,7 @@ describe("voice coordination", () => {
   });
 
   it("lets only the initiating device end the interaction", async () => {
-    const { service, realtime } = harness();
+    const { service, outbox } = harness();
     const created = await service.getOrCreate(credentials(PARTICIPANT_A));
     const started = await service.startVoice(
       created.conversation.conversation_id,
@@ -353,11 +430,11 @@ describe("voice coordination", () => {
       "phone-a",
     );
     assert.equal(ended.status, "completed");
-    assert.equal(realtime.events.at(-1)?.event, "conversation.voice.ended");
+    assert.equal(outbox.events.at(-1)?.event, "conversation.voice.ended");
   });
 
   it("marks a voice answer for the initiating device only", async () => {
-    const { service, realtime } = harness();
+    const { service, outbox } = harness();
     const created = await service.getOrCreate(credentials(PARTICIPANT_A));
     const started = await service.startVoice(
       created.conversation.conversation_id,
@@ -378,10 +455,13 @@ describe("voice coordination", () => {
 
     assert.equal(result.assistant?.kind, "voice");
     assert.equal(result.assistant?.voice_playback_device_id, "phone-a");
-    assert.equal(realtime.events.at(-1)?.event, "conversation.message.created");
+    assert.equal(outbox.events.at(-1)?.event, "conversation.message.created");
     assert.equal(
-      (realtime.events.at(-1)?.data as { voice_playback_device_id?: string })
-        .voice_playback_device_id,
+      (
+        outbox.events.at(-1)?.payload.message as
+          | { voice_playback_device_id?: string }
+          | undefined
+      )?.voice_playback_device_id,
       "phone-a",
     );
   });

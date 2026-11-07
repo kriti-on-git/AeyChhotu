@@ -671,8 +671,38 @@ try {
   );
   report("index restaurant_tables_clear_requested_idx", clearIdx.length === 1);
 
-  // ------------------------------------------------------------------- 8. seed
-  section("8. Seed data");
+  // ------------------------------------------ 8. order workflow outbox (022)
+  section("8. Order workflow outbox (022)");
+
+  const { rows: workflowTable } = await q(
+    `SELECT to_regclass('public.order_workflow_outbox') IS NOT NULL AS present`,
+  );
+  report("table order_workflow_outbox", workflowTable[0]?.present === true);
+
+  const { rows: workflowConstraint } = await q(
+    `SELECT EXISTS (
+       SELECT 1 FROM pg_constraint
+        WHERE conname = 'order_workflow_outbox_order_event_uq'
+     ) AS present`,
+  );
+  report(
+    "unique order/event constraint",
+    workflowConstraint[0]?.present === true,
+  );
+
+  const { rows: workflowIndexes } = await q(
+    `SELECT indexname FROM pg_indexes
+      WHERE schemaname = 'public'
+        AND indexname IN (
+          'order_workflow_outbox_pending_idx',
+          'order_workflow_outbox_table_pending_idx',
+          'order_workflow_outbox_processed_idx'
+        )`,
+  );
+  report("three workflow outbox indexes", workflowIndexes.length === 3);
+
+  // ------------------------------------------------------------------- 9. seed
+  section("9. Seed data");
 
   const { rows: seedRows } = await q(`
     SELECT

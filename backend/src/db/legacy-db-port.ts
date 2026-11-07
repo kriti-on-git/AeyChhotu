@@ -1,12 +1,12 @@
-/* Transitional DbPort over the legacy shared pool.
+/* Compatibility DbPort for services that predate module composition.
 
-   The Table module requires a DbPort. Production passes DatabaseManager
-   (TOKENS.database); the compatibility seam for services that still import
-   sessions.service.ts needs a DbPort before bootstrap has run, and this is
-   that adapter. It deliberately implements the same narrow interface and
-   disappears when the last `pool.query` caller migrates. */
+   Production calls configureLegacyDatabase(database) in the composition root,
+   so every legacy service uses the same DatabaseManager (and therefore the
+   same single pool) as the modules. Outside a composed app (focused scripts
+   and tests) the adapter falls back to the shared pool, preserving the old
+   lazy behaviour without creating a second lifecycle in production. */
 
-import type { PoolClient } from "pg";
+import type { Pool, PoolClient } from "pg";
 import type {
   DbClient,
   DbConnection,
@@ -16,7 +16,7 @@ import type {
   DbTransaction,
   TransactionOptions,
 } from "../infrastructure/database/DatabaseManager.js";
-import { pool } from "./pool.js";
+import { pool as sharedPool } from "./pool.js";
 
 const ISOLATION_SQL: Record<NonNullable<TransactionOptions["isolation"]>, string> = {
   "read committed": "READ COMMITTED",
@@ -25,6 +25,9 @@ const ISOLATION_SQL: Record<NonNullable<TransactionOptions["isolation"]>, string
 };
 
 const HEALTH_TIMEOUT_MS = 2_000;
+
+let configured: DbPort | null = null;
+let fallback: DbPort | null = null;
 
 function queryable(client: PoolClient): DbTransaction {
   return {
@@ -59,13 +62,13 @@ function connection(client: PoolClient): DbConnection {
   };
 }
 
-export function createLegacyDbPort(): DbPort {
+function createPoolDbPort(target: Pool): DbPort {
   return {
     async query<T extends Record<string, unknown> = Record<string, unknown>>(
       text: string,
       values?: readonly unknown[],
     ): Promise<DbQueryResult<T>> {
-      const result = await pool.query(text, values as unknown[] | undefined);
+      const result = await target.query(text, values as unknown[] | undefined);
       return { rows: result.rows as T[], rowCount: result.rowCount };
     },
 
@@ -73,7 +76,7 @@ export function createLegacyDbPort(): DbPort {
       fn: (tx: DbTransaction) => Promise<T>,
       options: TransactionOptions = {},
     ): Promise<T> {
-      const client = await pool.connect();
+      const client = await target.connect();
       try {
         await client.query("BEGIN");
         if (options.isolation) {
@@ -96,11 +99,11 @@ export function createLegacyDbPort(): DbPort {
     },
 
     async acquire(): Promise<DbConnection> {
-      return connection(await pool.connect());
+      return connection(await target.connect());
     },
 
     async withConnection<T>(fn: (conn: DbConnection) => Promise<T>): Promise<T> {
-      const conn = connection(await pool.connect());
+      const conn = connection(await target.connect());
       try {
         return await fn(conn);
       } finally {
@@ -117,7 +120,7 @@ export function createLegacyDbPort(): DbPort {
 
       try {
         const outcome = await Promise.race([
-          pool.query("SELECT 1").then(
+          target.query("SELECT 1").then(
             () => ({ status: "ok" as const }),
             (err: unknown) => ({ status: "error" as const, err }),
           ),
@@ -140,6 +143,41 @@ export function createLegacyDbPort(): DbPort {
       }
     },
   };
+}
+
+/** Called once by the composition root before any request is served. */
+export function configureLegacyDatabase(db: DbPort): void {
+  configured = db;
+}
+
+function resolve(): DbPort {
+  if (configured !== null) return configured;
+  fallback ??= createPoolDbPort(sharedPool);
+  return fallback;
+}
+
+/* A stable proxy: service modules capture this at import time, before the
+   composition root has run. Every call resolves the current database, so a
+   captured port still switches to DatabaseManager when composition configures
+   it. */
+const lazyPort: DbPort = {
+  query: <T extends Record<string, unknown> = Record<string, unknown>>(
+    text: string,
+    values?: readonly unknown[],
+  ): Promise<DbQueryResult<T>> => resolve().query<T>(text, values),
+  transaction: <T>(
+    fn: (tx: DbTransaction) => Promise<T>,
+    options?: TransactionOptions,
+  ): Promise<T> => resolve().transaction(fn, options),
+  acquire: (): Promise<DbConnection> => resolve().acquire(),
+  withConnection: <T>(fn: (conn: DbConnection) => Promise<T>): Promise<T> =>
+    resolve().withConnection(fn),
+  healthCheck: (options?: { timeoutMs?: number }): Promise<DbHealth> =>
+    resolve().healthCheck(options),
+};
+
+export function createLegacyDbPort(): DbPort {
+  return lazyPort;
 }
 
 export type LegacyDbClient = DbClient;

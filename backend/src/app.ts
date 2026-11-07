@@ -8,6 +8,8 @@ import {
   adminLoginLimiter,
   apiLimiter,
   ipSafetyLimiter,
+  sessionEntryLimiter,
+  sessionIpLimiter,
   staffLoginLimiter,
 } from "./middleware/rate-limit.js";
 import {
@@ -42,8 +44,9 @@ import {
 } from "./modules/staff/index.js";
 import { getDefaultStaffService } from "./services/staff.service.js";
 import { requestContext } from "./observability/logger.js";
-import { healthRouter } from "./routes/health.js";
-import { readyRouter } from "./routes/ready.js";
+import type { HealthPort } from "./infrastructure/health/HealthManager.js";
+import { createHealthRouter } from "./routes/health.js";
+import { createReadyRouter } from "./routes/ready.js";
 import { createKdsRouter } from "./routes/kds.js";
 import { floorRouter } from "./routes/floor.js";
 import { createBillingMount } from "./routes/billing.js";
@@ -87,6 +90,8 @@ export interface AppOptions {
   readonly inventoryService?: InventoryServicePort;
   readonly staffService?: StaffServicePort;
   readonly conversationService?: ConversationServicePort;
+  /** Supplied by the composition root; absent in focused createApp() tests. */
+  readonly health?: HealthPort;
   readonly recordFeedback?: (
     tableToken: string,
     input: { rating: number; comment: string },
@@ -100,6 +105,12 @@ export function createApp(options: AppOptions = {}) {
   const app = express();
 
   app.disable("x-powered-by");
+
+  /* req.ip is the key behind every IP limit, so the proxy chain must be
+     configured for the actual deployment. Never a blind `true`: a client
+     that can set X-Forwarded-For would otherwise choose its own bucket.
+     Production defaults to one hop; development trusts loopback only. */
+  app.set("trust proxy", env.trustProxy);
 
   /* Security headers. CSP is not applied here: Next.js owns the page
      shell and the API serves JSON only, where a document CSP is a no-op
@@ -145,8 +156,7 @@ export function createApp(options: AppOptions = {}) {
         "Authorization",
         "X-Request-Id",
         "X-Table-Token",
-        "X-Table-Secret",
-        "X-Participant-Id",
+        "X-Participant-Token",
       ],
       // Cache the preflight so every mutating call doesn't pay for an extra
       // round trip once the browser has learned the policy.
@@ -165,12 +175,21 @@ export function createApp(options: AppOptions = {}) {
      restaurant IP — see middleware/rate-limit.ts. */
   app.use("/api/v1/auth/kds-login", staffLoginLimiter);
   app.use("/api/v1/auth/admin-login", adminLoginLimiter);
+
+  /* Session issuance/reconnect limits are endpoint-specific and IP-keyed,
+     mounted before the broader session budget and the general API budget. */
+  app.use("/api/v1/sessions/initialize", sessionEntryLimiter);
+  app.use("/api/v1/sessions/join-pin", sessionEntryLimiter);
+  app.use("/api/v1/sessions/join-pass", sessionEntryLimiter);
+  app.use("/api/v1/sessions/reconnect", sessionEntryLimiter);
+  app.use("/api/v1/sessions", sessionIpLimiter);
+
   app.use("/api/v1", ipSafetyLimiter);
   app.use("/api/v1", apiLimiter);
 
   // Routes (docs/7-api-contract.md E1–E17; health/ready stay public).
-  app.use("/api/v1/health", healthRouter);
-  app.use("/api/v1/ready", readyRouter);
+  app.use("/api/v1/health", createHealthRouter(options.health));
+  app.use("/api/v1/ready", createReadyRouter(options.health));
   app.use(
     "/api/v1/sessions",
     createTableRouter({

@@ -13,6 +13,7 @@ import type {
   DbPort,
   DbTransaction,
 } from "../../infrastructure/database/DatabaseManager.js";
+import type { OrdersWorkflowPort } from "./orders.types.js";
 import type {
   CartLineMove,
   DeniedLineRow,
@@ -36,17 +37,20 @@ const SCHEMA_OBJECTS = [
 
 export class OrdersRepository implements OrdersRepositoryPort {
   private readonly db: DbPort;
+  private readonly workflow?: OrdersWorkflowPort;
 
-  constructor(db: DbPort) {
+  constructor(db: DbPort, workflow?: OrdersWorkflowPort) {
     this.db = db;
+    this.workflow = workflow;
   }
 
+  /* The order and its kitchen hand-off commit together. Without a workflow
+     port (focused repository tests) this is the original single statement. */
   async fire(tableToken: string): Promise<FireResult | null> {
-    const res = await this.db.query<{ result: FireResult }>(
-      "SELECT fire_order($1) AS result",
-      [tableToken],
-    );
-    return res.rows[0]?.result ?? null;
+    if (this.workflow === undefined) {
+      return this.fireWith(this.db, tableToken);
+    }
+    return this.db.transaction((tx) => this.fireWith(tx, tableToken));
   }
 
   async countItems(orderId: string): Promise<number> {
@@ -250,6 +254,20 @@ export class OrdersRepository implements OrdersRepositoryPort {
       "SELECT fire_order($1) AS result",
       [tableToken],
     );
-    return res.rows[0]?.result ?? null;
+    const result = res.rows[0]?.result ?? null;
+
+    if (
+      result?.code === "OK" &&
+      result.order_id !== undefined &&
+      result.table_id !== undefined &&
+      this.workflow !== undefined
+    ) {
+      await this.workflow.enqueueOrderCreated(tx, {
+        orderId: result.order_id,
+        tableId: result.table_id,
+      });
+    }
+
+    return result;
   }
 }

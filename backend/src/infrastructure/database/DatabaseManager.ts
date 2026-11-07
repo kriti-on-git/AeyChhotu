@@ -22,10 +22,10 @@
    /ready answers 503 until it returns. That is the documented behaviour
    (routes/ready.ts) and this manager does not change it.
 
-   TRANSITIONAL NOTE: backend/src/db/pool.ts still backs the un-migrated
-   services (phase 2B+). It is a second, lazy pool that opens no socket until a
-   business query runs; the two are unified when the first repository lands and
-   services stop importing the legacy module. */
+   COMPOSITION NOTE: the API constructs its one physical `pg.Pool` in
+   backend/src/db/pool.ts and injects an adapter through `poolFactory`. The
+   legacy compatibility services resolve this same manager through
+   `configureLegacyDatabase()`, so no second pool or hidden lifecycle exists. */
 
 import { performance } from "node:perf_hooks";
 import { Pool } from "pg";
@@ -238,16 +238,7 @@ export function createPgPoolFactory(): PoolFactory {
       idleTimeoutMillis: config.idleTimeoutMillis,
       connectionTimeoutMillis: config.connectionTimeoutMillis,
       application_name: config.applicationName,
-    });
-
-    /* Server-side statement timeout for every pooled connection. Set on
-       connect (rather than in the connection string) so it is explicit and
-       testable; a failure to set it must not silently leave a client with no
-       ceiling, so it is logged by the pool's error path. */
-    pool.on("connect", (client) => {
-      void client
-        .query(`SET statement_timeout = ${Math.trunc(config.statementTimeoutMs)}`)
-        .catch(() => undefined);
+      statement_timeout: config.statementTimeoutMs,
     });
 
     const adapter: DbPool = {
@@ -291,6 +282,51 @@ export function createPgPoolFactory(): PoolFactory {
 
     return adapter;
   };
+}
+
+/** Wrap an already-created pg Pool. The composition root uses this to adopt
+    the legacy shared pool, so there is exactly one physical pool in the API
+    process. */
+export function createDbPoolAdapter(pool: Pool): DbPool {
+  const adapter: DbPool = {
+    query: async <T extends Record<string, unknown>>(
+      text: string,
+      values?: readonly unknown[],
+    ) => {
+      const result = await pool.query(text, values as unknown[] | undefined);
+      return { rows: result.rows as T[], rowCount: result.rowCount };
+    },
+    connect: async () => {
+      const client = await pool.connect();
+      return {
+        query: async <T extends Record<string, unknown>>(
+          text: string,
+          values?: readonly unknown[],
+        ) => {
+          const result = await client.query(text, values as unknown[] | undefined);
+          return { rows: result.rows as T[], rowCount: result.rowCount };
+        },
+        release: (err?: Error | boolean) => {
+          client.release(err as Error | boolean | undefined);
+        },
+      };
+    },
+    end: () => pool.end(),
+    on: (event, listener) => {
+      pool.on(event, listener);
+      return adapter;
+    },
+    get totalCount() {
+      return pool.totalCount;
+    },
+    get idleCount() {
+      return pool.idleCount;
+    },
+    get waitingCount() {
+      return pool.waitingCount;
+    },
+  };
+  return adapter;
 }
 
 /* ---------------------------------------------------------------- manager */

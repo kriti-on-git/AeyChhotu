@@ -1,7 +1,9 @@
 import { randomInt } from "node:crypto";
-import { pool } from "../db/pool.js";
+import { createLegacyDbPort } from "../db/legacy-db-port.js";
 import { AppError } from "../errors/app-error.js";
 import { iso } from "../lib/util.js";
+
+const db = createLegacyDbPort();
 import { pinMatches } from "../modules/staff/staff.service.js";
 import type { AdminLoginResult } from "../modules/staff/staff.types.js";
 import { getDefaultStaffService } from "./staff.service.js";
@@ -95,6 +97,7 @@ export interface AdminTableMember {
 }
 
 interface AdminTableRow {
+  [key: string]: unknown;
   table_id: string;
   code: string;
   name: string;
@@ -115,7 +118,7 @@ interface AdminTableRow {
    next: how many tickets are open on it, and whether a session is pinned to
    it right now. Archived tables are gone by definition. */
 export async function listAdminTables(): Promise<AdminTable[]> {
-  const res = await pool.query<AdminTableRow>(
+  const res = await db.query<AdminTableRow>(
     `SELECT t.id AS table_id,
             t.code,
             t.name,
@@ -193,7 +196,7 @@ export async function createTable(input: { name: string }): Promise<AdminTable> 
   for (let attempt = 0; attempt < 5; attempt += 1) {
     const code = generateTableCode();
     try {
-      const res = await pool.query<AdminTableRow>(
+      const res = await db.query<AdminTableRow>(
         `INSERT INTO restaurant_tables (code, name, status)
               VALUES ($1, $2, 'empty')
            RETURNING id AS table_id, code, name, status, bill_status, created_at,
@@ -248,7 +251,7 @@ export async function updateTableName(
     });
   }
 
-  const res = await pool.query<{ id: string; name: string }>(
+  const res = await db.query<{ id: string; name: string }>(
     `UPDATE restaurant_tables
         SET name = $2
       WHERE id = $1 AND deleted_at IS NULL
@@ -283,7 +286,7 @@ export async function updateTableCode(
 ): Promise<{ table_id: string; code: string; name: string }> {
   const code = input.code.trim().toLowerCase();
 
-  const client = await pool.connect();
+  const client = await db.acquire();
   try {
     await client.query("BEGIN");
 
@@ -402,7 +405,7 @@ export async function regenerateTableToken(tableId: string): Promise<{
   code: string;
   name: string;
 }> {
-  const client = await pool.connect();
+  const client = await db.acquire();
   try {
     await client.query("BEGIN");
 
@@ -515,7 +518,7 @@ export interface DeactivateTableResult {
 }
 
 export async function deactivateTableAsAdmin(tableId: string): Promise<DeactivateTableResult> {
-  const client = await pool.connect();
+  const client = await db.acquire();
   try {
     await client.query("BEGIN");
 
@@ -586,7 +589,7 @@ export async function deactivateTableAsAdmin(tableId: string): Promise<Deactivat
    in ONE transaction, so an archive can never half-happen. Served tickets
    were rolled up into sales_day (sql/012) before they are removed. */
 export async function archiveTable(tableId: string): Promise<{ table_id: string }> {
-  const client = await pool.connect();
+  const client = await db.acquire();
   let committed = false;
 
   try {
@@ -713,7 +716,7 @@ export interface AnalyticsSummary {
    inflate yesterday's takings. */
 export async function topSellingAnalytics(): Promise<AnalyticsSummary> {
   const [items, summary, tables, trend] = await Promise.all([
-    pool.query<{
+    db.query<{
       menu_item_id: string;
       name: string;
       category: string;
@@ -733,7 +736,7 @@ export async function topSellingAnalytics(): Promise<AnalyticsSummary> {
         ORDER BY total_sold DESC
         LIMIT 10`,
     ),
-    pool.query<{ total_revenue: string; total_orders_served: number }>(
+    db.query<{ total_revenue: string; total_orders_served: number }>(
       /* The SAME business day the leaderboard and the assistant use, so the
          card, the table and Chhotu can never quote three different numbers. */
       `SELECT COALESCE(SUM(revenue), 0)::numeric(10,2) AS total_revenue,
@@ -741,7 +744,7 @@ export async function topSellingAnalytics(): Promise<AnalyticsSummary> {
          FROM sales_day
         WHERE day = ((now() AT TIME ZONE 'Asia/Kolkata') - interval '5 hours')::date`,
     ),
-    pool.query<{ active_tables_count: number }>(
+    db.query<{ active_tables_count: number }>(
       `SELECT count(*)::int AS active_tables_count
          FROM restaurant_tables
         WHERE deleted_at IS NULL AND status = 'active'`,
@@ -749,7 +752,7 @@ export async function topSellingAnalytics(): Promise<AnalyticsSummary> {
     /* 24 clock hours ending at the current one. generate_series supplies the
        empty buckets (a quiet hour must plot as zero, not vanish), and the
        left join reads the hourly rollup (sql/013). */
-    pool.query<{
+    db.query<{
       hour: Date;
       orders_served: number;
       revenue: string;
@@ -812,7 +815,7 @@ export async function topSellingAnalytics(): Promise<AnalyticsSummary> {
    Deliberately silent on failure: a metrics write must never take the server
    down, and the caller logs the error. */
 export async function recordTableActivitySample(): Promise<void> {
-  await pool.query(
+  await db.query(
     `INSERT INTO table_activity_hour (hour, samples, active_total)
           VALUES (
             date_trunc('hour', now()),

@@ -14,6 +14,7 @@ import { describe, it } from "node:test";
 
 import { DatabaseManager } from "../src/infrastructure/database/DatabaseManager.js";
 import { createReadTokenIssuer } from "../src/modules/table/table.read-token.js";
+import { ParticipantTokenStore } from "../src/modules/table/table.participant-tokens.js";
 import { TableRepository } from "../src/modules/table/table.repository.js";
 import { TableService } from "../src/modules/table/table.service.js";
 import type { SchemaPresence } from "../src/modules/table/table.types.js";
@@ -51,6 +52,7 @@ async function withHarness<T>(
   const repository = new TableRepository(manager);
   const service = new TableService({
     repository,
+    participants: new ParticipantTokenStore(manager),
     assistantKey: null,
     issueReadToken: createReadTokenIssuer(null),
   });
@@ -95,12 +97,14 @@ describe("TableRepository — real Postgres", { skip: skipReason }, () => {
       assert.equal(stored?.session_secret, granted.session_secret);
       assert.equal(stored?.failed_pin_attempts, 0);
 
+      const token = granted.participant_token;
+      assert.ok(token);
       assert.deepEqual(
-        (await service.listTableMembers(code)).map((member) => member.name),
+        (await service.listTableMembers(code, token)).map((member) => member.name),
         ["Asha"],
       );
 
-      await service.recordHeartbeat(code, "integration-device");
+      await service.recordHeartbeat(code, token, "integration-device");
       const state = await service.getTableState(code);
       assert.equal(state.active_devices, 1);
       assert.equal(state.active_devices, 1);
@@ -129,7 +133,9 @@ describe("TableRepository — real Postgres", { skip: skipReason }, () => {
       });
       assert.equal(member.status, "active");
       assert.deepEqual(
-        (await service.listTableMembers(code)).map((entry) => entry.name).sort(),
+        (await service.listTableMembers(code, member.participant_token!))
+          .map((entry) => entry.name)
+          .sort(),
         ["Asha", "Ravi"],
       );
     });
@@ -146,20 +152,22 @@ describe("TableRepository — real Postgres", { skip: skipReason }, () => {
         "UPDATE restaurant_tables SET bill_status = 'paid', bill_paid_at = now() WHERE id = $1",
         [tableId],
       );
-      await service.recordHeartbeat(code, "integration-device");
+      const token = granted.participant_token;
+      assert.ok(token);
+      await service.recordHeartbeat(code, token, "integration-device");
 
       const held = await service.checkAndAutoReleaseTable(tableId);
       assert.equal(held.released, false);
 
       // Removing the last device is itself a release attempt; the table is
       // empty afterwards, so a second explicit check must report nothing to do.
-      const released = await service.removeHeartbeat(code, "integration-device");
+      const released = await service.removeHeartbeat(code, token, "integration-device");
       assert.equal(released.released, true);
       assert.equal((await service.checkAndAutoReleaseTable(tableId)).released, false);
 
       const state = await service.getTableState(code);
       assert.equal(state.status, "empty");
-      assert.deepEqual(await service.listTableMembers(code), []);
+      await assert.rejects(() => service.listTableMembers(code, token));
     });
   });
 
@@ -179,7 +187,9 @@ describe("TableRepository — real Postgres", { skip: skipReason }, () => {
       assert.equal(cleared.outcome, "cleared");
 
       assert.equal((await service.getTableState(code)).status, "empty");
-      assert.deepEqual(await service.listTableMembers(code), []);
+      await assert.rejects(() =>
+        service.listTableMembers(code, first.participant_token!),
+      );
 
       const second = await service.initializeSession(code, {
         member: { user_id: "integration-u2", name: "Ravi" },
@@ -188,9 +198,71 @@ describe("TableRepository — real Postgres", { skip: skipReason }, () => {
       if (second.status !== "active") return;
       assert.notEqual(second.session_secret, first.session_secret);
       assert.deepEqual(
-        (await service.listTableMembers(code)).map((member) => member.name),
+        (await service.listTableMembers(code, second.participant_token!)).map(
+          (member) => member.name,
+        ),
         ["Ravi"],
       );
+    });
+  });
+
+  it("never lets a participant claim, refresh or remove another's presence", async () => {
+    await withHarness(async ({ service, manager, tableId, code }) => {
+      const first = await service.initializeSession(code, {
+        member: { user_id: "presence-a", name: "Asha" },
+      });
+      assert.equal(first.status, "active");
+      if (first.status !== "active") return;
+      const firstToken = first.participant_token;
+      assert.ok(firstToken);
+
+      const second = await service.joinWithPin({
+        table_token: code,
+        pin: first.session_pin,
+        member: { user_id: "presence-b", name: "Ravi" },
+      });
+      assert.equal(second.status, "active");
+      const secondToken = second.participant_token;
+      assert.ok(secondToken);
+
+      await service.recordHeartbeat(code, secondToken, "device-b");
+      const owned = await manager.query<{ participant_id: string }>(
+        "SELECT participant_id FROM table_device_presence WHERE table_id = $1 AND device_id = $2",
+        [tableId, "device-b"],
+      );
+      assert.equal(owned.rows[0]?.participant_id, second.participant_id);
+
+      /* A knows B's device id but must not refresh it. */
+      await assert.rejects(
+        () => service.recordHeartbeat(code, firstToken, "device-b"),
+        (err: unknown) => (err as { code?: string }).code === "PRESENCE_NOT_OWNED",
+      );
+      await service.removeHeartbeat(code, firstToken, "device-b");
+      assert.equal(
+        (await manager.query("SELECT id FROM table_device_presence WHERE table_id = $1", [tableId]))
+          .rowCount,
+        1,
+        "A's removal must not delete B's row",
+      );
+
+      /* An unowned legacy row is not claimable or removable by either guest. */
+      await manager.query(
+        "INSERT INTO table_device_presence (table_id, device_id) VALUES ($1, 'legacy-device')",
+        [tableId],
+      );
+      for (const token of [firstToken, secondToken]) {
+        await assert.rejects(
+          () => service.recordHeartbeat(code, token, "legacy-device"),
+          (err: unknown) => (err as { code?: string }).code === "PRESENCE_NOT_OWNED",
+        );
+        await service.removeHeartbeat(code, token, "legacy-device");
+      }
+      const legacy = await manager.query<{ participant_id: string | null }>(
+        "SELECT participant_id FROM table_device_presence WHERE table_id = $1 AND device_id = 'legacy-device'",
+        [tableId],
+      );
+      assert.equal(legacy.rowCount, 1);
+      assert.equal(legacy.rows[0]?.participant_id, null);
     });
   });
 });

@@ -3,10 +3,10 @@ import { createServer } from "node:http";
 import { describe, it } from "node:test";
 import { io as openSocket, type Socket } from "socket.io-client";
 
-/* REAL Socket.IO transport check. Two authenticated guests join the table room
-   chosen by the server; conversation messages and voice coordination arrive
-   through RealtimePublisher. The voice payload names the initiating device,
-   while the answer text is visible to both. */
+/* REAL Socket.IO transport check for the Phase 5.2 guest handshake. Guests
+   authenticate with a participant token; the server derives the table room.
+   Conversation events themselves are written to the outbox and covered by the
+   dispatcher tests; this file proves the transport and room isolation. */
 
 import {
   READY_CHANNEL,
@@ -17,25 +17,36 @@ import {
   IOManager,
   type RealtimeAuthenticator,
 } from "../src/infrastructure/realtime/IOManager.js";
-import { ConversationService } from "../src/modules/conversation/conversation.service.js";
 import { initContext } from "./helpers/init-context.js";
-import {
-  FakeAiProvider,
-  FakeConversationRepository,
-  FakeToolPort,
-  TABLE_CODE,
-  TABLE_ID,
-  TABLE_SECRET,
-  credentials,
-} from "./helpers/conversation-fakes.js";
+import { TABLE_CODE, TABLE_ID, TOKEN_A, TOKEN_B } from "./helpers/conversation-fakes.js";
+
+const OTHER_TABLE_ID = "99999999-9999-4999-8999-999999999999";
+const OTHER_TOKEN = `pc_${"C".repeat(43)}`;
 
 const authenticator: RealtimeAuthenticator = {
   authenticateStaff() {
     return null;
   },
-  async authenticateGuest({ tableToken, secret }) {
-    if (tableToken !== TABLE_CODE || secret !== TABLE_SECRET) return null;
-    return { kind: "guest", tableId: TABLE_ID, tableToken: TABLE_CODE };
+  async authenticateGuest({ participantToken }) {
+    if (participantToken === TOKEN_A || participantToken === TOKEN_B) {
+      return {
+        kind: "guest",
+        participantId: "guest-a",
+        tokenHash: participantToken,
+        tableId: TABLE_ID,
+        tableToken: TABLE_CODE,
+      };
+    }
+    if (participantToken === OTHER_TOKEN) {
+      return {
+        kind: "guest",
+        participantId: "guest-c",
+        tokenHash: participantToken,
+        tableId: OTHER_TABLE_ID,
+        tableToken: "other",
+      };
+    }
+    return null;
   },
 };
 
@@ -55,10 +66,9 @@ function waitFor(predicate: () => boolean, timeoutMs = 3_000): Promise<void> {
 }
 
 interface Context {
-  readonly sockets: [Socket, Socket];
-  readonly received: [RealtimeEnvelope[], RealtimeEnvelope[]];
-  readonly service: ConversationService;
-  readonly conversationId: string;
+  readonly sockets: Socket[];
+  readonly received: RealtimeEnvelope[][];
+  readonly manager: IOManager;
 }
 
 async function withRoom<T>(fn: (context: Context) => Promise<T>): Promise<T> {
@@ -77,16 +87,16 @@ async function withRoom<T>(fn: (context: Context) => Promise<T>): Promise<T> {
   await manager.init(initContext());
   await manager.start();
 
-  const sockets = [0, 1].map(() =>
+  const tokens = [TOKEN_A, TOKEN_B, OTHER_TOKEN];
+  const sockets = tokens.map((token) =>
     openSocket(`http://127.0.0.1:${address.port}`, {
-      auth: { kind: "guest", table_token: TABLE_CODE, secret: TABLE_SECRET },
+      auth: { kind: "guest", participant_token: token },
       transports: ["websocket"],
       reconnection: false,
       forceNew: true,
     }),
-  ) as [Socket, Socket];
-
-  const received: [RealtimeEnvelope[], RealtimeEnvelope[]] = [[], []];
+  );
+  const received: RealtimeEnvelope[][] = [[], [], []];
 
   try {
     await Promise.all(
@@ -104,20 +114,7 @@ async function withRoom<T>(fn: (context: Context) => Promise<T>): Promise<T> {
       });
     });
 
-    const service = new ConversationService({
-      repository: new FakeConversationRepository(),
-      realtime: manager,
-      tools: new FakeToolPort(),
-      aiProvider: new FakeAiProvider([{ text: "The dosa is excellent." }], "Sure."),
-    });
-    const view = await service.getOrCreate(credentials());
-
-    return await fn({
-      sockets,
-      received,
-      service,
-      conversationId: view.conversation.conversation_id,
-    });
+    return await fn({ sockets, received, manager });
   } finally {
     for (const socket of sockets) socket.close();
     await manager.shutdown();
@@ -127,74 +124,55 @@ async function withRoom<T>(fn: (context: Context) => Promise<T>): Promise<T> {
   }
 }
 
-describe("Conversation realtime delivery", () => {
-  it("broadcasts shared messages and initiator-only voice playback to the room", async () => {
-    await withRoom(async ({ received, service, conversationId }) => {
-      const started = await service.startVoice(
-        conversationId,
-        credentials(),
-        "phone-a",
-      );
-
-      await waitFor(() => received[0].length >= 1 && received[1].length >= 1);
-
-      for (const stream of received) {
-        assert.equal(stream[0]?.event, "conversation.voice.started");
-        assert.equal(stream[0]?.room, `table:${TABLE_ID}`);
-        assert.equal(
-          (stream[0]?.data as { playback_device_id: string }).playback_device_id,
-          "phone-a",
-        );
-      }
-
-      await service.postMessage(conversationId, credentials(), {
-        text: "What is good?",
-        kind: "voice",
-        voice_interaction_id: started.interaction_id,
-        device_id: "phone-a",
+describe("Guest realtime transport", () => {
+  it("derives the table room from the participant token and isolates tables", async () => {
+    await withRoom(async ({ received, manager }) => {
+      const published = manager.toTable(TABLE_ID, "conversation.message.created", {
+        message_id: "m-1",
       });
+      assert.equal(published.recipients >= 2, true);
 
-      await waitFor(() => received[0].length >= 3 && received[1].length >= 3);
+      await waitFor(() => received[0]!.length >= 1 && received[1]!.length >= 1);
+      await new Promise((resolve) => setTimeout(resolve, 80));
 
-      for (const stream of received) {
-        assert.deepEqual(
-          stream.map((envelope) => envelope.event),
-          [
-            "conversation.voice.started",
-            "conversation.message.created",
-            "conversation.message.created",
-          ],
-        );
-        const assistant = stream[2]?.data as {
-          role: string;
-          text: string;
-          voice_playback_device_id: string | null;
-          origin_participant_id: string;
-        };
-        assert.equal(assistant.role, "assistant");
-        assert.equal(assistant.text, "The dosa is excellent.");
-        assert.equal(assistant.voice_playback_device_id, "phone-a");
-        assert.equal(assistant.origin_participant_id, "guest-a");
-      }
+      assert.equal(received[0]![0]?.room, `table:${TABLE_ID}`);
+      assert.equal(received[1]![0]?.room, `table:${TABLE_ID}`);
+      assert.equal(received[2]!.length, 0, "another table's guest must not receive it");
     });
   });
 
-  it("does not broadcast a second overlapping voice start", async () => {
-    await withRoom(async ({ received, service, conversationId }) => {
-      await service.startVoice(conversationId, credentials(), "phone-a");
-
-      await assert.rejects(
-        service.startVoice(conversationId, credentials("guest-b"), "phone-b"),
-        (err: unknown) =>
-          err instanceof Error &&
-          "code" in err &&
-          (err as { code: string }).code === "VOICE_IN_PROGRESS",
-      );
-
-      await waitFor(() => received[0].length >= 1);
-      await new Promise((resolve) => setTimeout(resolve, 80));
-      assert.equal(received[0].filter((entry) => entry.event === "conversation.voice.started").length, 1);
-      assert.equal(received[1].length, 1);
+  it("rejects a handshake with a token the server cannot resolve", async () => {
+    const httpServer = createServer();
+    await new Promise<void>((resolve) => httpServer.listen(0, "127.0.0.1", resolve));
+    const address = httpServer.address() as import("node:net").AddressInfo;
+    const manager = new IOManager({
+      serverProvider: () => httpServer,
+      authenticator,
+      isOriginAllowed: () => true,
     });
+    await manager.init(initContext());
+    await manager.start();
+
+    const socket = openSocket(`http://127.0.0.1:${address.port}`, {
+      auth: { kind: "guest", participant_token: `pc_${"Z".repeat(43)}` },
+      transports: ["websocket"],
+      reconnection: false,
+      forceNew: true,
+    });
+
+    try {
+      await assert.rejects(
+        new Promise<void>((resolve, reject) => {
+          socket.once(READY_CHANNEL, () => resolve());
+          socket.once("connect_error", reject);
+        }),
+      );
+    } finally {
+      socket.close();
+      await manager.shutdown();
+      if (httpServer.listening) {
+        await new Promise<void>((resolve) => httpServer.close(() => resolve()));
+      }
+    }
   });
 });

@@ -1,9 +1,9 @@
 /* Conversation module — HTTP controller.
 
-   All routes are additive: the existing table, cart, order, auth and browser
-   Live endpoints are unchanged. Authorization is the table pass + roster
-   membership, both validated server-side on every request. No response ever
-   contains the pass or a provider credential. */
+   All routes are additive. Phase 5.2 authorization is the server-issued
+   participant token in `X-Participant-Token`; the table pass and any
+   client-supplied participant id are ignored. No response ever contains the
+   token or a provider credential. */
 
 import { Router, type Request } from "express";
 import { parseOrThrow } from "../../validation/parse.js";
@@ -25,15 +25,9 @@ export interface ConversationControllerDeps {
 
 function credentials(req: Request): ConversationCredentials {
   const parsed = parseOrThrow(conversationCredentialHeadersSchema, {
-    "x-table-token": req.headers["x-table-token"],
-    "x-table-secret": req.headers["x-table-secret"],
-    "x-participant-id": req.headers["x-participant-id"],
+    "x-participant-token": req.headers["x-participant-token"],
   });
-  return {
-    tableToken: parsed["x-table-token"],
-    sessionSecret: parsed["x-table-secret"],
-    participantId: parsed["x-participant-id"],
-  };
+  return { participantToken: parsed["x-participant-token"] };
 }
 
 export function createConversationRouter(deps: ConversationControllerDeps): Router {

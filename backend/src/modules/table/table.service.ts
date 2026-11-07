@@ -15,10 +15,17 @@
    no ticket is pending/preparing/ready, and no device beat in the last 45 s —
    all read under one row lock. */
 
-import { randomInt } from "node:crypto";
+import { randomInt, randomUUID } from "node:crypto";
 import { AppError } from "../../errors/app-error.js";
 import { iso } from "../../lib/util.js";
+import type { DbTransaction } from "../../infrastructure/database/DatabaseManager.js";
 import { NOOP_TABLE_EVENTS, type TableEventPublisher } from "./table.events.js";
+import {
+  hashParticipantToken,
+  NOOP_SESSION_CLEANUP,
+  PARTICIPANT_UNAUTHORIZED_MESSAGE,
+  type ParticipantTokenStorePort,
+} from "./table.participant-tokens.js";
 import {
   MAX_PIN_ATTEMPTS,
   RELEASE_PRESENCE_WINDOW_SECONDS,
@@ -32,7 +39,10 @@ import {
   type HeartbeatResult,
   type InitializeResult,
   type LockedSession,
+  type ParticipantCredential,
+  type ParticipantPrincipal,
   type ReadTokenIssuer,
+  type SessionCleanupPort,
   type SessionEntryOptions,
   type SessionRow,
   type TableMember,
@@ -40,6 +50,7 @@ import {
   type TableRecord,
   type TableRepositoryPort,
   type TableServicePort,
+  type TableSessionOutboxPort,
   type TableStateResult,
 } from "./table.types.js";
 
@@ -73,19 +84,24 @@ type PinOutcome =
   | { readonly kind: "ended" }
   | { readonly kind: "already_locked"; readonly attempts: number }
   | { readonly kind: "wrong_pin"; readonly attempts: number }
-  | { readonly kind: "granted"; readonly row: SessionRow };
+  | { readonly kind: "granted"; readonly row: SessionRow; readonly participant: ParticipantCredential | null };
 
 type PassOutcome =
   | { readonly kind: "not_found" }
   | { readonly kind: "ended" }
   | { readonly kind: "pass_requires_pin"; readonly attempts: number }
   | { readonly kind: "invalid_secret" }
-  | { readonly kind: "granted"; readonly row: SessionRow };
+  | { readonly kind: "granted"; readonly row: SessionRow; readonly participant: ParticipantCredential | null };
 
 type InitializeOutcome =
   | { readonly kind: "not_found" }
   | { readonly kind: "locked"; readonly row: SessionRow }
-  | { readonly kind: "granted"; readonly row: SessionRow };
+  | { readonly kind: "granted"; readonly row: SessionRow; readonly participant: ParticipantCredential | null };
+
+type ReconnectOutcome =
+  | { readonly kind: "not_found" }
+  | { readonly kind: "ended" }
+  | { readonly kind: "granted"; readonly row: SessionRow; readonly participant: ParticipantCredential | null };
 
 export interface TableServiceDeps {
   readonly repository: TableRepositoryPort;
@@ -94,6 +110,12 @@ export interface TableServiceDeps {
   /** Gemini key released with a granted session; null hides the assistant. */
   readonly assistantKey?: string | null;
   readonly events?: TableEventPublisher;
+  /** Participant credential lifecycle. Production always supplies it. */
+  readonly participants?: ParticipantTokenStorePort;
+  /** Conversation purge executed inside the clear transaction. */
+  readonly cleanup?: SessionCleanupPort;
+  /** Terminal session outbox row written inside the clear transaction. */
+  readonly outbox?: TableSessionOutboxPort;
 }
 
 export class TableService implements TableServicePort {
@@ -101,12 +123,18 @@ export class TableService implements TableServicePort {
   private readonly issueReadToken: ReadTokenIssuer;
   private readonly assistantKey: string | null;
   private readonly events: TableEventPublisher;
+  private readonly participants: ParticipantTokenStorePort | null;
+  private readonly cleanup: SessionCleanupPort;
+  private readonly outbox: TableSessionOutboxPort | null;
 
   constructor(deps: TableServiceDeps) {
     this.repository = deps.repository;
     this.issueReadToken = deps.issueReadToken ?? (() => null);
     this.assistantKey = deps.assistantKey ?? null;
     this.events = deps.events ?? NOOP_TABLE_EVENTS;
+    this.participants = deps.participants ?? null;
+    this.cleanup = deps.cleanup ?? NOOP_SESSION_CLEANUP;
+    this.outbox = deps.outbox ?? null;
   }
 
   /* ------------------------------------------------------------- access */
@@ -144,8 +172,13 @@ export class TableService implements TableServicePort {
         throw new AppError(500, "INTERNAL_ERROR", "The table session could not be started.");
       }
 
-      await this.repository.upsertMember(tx, row.id, options.member);
-      return { kind: "granted", row };
+      const member = await this.repository.upsertMember(
+        tx,
+        row.id,
+        this.withParticipantKey(options.member),
+      );
+      const participant = await this.issueCredential(tx, row, member);
+      return { kind: "granted", row, participant };
     });
 
     if (outcome.kind === "not_found") {
@@ -153,7 +186,7 @@ export class TableService implements TableServicePort {
     }
     if (outcome.kind === "locked") return this.lockedSession(outcome.row);
 
-    const granted = this.grantedSession(outcome.row);
+    const granted = this.grantedSession(outcome.row, outcome.participant);
     this.events.sessionStarted({ tableId: outcome.row.id, code: outcome.row.code });
     return granted;
   }
@@ -184,8 +217,13 @@ export class TableService implements TableServicePort {
         throw new AppError(500, "INTERNAL_ERROR", "The table session could not be joined.");
       }
 
-      await this.repository.upsertMember(tx, row.id, input.member);
-      return { kind: "granted", row };
+      const member = await this.repository.upsertMember(
+        tx,
+        row.id,
+        this.withParticipantKey(input.member),
+      );
+      const participant = await this.issueCredential(tx, row, member);
+      return { kind: "granted", row, participant };
     });
 
     switch (outcome.kind) {
@@ -217,7 +255,7 @@ export class TableService implements TableServicePort {
         );
       }
       case "granted":
-        return this.grantedSession(outcome.row);
+        return this.grantedSession(outcome.row, outcome.participant);
     }
   }
 
@@ -245,8 +283,13 @@ export class TableService implements TableServicePort {
         throw new AppError(500, "INTERNAL_ERROR", "The table session could not be joined.");
       }
 
-      await this.repository.upsertMember(tx, row.id, input.member);
-      return { kind: "granted", row };
+      const member = await this.repository.upsertMember(
+        tx,
+        row.id,
+        this.withParticipantKey(input.member),
+      );
+      const participant = await this.issueCredential(tx, row, member);
+      return { kind: "granted", row, participant };
     });
 
     switch (outcome.kind) {
@@ -270,32 +313,45 @@ export class TableService implements TableServicePort {
           "That table pass is not valid for this table. Ask a tablemate to show their pass again.",
         );
       case "granted":
-        return this.grantedSession(outcome.row);
+        return this.grantedSession(outcome.row, outcome.participant);
     }
   }
 
   async reconnectSession(
     input: { table_token: string; secret: string } & SessionEntryOptions,
   ): Promise<GrantedSession> {
-    const table = await this.requireSessionRow(input.table_token);
+    const outcome = await this.repository.transaction<ReconnectOutcome>(async (tx) => {
+      const table = await this.repository.lockSessionByCode(tx, input.table_token);
+      if (table === null) return { kind: "not_found" };
 
-    this.assertFreshSession(table, input.scan_time);
+      this.assertFreshSession(table, input.scan_time);
 
-    if (table.status !== "active" || !table.session_secret) {
+      if (table.status !== "active" || !table.session_secret) {
+        return { kind: "ended" };
+      }
+      if (table.session_secret !== input.secret) {
+        // Deliberately the same code as a settled table: a stale secret must
+        // not reveal that the session is still live.
+        return { kind: "ended" };
+      }
+
+      const member = await this.repository.upsertMember(
+        tx,
+        table.id,
+        this.withParticipantKey(input.member),
+      );
+      const participant = await this.issueCredential(tx, table, member);
+      return { kind: "granted", row: table, participant };
+    });
+
+    if (outcome.kind === "not_found") {
+      throw new AppError(404, "TABLE_NOT_FOUND", "Invalid table token parsed.");
+    }
+    if (outcome.kind === "ended") {
       throw new AppError(403, "SESSION_ENDED", SESSION_ENDED_MESSAGE);
     }
-    if (table.session_secret !== input.secret) {
-      // Deliberately the same code as a settled table: a stale secret must not
-      // reveal that the session is still live.
-      throw new AppError(403, "SESSION_ENDED", SESSION_ENDED_MESSAGE);
-    }
 
-    // Best-effort: a roster write must never turn a valid refresh into a failure.
-    await this.repository
-      .upsertMemberBestEffort(table.id, input.member)
-      .catch(() => undefined);
-
-    return this.grantedSession(table);
+    return this.grantedSession(outcome.row, outcome.participant);
   }
 
   /* -------------------------------------------------------------- state */
@@ -323,12 +379,22 @@ export class TableService implements TableServicePort {
     };
   }
 
-  async listTableMembers(tableToken: string): Promise<TableMember[]> {
+  async listTableMembers(tableToken: string, participantToken: string): Promise<TableMember[]> {
     const table = await this.requireTable(tableToken);
+
+    if (this.participants !== null) {
+      const principal = await this.requireParticipant(participantToken);
+      if (principal.table_id !== table.id) {
+        throw new AppError(403, "NOT_TABLE_MEMBER", PARTICIPANT_UNAUTHORIZED_MESSAGE);
+      }
+    }
+
     const rows = await this.repository.listMembers(table.id);
 
+    /* `user_id` is never exposed: the roster's participant identity is the
+       server-side member id, and the display name comes from the row. */
     return rows.map((row) => ({
-      user_id: row.user_id,
+      participant_id: row.id,
       name: row.name,
       joined_at: iso(row.joined_at),
     }));
@@ -380,12 +446,32 @@ export class TableService implements TableServicePort {
 
   /* ---------------------------------------------------------- presence */
 
-  async recordHeartbeat(tableToken: string, deviceId: string): Promise<HeartbeatResult> {
+  async recordHeartbeat(
+    tableToken: string,
+    participantToken: string,
+    deviceId: string,
+  ): Promise<HeartbeatResult> {
     const table = await this.requireTable(tableToken);
-    const row = await this.repository.recordHeartbeat(table.id, deviceId);
+    const principal = await this.optionalParticipant(participantToken);
+    if (this.participants !== null && principal === null) {
+      throw new AppError(401, "UNAUTHORIZED", PARTICIPANT_UNAUTHORIZED_MESSAGE);
+    }
+    if (principal !== null && principal.table_id !== table.id) {
+      throw new AppError(403, "NOT_TABLE_MEMBER", PARTICIPANT_UNAUTHORIZED_MESSAGE);
+    }
+
+    const row = await this.repository.recordHeartbeat(
+      table.id,
+      deviceId,
+      principal?.participant_id ?? null,
+    );
 
     if (row === null) {
-      throw new AppError(500, "INTERNAL_ERROR", "The device heartbeat could not be recorded.");
+      throw new AppError(
+        403,
+        "PRESENCE_NOT_OWNED",
+        "That device belongs to another participant at this table.",
+      );
     }
 
     return { table_id: table.id, device_id: row.device_id, last_seen: iso(row.last_seen) };
@@ -393,10 +479,23 @@ export class TableService implements TableServicePort {
 
   async removeHeartbeat(
     tableToken: string,
+    participantToken: string,
     deviceId: string,
   ): Promise<{ table_id: string; device_id: string; released: boolean }> {
     const table = await this.requireTable(tableToken);
-    await this.repository.removePresence(table.id, deviceId);
+    const principal = await this.optionalParticipant(participantToken);
+    if (this.participants !== null && principal === null) {
+      throw new AppError(401, "UNAUTHORIZED", PARTICIPANT_UNAUTHORIZED_MESSAGE);
+    }
+    if (principal !== null && principal.table_id !== table.id) {
+      throw new AppError(403, "NOT_TABLE_MEMBER", PARTICIPANT_UNAUTHORIZED_MESSAGE);
+    }
+
+    await this.repository.removePresence(
+      table.id,
+      deviceId,
+      principal?.participant_id ?? null,
+    );
 
     const { released } = await this.checkAndAutoReleaseTable(table.id);
     return { table_id: table.id, device_id: deviceId, released };
@@ -423,7 +522,7 @@ export class TableService implements TableServicePort {
         return false;
       }
 
-      await this.repository.clearTableRows(tx, tableId);
+      await this.endSeating(tx, tableId, locked.session_started_at, "auto_release", "paid");
       return true;
     });
 
@@ -472,7 +571,13 @@ export class TableService implements TableServicePort {
         };
       }
 
-      await this.repository.clearTableRows(tx, tableId);
+      await this.endSeating(
+        tx,
+        tableId,
+        table.session_started_at,
+        options.allowUnpaid ? "admin_clear" : "staff_clear",
+        table.bill_status,
+      );
       return {
         outcome: "cleared",
         bill_status: table.bill_status,
@@ -518,7 +623,92 @@ export class TableService implements TableServicePort {
     }
   }
 
-  private grantedSession(row: SessionRow): GrantedSession {
+  /**
+   * The single atomic end-of-seating path. Everything below runs inside the
+   * caller's transaction, so a conversation purge failure rolls the clear
+   * back instead of leaving half a seating behind.
+   */
+  private async endSeating(
+    tx: DbTransaction,
+    tableId: string,
+    sessionStartedAt: Date | null,
+    reason: "auto_release" | "staff_clear" | "admin_clear",
+    billStatus: GrantedSession["bill_status"],
+  ): Promise<void> {
+    /* 1. Purge this seating's conversation and voice records. */
+    await this.cleanup.purgeSeating(tx, tableId, sessionStartedAt);
+
+    /* 2. Suppress every still-pending conversation event for the seating. */
+    if (this.outbox !== null) {
+      await this.outbox.suppressConversationEvents(tx, tableId, sessionStartedAt);
+    }
+
+    /* 3. Credentials go before members (members cascade anyway). */
+    if (this.participants !== null) {
+      await this.participants.deleteForTable(tx, tableId);
+    }
+
+    /* 4. Seating-scoped presence/cart/orders + table reset. */
+    await this.repository.clearTableRows(tx, tableId);
+
+    /* 5. The terminal event is written last, in this transaction. */
+    if (this.outbox !== null) {
+      await this.outbox.enqueueSessionEnded(tx, {
+        tableId,
+        sessionStartedAt,
+        reason,
+        billStatus,
+      });
+    }
+  }
+
+  private async issueCredential(
+    tx: DbTransaction,
+    row: SessionRow,
+    member: { id: string } | null,
+  ): Promise<ParticipantCredential | null> {
+    if (this.participants === null || member === null || row.session_started_at === null) {
+      return null;
+    }
+
+    const issued = await this.participants.issue(tx, {
+      memberId: member.id,
+      tableId: row.id,
+      sessionStartedAt: row.session_started_at,
+    });
+
+    return {
+      participant_id: member.id,
+      participant_token: issued.participant_token,
+      participant_expires_at: iso(issued.participant_expires_at),
+    };
+  }
+
+  /** The member row needs a stable key; the token, never this value,
+      authorizes later requests. */
+  private withParticipantKey(member: TableMemberInput | undefined): TableMemberInput | undefined {
+    if (!member) return undefined;
+    if (member.user_id?.trim()) return member;
+    return { ...member, user_id: `mem_${randomUUID()}` };
+  }
+
+  private async requireParticipant(rawToken: string): Promise<ParticipantPrincipal> {
+    const principal = await this.authorizeParticipantToken(rawToken);
+    if (principal === null) {
+      throw new AppError(401, "UNAUTHORIZED", PARTICIPANT_UNAUTHORIZED_MESSAGE);
+    }
+    return principal;
+  }
+
+  private async optionalParticipant(rawToken: string): Promise<ParticipantPrincipal | null> {
+    if (this.participants === null || !rawToken) return null;
+    return this.authorizeParticipantToken(rawToken);
+  }
+
+  private grantedSession(
+    row: SessionRow,
+    participant: ParticipantCredential | null = null,
+  ): GrantedSession {
     if (!row.session_pin || !row.session_secret) {
       // A live row without credentials is a broken invariant, not an invite.
       throw new AppError(403, "SESSION_ENDED", SESSION_ENDED_MESSAGE);
@@ -535,6 +725,9 @@ export class TableService implements TableServicePort {
       bill_status: row.bill_status,
       realtime_token: this.issueReadToken({ id: row.id, code: row.code }),
       gemini_api_key: this.assistantKey,
+      participant_id: participant?.participant_id ?? null,
+      participant_token: participant?.participant_token ?? null,
+      participant_expires_at: participant?.participant_expires_at ?? null,
     };
   }
 
@@ -547,7 +740,60 @@ export class TableService implements TableServicePort {
       pin_locked: row.failed_pin_attempts >= MAX_PIN_ATTEMPTS,
       attempts_remaining: Math.max(0, MAX_PIN_ATTEMPTS - row.failed_pin_attempts),
       realtime_token: null,
+      participant_id: null,
+      participant_token: null,
+      participant_expires_at: null,
     };
+  }
+
+  /* ------------------------------------------------------- credentials */
+
+  async authorizeParticipantToken(rawToken: string): Promise<ParticipantPrincipal | null> {
+    if (this.participants === null || !rawToken) return null;
+    const principal = await this.participants.authorizeByHash(hashParticipantToken(rawToken));
+    if (principal === null) return null;
+    await this.participants.touch(rawToken);
+    return principal;
+  }
+
+  async authorizeParticipantTokenHash(
+    tokenHash: string,
+  ): Promise<ParticipantPrincipal | null> {
+    if (this.participants === null || !tokenHash) return null;
+    return this.participants.authorizeByHash(tokenHash);
+  }
+
+  async authorizeParticipantInTransaction(
+    tx: DbTransaction,
+    rawToken: string,
+  ): Promise<ParticipantPrincipal | null> {
+    if (this.participants === null || !rawToken) return null;
+    return this.participants.authorizeInTransaction(tx, rawToken, "share");
+  }
+
+  async revokeOwnParticipantTokens(rawToken: string): Promise<{ revoked: number }> {
+    if (this.participants === null) {
+      throw new AppError(401, "UNAUTHORIZED", PARTICIPANT_UNAUTHORIZED_MESSAGE);
+    }
+    const revoked = await this.participants.revokeSelf(rawToken);
+    if (revoked === 0) {
+      throw new AppError(401, "UNAUTHORIZED", PARTICIPANT_UNAUTHORIZED_MESSAGE);
+    }
+    return { revoked };
+  }
+
+  async revokeParticipantTokensAsStaff(
+    tableToken: string,
+    participantId: string,
+  ): Promise<{ revoked: number }> {
+    if (this.participants === null) {
+      throw new AppError(404, "PARTICIPANT_NOT_FOUND", "Unknown participant.");
+    }
+    const revoked = await this.participants.revokeForMember(tableToken, participantId);
+    if (revoked === 0) {
+      throw new AppError(404, "PARTICIPANT_NOT_FOUND", "Unknown participant.");
+    }
+    return { revoked };
   }
 }
 

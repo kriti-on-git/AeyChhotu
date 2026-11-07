@@ -1,16 +1,18 @@
 /* Conversation module — repository.
 
    Every SQL statement for conversations, their transcript and voice
-   interactions lives here. The membership query is the authorization read: it
-   requires the table to be active and the presented pass to be the current
-   session secret, and it proves the participant is in table_members. No route
-   trusts a client-supplied table id. */
+   interactions lives here. Authorization is NOT done here any more: the
+   service asks Table's participant guard to validate the credential inside
+   the same transaction, then this repository reads/writes.
 
-import type { DbPort } from "../../infrastructure/database/DatabaseManager.js";
+   Reads that feed a response (transcript history, dedupe replies) may use the
+   pool. Every write takes the caller's `DbTransaction`, so the message and
+   its outbox row commit together. */
+
+import type { DbPort, DbTransaction } from "../../infrastructure/database/DatabaseManager.js";
 import type {
   ConversationAction,
   ConversationKind,
-  ConversationMembership,
   ConversationMessageRow,
   ConversationRepositoryPort,
   ConversationRole,
@@ -42,33 +44,15 @@ export class ConversationRepository implements ConversationRepositoryPort {
     this.db = db;
   }
 
-  async findMembership(
-    tableToken: string,
-    sessionSecret: string,
-    participantId: string,
-  ): Promise<ConversationMembership | null> {
-    const res = await this.db.query<ConversationMembership>(
-      `SELECT t.id AS table_id,
-              t.code AS table_code,
-              t.session_started_at,
-              m.user_id AS participant_id,
-              m.name AS participant_name
-         FROM restaurant_tables t
-         JOIN table_members m ON m.table_id = t.id
-        WHERE t.code = $1
-          AND t.status = 'active'
-          AND t.deleted_at IS NULL
-          AND t.session_started_at IS NOT NULL
-          AND t.session_secret = $2
-          AND m.user_id = $3
-        LIMIT 1`,
-      [tableToken, sessionSecret, participantId],
-    );
-    return res.rows[0] ?? null;
+  transaction<T>(fn: (tx: DbTransaction) => Promise<T>): Promise<T> {
+    return this.db.transaction(fn);
   }
 
-  async findConversation(conversationId: string): Promise<ConversationRow | null> {
-    const res = await this.db.query<ConversationRow>(
+  async findConversation(
+    tx: DbTransaction,
+    conversationId: string,
+  ): Promise<ConversationRow | null> {
+    const res = await tx.query<ConversationRow>(
       `SELECT ${CONVERSATION_COLUMNS} FROM conversations WHERE id = $1`,
       [conversationId],
     );
@@ -76,10 +60,11 @@ export class ConversationRepository implements ConversationRepositoryPort {
   }
 
   async findOrCreateConversation(
+    tx: DbTransaction,
     tableId: string,
     sessionStartedAt: Date,
   ): Promise<ConversationRow> {
-    const res = await this.db.query<ConversationRow>(
+    const res = await tx.query<ConversationRow>(
       `INSERT INTO conversations (table_id, session_started_at)
        VALUES ($1, $2)
        ON CONFLICT (table_id, session_started_at)
@@ -117,10 +102,11 @@ export class ConversationRepository implements ConversationRepositoryPort {
   }
 
   async findMessageByClientId(
+    tx: DbTransaction,
     conversationId: string,
     clientMessageId: string,
   ): Promise<ConversationMessageRow | null> {
-    const res = await this.db.query<ConversationMessageRow>(
+    const res = await tx.query<ConversationMessageRow>(
       `SELECT ${MESSAGE_COLUMNS}
          FROM conversation_messages
         WHERE conversation_id = $1 AND client_message_id = $2
@@ -142,20 +128,23 @@ export class ConversationRepository implements ConversationRepositoryPort {
     return res.rows[0] ?? null;
   }
 
-  async insertMessage(input: {
-    conversationId: string;
-    tableId: string;
-    role: ConversationRole;
-    kind: ConversationKind;
-    participantId: string | null;
-    participantName: string;
-    text: string;
-    clientMessageId: string | null;
-    replyToMessageId: string | null;
-    actions: readonly ConversationAction[];
-    metadata: Readonly<Record<string, unknown>>;
-  }): Promise<ConversationMessageRow | null> {
-    const res = await this.db.query<ConversationMessageRow>(
+  async insertMessage(
+    tx: DbTransaction,
+    input: {
+      conversationId: string;
+      tableId: string;
+      role: ConversationRole;
+      kind: ConversationKind;
+      participantId: string | null;
+      participantName: string;
+      text: string;
+      clientMessageId: string | null;
+      replyToMessageId: string | null;
+      actions: readonly ConversationAction[];
+      metadata: Readonly<Record<string, unknown>>;
+    },
+  ): Promise<ConversationMessageRow | null> {
+    const res = await tx.query<ConversationMessageRow>(
       `INSERT INTO conversation_messages
          (conversation_id, table_id, role, kind, participant_id,
           participant_name, text, client_message_id, reply_to_message_id,
@@ -181,8 +170,11 @@ export class ConversationRepository implements ConversationRepositoryPort {
     return res.rows[0] ?? null;
   }
 
-  async findVoice(interactionId: string): Promise<VoiceInteractionRow | null> {
-    const res = await this.db.query<VoiceInteractionRow>(
+  async findVoice(
+    tx: DbTransaction,
+    interactionId: string,
+  ): Promise<VoiceInteractionRow | null> {
+    const res = await tx.query<VoiceInteractionRow>(
       `SELECT ${VOICE_COLUMNS}
          FROM conversation_voice_interactions
         WHERE id = $1`,
@@ -191,8 +183,11 @@ export class ConversationRepository implements ConversationRepositoryPort {
     return res.rows[0] ?? null;
   }
 
-  async findActiveVoice(conversationId: string): Promise<VoiceInteractionRow | null> {
-    const res = await this.db.query<VoiceInteractionRow>(
+  async findActiveVoice(
+    tx: DbTransaction,
+    conversationId: string,
+  ): Promise<VoiceInteractionRow | null> {
+    const res = await tx.query<VoiceInteractionRow>(
       `SELECT ${VOICE_COLUMNS}
          FROM conversation_voice_interactions
         WHERE conversation_id = $1 AND status = 'active'
@@ -202,12 +197,15 @@ export class ConversationRepository implements ConversationRepositoryPort {
     return res.rows[0] ?? null;
   }
 
-  async insertVoice(input: {
-    conversationId: string;
-    participantId: string;
-    deviceId: string;
-  }): Promise<VoiceInteractionRow | null> {
-    const res = await this.db.query<VoiceInteractionRow>(
+  async insertVoice(
+    tx: DbTransaction,
+    input: {
+      conversationId: string;
+      participantId: string;
+      deviceId: string;
+    },
+  ): Promise<VoiceInteractionRow | null> {
+    const res = await tx.query<VoiceInteractionRow>(
       `INSERT INTO conversation_voice_interactions
          (conversation_id, initiator_participant_id, initiator_device_id)
        VALUES ($1, $2, $3)
@@ -219,13 +217,16 @@ export class ConversationRepository implements ConversationRepositoryPort {
     return res.rows[0] ?? null;
   }
 
-  async endVoice(input: {
-    interactionId: string;
-    conversationId: string;
-    participantId: string;
-    deviceId: string;
-  }): Promise<VoiceInteractionRow | null> {
-    const res = await this.db.query<VoiceInteractionRow>(
+  async endVoice(
+    tx: DbTransaction,
+    input: {
+      interactionId: string;
+      conversationId: string;
+      participantId: string;
+      deviceId: string;
+    },
+  ): Promise<VoiceInteractionRow | null> {
+    const res = await tx.query<VoiceInteractionRow>(
       `UPDATE conversation_voice_interactions
           SET status = 'completed', ended_at = now()
         WHERE id = $1
@@ -237,6 +238,47 @@ export class ConversationRepository implements ConversationRepositoryPort {
       [input.interactionId, input.conversationId, input.participantId, input.deviceId],
     );
     return res.rows[0] ?? null;
+  }
+
+  /**
+   * Clear-time purge. The caller already holds the table row lock and the
+   * session identity; `IS NOT DISTINCT FROM` also covers an empty table
+   * (NULL) so no historical conversation is left behind.
+   */
+  async purgeSeating(
+    tx: DbTransaction,
+    tableId: string,
+    sessionStartedAt: Date | null,
+  ): Promise<void> {
+    await tx.query(
+      `DELETE FROM conversation_voice_interactions
+        WHERE conversation_id IN (
+          SELECT id
+            FROM conversations
+           WHERE table_id = $1
+             AND session_started_at IS NOT DISTINCT FROM $2
+        )`,
+      [tableId, sessionStartedAt],
+    );
+
+    await tx.query(
+      `DELETE FROM conversation_messages
+        WHERE table_id = $1
+          AND conversation_id IN (
+            SELECT id
+              FROM conversations
+             WHERE table_id = $1
+               AND session_started_at IS NOT DISTINCT FROM $2
+          )`,
+      [tableId, sessionStartedAt],
+    );
+
+    await tx.query(
+      `DELETE FROM conversations
+        WHERE table_id = $1
+          AND session_started_at IS NOT DISTINCT FROM $2`,
+      [tableId, sessionStartedAt],
+    );
   }
 
   async schemaObjects(): Promise<ConversationSchemaPresence> {

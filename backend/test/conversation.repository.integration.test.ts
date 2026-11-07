@@ -2,9 +2,10 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { after, before, describe, it } from "node:test";
 
-/* REAL-POSTGRES checks for the Conversation repository: session membership,
-   one conversation per seating, ordered/deduplicated messages and the partial
-   unique index that permits one active voice interaction per room. */
+/* REAL-POSTGRES checks for the Conversation repository: one conversation per
+   seating, ordered/deduplicated messages and the partial unique index that
+   permits one active voice interaction per room. Participant authorization is
+   covered separately against the Table token store. */
 
 import { DatabaseManager } from "../src/infrastructure/database/DatabaseManager.js";
 import { ConversationRepository } from "../src/modules/conversation/conversation.repository.js";
@@ -49,8 +50,9 @@ before(async () => {
     [tableId, PARTICIPANT_A, PARTICIPANT_B],
   );
 
-  const conversation = await repository.findOrCreateConversation(tableId, sessionStartedAt);
-  assert.ok(conversation);
+  await repository.transaction((tx) =>
+    repository.findOrCreateConversation(tx, tableId, sessionStartedAt),
+  );
 });
 
 after(async () => {
@@ -77,20 +79,13 @@ describe("ConversationRepository — real Postgres", { skip: skipReason }, () =>
     ]);
   });
 
-  it("authorizes only a roster member with the current session pass", async () => {
-    const member = await repository.findMembership(tableCode, SECRET, PARTICIPANT_A);
-    assert.ok(member);
-    assert.equal(member.table_id, tableId);
-    assert.equal(member.participant_name, "Asha");
-    assert.equal(member.session_started_at.getTime(), sessionStartedAt.getTime());
-
-    assert.equal(await repository.findMembership(tableCode, "wrong-secret-0000000", PARTICIPANT_A), null);
-    assert.equal(await repository.findMembership(tableCode, SECRET, "stranger"), null);
-  });
-
   it("creates one conversation per seating and a new one after the session changes", async () => {
-    const first = await repository.findOrCreateConversation(tableId, sessionStartedAt);
-    const same = await repository.findOrCreateConversation(tableId, sessionStartedAt);
+    const first = await repository.transaction((tx) =>
+      repository.findOrCreateConversation(tx, tableId, sessionStartedAt),
+    );
+    const same = await repository.transaction((tx) =>
+      repository.findOrCreateConversation(tx, tableId, sessionStartedAt),
+    );
     assert.equal(same.id, first.id);
 
     const nextSession = new Date(sessionStartedAt.getTime() + 60 * 60 * 1_000);
@@ -98,63 +93,80 @@ describe("ConversationRepository — real Postgres", { skip: skipReason }, () =>
       tableId,
       nextSession,
     ]);
-    const next = await repository.findOrCreateConversation(tableId, nextSession);
+    const next = await repository.transaction((tx) =>
+      repository.findOrCreateConversation(tx, tableId, nextSession),
+    );
     assert.notEqual(next.id, first.id);
+    await manager.query("UPDATE restaurant_tables SET session_started_at = $2 WHERE id = $1", [
+      tableId,
+      sessionStartedAt,
+    ]);
   });
 
   it("stores retry-safe messages and returns the newest transcript in order", async () => {
-    const conversation = await repository.findOrCreateConversation(
-      tableId,
-      (await repository.findMembership(tableCode, SECRET, PARTICIPANT_A))!
-        .session_started_at,
+    const conversation = await repository.transaction((tx) =>
+      repository.findOrCreateConversation(tx, tableId, sessionStartedAt),
     );
 
-    const first = await repository.insertMessage({
-      conversationId: conversation.id,
-      tableId,
-      role: "guest",
-      kind: "text",
-      participantId: PARTICIPANT_A,
-      participantName: "Asha",
-      text: "first",
-      clientMessageId: "retry-a",
-      replyToMessageId: null,
-      actions: [],
-      metadata: { origin_participant_id: PARTICIPANT_A },
-    });
+    const first = await repository.transaction((tx) =>
+      repository.insertMessage(tx, {
+        conversationId: conversation.id,
+        tableId,
+        role: "guest",
+        kind: "text",
+        participantId: PARTICIPANT_A,
+        participantName: "Asha",
+        text: "first",
+        clientMessageId: "retry-a",
+        replyToMessageId: null,
+        actions: [],
+        metadata: { origin_participant_id: PARTICIPANT_A },
+      }),
+    );
     assert.ok(first);
 
-    const duplicate = await repository.insertMessage({
-      conversationId: conversation.id,
-      tableId,
-      role: "guest",
-      kind: "text",
-      participantId: PARTICIPANT_A,
-      participantName: "Asha",
-      text: "first again",
-      clientMessageId: "retry-a",
-      replyToMessageId: null,
-      actions: [],
-      metadata: { origin_participant_id: PARTICIPANT_A },
-    });
+    const duplicate = await repository.transaction((tx) =>
+      repository.insertMessage(tx, {
+        conversationId: conversation.id,
+        tableId,
+        role: "guest",
+        kind: "text",
+        participantId: PARTICIPANT_A,
+        participantName: "Asha",
+        text: "first again",
+        clientMessageId: "retry-a",
+        replyToMessageId: null,
+        actions: [],
+        metadata: { origin_participant_id: PARTICIPANT_A },
+      }),
+    );
     assert.equal(duplicate, null);
 
-    const reply = await repository.insertMessage({
-      conversationId: conversation.id,
-      tableId,
-      role: "assistant",
-      kind: "text",
-      participantId: null,
-      participantName: "Chhotu",
-      text: "answer",
-      clientMessageId: null,
-      replyToMessageId: first.id,
-      actions: [{ kind: "info", label: "Looked it up", ok: true }],
-      metadata: { origin_participant_id: PARTICIPANT_A },
-    });
+    const reply = await repository.transaction((tx) =>
+      repository.insertMessage(tx, {
+        conversationId: conversation.id,
+        tableId,
+        role: "assistant",
+        kind: "text",
+        participantId: null,
+        participantName: "Chhotu",
+        text: "answer",
+        clientMessageId: null,
+        replyToMessageId: first.id,
+        actions: [{ kind: "info", label: "Looked it up", ok: true }],
+        metadata: { origin_participant_id: PARTICIPANT_A },
+      }),
+    );
     assert.ok(reply);
     assert.equal((await repository.findAssistantReply(first.id))?.id, reply.id);
-    assert.equal((await repository.findMessageByClientId(conversation.id, "retry-a"))?.id, first.id);
+    assert.equal(
+      (
+        await repository.transaction((tx) =>
+          repository.findMessageByClientId(tx, conversation.id, "retry-a"),
+        )
+      )?.id,
+      first.id,
+    );
 
     const latest = await repository.listMessages(conversation.id, 1);
     assert.deepEqual(latest.map((row) => row.id), [reply.id]);
@@ -163,51 +175,66 @@ describe("ConversationRepository — real Postgres", { skip: skipReason }, () =>
   });
 
   it("enforces one active voice interaction and initiator-only completion", async () => {
-    const conversation = await repository.findOrCreateConversation(
-      tableId,
-      (await repository.findMembership(tableCode, SECRET, PARTICIPANT_A))!
-        .session_started_at,
+    const conversation = await repository.transaction((tx) =>
+      repository.findOrCreateConversation(tx, tableId, sessionStartedAt),
     );
 
-    const active = await repository.insertVoice({
-      conversationId: conversation.id,
-      participantId: PARTICIPANT_A,
-      deviceId: "phone-a",
-    });
+    const active = await repository.transaction((tx) =>
+      repository.insertVoice(tx, {
+        conversationId: conversation.id,
+        participantId: PARTICIPANT_A,
+        deviceId: "phone-a",
+      }),
+    );
     assert.ok(active);
 
-    const overlapping = await repository.insertVoice({
-      conversationId: conversation.id,
-      participantId: PARTICIPANT_B,
-      deviceId: "phone-b",
-    });
-    assert.equal(overlapping, null);
-    assert.equal((await repository.findActiveVoice(conversation.id))?.id, active.id);
-
-    assert.equal(
-      await repository.endVoice({
-        interactionId: active.id,
+    const overlapping = await repository.transaction((tx) =>
+      repository.insertVoice(tx, {
         conversationId: conversation.id,
         participantId: PARTICIPANT_B,
         deviceId: "phone-b",
       }),
+    );
+    assert.equal(overlapping, null);
+    assert.equal(
+      (
+        await repository.transaction((tx) =>
+          repository.findActiveVoice(tx, conversation.id),
+        )
+      )?.id,
+      active.id,
+    );
+
+    assert.equal(
+      await repository.transaction((tx) =>
+        repository.endVoice(tx, {
+          interactionId: active.id,
+          conversationId: conversation.id,
+          participantId: PARTICIPANT_B,
+          deviceId: "phone-b",
+        }),
+      ),
       null,
     );
 
-    const ended = await repository.endVoice({
-      interactionId: active.id,
-      conversationId: conversation.id,
-      participantId: PARTICIPANT_A,
-      deviceId: "phone-a",
-    });
+    const ended = await repository.transaction((tx) =>
+      repository.endVoice(tx, {
+        interactionId: active.id,
+        conversationId: conversation.id,
+        participantId: PARTICIPANT_A,
+        deviceId: "phone-a",
+      }),
+    );
     assert.equal(ended?.status, "completed");
     assert.ok(ended?.ended_at);
 
-    const next = await repository.insertVoice({
-      conversationId: conversation.id,
-      participantId: PARTICIPANT_B,
-      deviceId: "phone-b",
-    });
+    const next = await repository.transaction((tx) =>
+      repository.insertVoice(tx, {
+        conversationId: conversation.id,
+        participantId: PARTICIPANT_B,
+        deviceId: "phone-b",
+      }),
+    );
     assert.ok(next);
   });
 });

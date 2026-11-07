@@ -11,7 +11,11 @@ import { after, before, describe, it } from "node:test";
    behaviour is covered by the integration suite. */
 
 import { createApp } from "../src/app.js";
-import type { TableServicePort } from "../src/modules/table/table.types.js";
+import type {
+  ParticipantPrincipal,
+  TableServicePort,
+} from "../src/modules/table/table.types.js";
+import type { DbTransaction } from "../src/infrastructure/database/DatabaseManager.js";
 
 const GRANTED = {
   table_id: "table-1",
@@ -24,7 +28,12 @@ const GRANTED = {
   bill_status: "unrequested" as const,
   realtime_token: null,
   gemini_api_key: null,
+  participant_id: "member-1",
+  participant_token: `pc_${"A".repeat(43)}`,
+  participant_expires_at: "2026-11-05T22:00:00.000Z",
 };
+
+const TOKEN = `pc_${"A".repeat(43)}`;
 
 class FakeTableService implements TableServicePort {
   readonly calls: Array<{ method: string; args: readonly unknown[] }> = [];
@@ -74,9 +83,11 @@ class FakeTableService implements TableServicePort {
     };
   }
 
-  async listTableMembers(tableToken: string) {
-    this.record("listTableMembers", [tableToken]);
-    return [{ user_id: "u1", name: "Asha", joined_at: "2026-11-05T10:00:00.000Z" }];
+  async listTableMembers(tableToken: string, participantToken: string) {
+    this.record("listTableMembers", [tableToken, participantToken]);
+    return [
+      { participant_id: "member-1", name: "Asha", joined_at: "2026-11-05T10:00:00.000Z" },
+    ];
   }
 
   async activeCheck(tableToken: string) {
@@ -89,14 +100,47 @@ class FakeTableService implements TableServicePort {
     return { table_id: "table-1", bill_status: "requested" as const, bill_requested_at: null };
   }
 
-  async recordHeartbeat(tableToken: string, deviceId: string) {
-    this.record("recordHeartbeat", [tableToken, deviceId]);
+  async recordHeartbeat(tableToken: string, participantToken: string, deviceId: string) {
+    this.record("recordHeartbeat", [tableToken, participantToken, deviceId]);
     return { table_id: "table-1", device_id: deviceId, last_seen: "2026-11-05T10:00:00.000Z" };
   }
 
-  async removeHeartbeat(tableToken: string, deviceId: string) {
-    this.record("removeHeartbeat", [tableToken, deviceId]);
+  async removeHeartbeat(tableToken: string, participantToken: string, deviceId: string) {
+    this.record("removeHeartbeat", [tableToken, participantToken, deviceId]);
     return { table_id: "table-1", device_id: deviceId, released: true };
+  }
+
+  async revokeOwnParticipantTokens(participantToken: string) {
+    this.record("revokeOwnParticipantTokens", [participantToken]);
+    return { revoked: 1 };
+  }
+
+  async authorizeParticipantToken(
+    participantToken: string,
+  ): Promise<ParticipantPrincipal | null> {
+    this.record("authorizeParticipantToken", [participantToken]);
+    return null;
+  }
+
+  async authorizeParticipantTokenHash(
+    tokenHash: string,
+  ): Promise<ParticipantPrincipal | null> {
+    this.record("authorizeParticipantTokenHash", [tokenHash]);
+    return null;
+  }
+
+  async authorizeParticipantInTransaction(
+    tx: DbTransaction,
+    participantToken: string,
+  ): Promise<ParticipantPrincipal | null> {
+    void tx;
+    this.record("authorizeParticipantInTransaction", [participantToken]);
+    return null;
+  }
+
+  async revokeParticipantTokensAsStaff(tableToken: string, participantId: string) {
+    this.record("revokeParticipantTokensAsStaff", [tableToken, participantId]);
+    return { revoked: 1 };
   }
 
   async checkAndAutoReleaseTable(tableId: string) {
@@ -139,10 +183,14 @@ async function call(
   method: string,
   path: string,
   body?: unknown,
+  headers: Record<string, string> = {},
 ): Promise<{ status: number; json: any }> {
   const response = await fetch(`${baseUrl}${path}`, {
     method,
-    headers: body === undefined ? undefined : { "content-type": "application/json" },
+    headers: {
+      ...(body === undefined ? {} : { "content-type": "application/json" }),
+      ...headers,
+    },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   return { status: response.status, json: await response.json() };
@@ -222,9 +270,16 @@ describe("Table API — table state and diner actions", () => {
     assert.equal(state.status, 200);
     assert.equal(state.json.data.active_devices, 1);
 
-    const members = await call("GET", "/api/v1/sessions/k7x2p/members");
+    const anonymous = await call("GET", "/api/v1/sessions/k7x2p/members");
+    assert.equal(anonymous.status, 400);
+
+    const members = await call("GET", "/api/v1/sessions/k7x2p/members", undefined, {
+      "x-participant-token": TOKEN,
+    });
     assert.equal(members.status, 200);
     assert.equal(members.json.data[0].name, "Asha");
+    assert.equal(members.json.data[0].participant_id, "member-1");
+    assert.equal("user_id" in members.json.data[0], false);
 
     const active = await call("GET", "/api/v1/sessions/k7x2p/active-check");
     assert.equal(active.status, 200);
@@ -236,15 +291,21 @@ describe("Table API — table state and diner actions", () => {
     assert.equal(bill.status, 200);
     assert.equal(bill.json.data.bill_status, "requested");
 
-    const beat = await call("POST", "/api/v1/sessions/k7x2p/heartbeat", {
-      device_id: "device-1",
-    });
+    const beat = await call(
+      "POST",
+      "/api/v1/sessions/k7x2p/heartbeat",
+      { device_id: "device-1" },
+      { "x-participant-token": TOKEN },
+    );
     assert.equal(beat.status, 200);
     assert.equal(beat.json.data.device_id, "device-1");
 
-    const release = await call("DELETE", "/api/v1/sessions/k7x2p/heartbeat", {
-      device_id: "device-1",
-    });
+    const release = await call(
+      "DELETE",
+      "/api/v1/sessions/k7x2p/heartbeat",
+      { device_id: "device-1" },
+      { "x-participant-token": TOKEN },
+    );
     assert.equal(release.status, 200);
     assert.equal(release.json.data.released, true);
   });

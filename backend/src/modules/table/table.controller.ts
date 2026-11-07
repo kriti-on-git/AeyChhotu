@@ -6,7 +6,8 @@
    feedback belongs to the insights module but lives under the session
    capability; the controller does not import that module. */
 
-import { Router } from "express";
+import { Router, type Request } from "express";
+import { requireAuth, requireRole } from "../../middleware/auth.js";
 import { parseOrThrow } from "../../validation/parse.js";
 import {
   activeCheckParamsSchema,
@@ -15,6 +16,8 @@ import {
   initializeSchema,
   joinPassSchema,
   joinPinSchema,
+  participantRevokeParamsSchema,
+  participantTokenSchema,
   reconnectSchema,
   sessionTableParamsSchema,
 } from "./table.validation.js";
@@ -33,6 +36,13 @@ export interface TableControllerDeps {
 function memberOf(body: { user_id?: string; name: string }) {
   if (!body.user_id) return undefined;
   return { user_id: body.user_id, name: body.name };
+}
+
+/* Phase 5.2: the credential is a header, never a URL or body value. The
+   service validates it server-side; no handler reads a participant id from
+   the request to establish identity. */
+function participantToken(req: Request): string {
+  return parseOrThrow(participantTokenSchema, req.header("x-participant-token") ?? "");
 }
 
 export function createTableRouter(deps: TableControllerDeps): Router {
@@ -80,7 +90,7 @@ export function createTableRouter(deps: TableControllerDeps): Router {
   // GET /api/v1/sessions/:table_token/members — the live roster.
   router.get("/:table_token/members", async (req, res) => {
     const params = parseOrThrow(sessionTableParamsSchema, req.params);
-    const data = await service.listTableMembers(params.table_token);
+    const data = await service.listTableMembers(params.table_token, participantToken(req));
     res.status(200).json({ success: true, data });
   });
 
@@ -102,7 +112,11 @@ export function createTableRouter(deps: TableControllerDeps): Router {
   router.post("/:table_token/heartbeat", async (req, res) => {
     const params = parseOrThrow(sessionTableParamsSchema, req.params);
     const body = parseOrThrow(heartbeatSchema, req.body);
-    const data = await service.recordHeartbeat(params.table_token, body.device_id);
+    const data = await service.recordHeartbeat(
+      params.table_token,
+      participantToken(req),
+      body.device_id,
+    );
     res.status(200).json({ success: true, data });
   });
 
@@ -110,9 +124,36 @@ export function createTableRouter(deps: TableControllerDeps): Router {
   router.delete("/:table_token/heartbeat", async (req, res) => {
     const params = parseOrThrow(sessionTableParamsSchema, req.params);
     const body = parseOrThrow(heartbeatSchema, req.body);
-    const data = await service.removeHeartbeat(params.table_token, body.device_id);
+    const data = await service.removeHeartbeat(
+      params.table_token,
+      participantToken(req),
+      body.device_id,
+    );
     res.status(200).json({ success: true, data });
   });
+
+  // POST /api/v1/sessions/:table_token/participant/revoke — self-service.
+  router.post("/:table_token/participant/revoke", async (req, res) => {
+    const params = parseOrThrow(sessionTableParamsSchema, req.params);
+    const data = await service.revokeOwnParticipantTokens(participantToken(req));
+    res.status(200).json({ success: true, data: { ...data, table_token: params.table_token } });
+  });
+
+  // POST /api/v1/sessions/:table_token/participants/:participant_id/revoke
+  // Staff only: a guest can never revoke a tablemate's credentials.
+  router.post(
+    "/:table_token/participants/:participant_id/revoke",
+    requireAuth,
+    requireRole("kitchen", "floor", "admin"),
+    async (req, res) => {
+      const params = parseOrThrow(participantRevokeParamsSchema, req.params);
+      const data = await service.revokeParticipantTokensAsStaff(
+        params.table_token,
+        params.participant_id,
+      );
+      res.status(200).json({ success: true, data });
+    },
+  );
 
   // POST /api/v1/sessions/:table_token/feedback — written from the TABLE
   // capability, read only by the admin console.

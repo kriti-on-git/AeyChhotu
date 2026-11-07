@@ -12,6 +12,18 @@ export {
   type TableModuleOptions,
 } from "./table.module.js";
 export { createReadTokenIssuer } from "./table.read-token.js";
+export {
+  ParticipantTokenStore,
+  MAX_ACTIVE_PARTICIPANT_TOKENS,
+  PARTICIPANT_TOKEN_PREFIX,
+  PARTICIPANT_TOKEN_RE,
+  PARTICIPANT_TOKEN_TTL_HOURS,
+  PARTICIPANT_UNAUTHORIZED_MESSAGE,
+  generateParticipantToken,
+  hashParticipantToken,
+  NOOP_SESSION_CLEANUP,
+  type ParticipantTokenStorePort,
+} from "./table.participant-tokens.js";
 export { NOOP_TABLE_EVENTS, type TableEventPublisher, type TableClearReason } from "./table.events.js";
 export { TABLE_TOKENS } from "./table.tokens.js";
 export {
@@ -21,6 +33,8 @@ export {
   initializeSchema,
   joinPassSchema,
   joinPinSchema,
+  participantRevokeParamsSchema,
+  participantTokenSchema,
   reconnectSchema,
   sessionTableParamsSchema,
 } from "./table.validation.js";
@@ -40,7 +54,12 @@ export {
   type HeartbeatResult,
   type InitializeResult,
   type LockedSession,
+  type MemberIdentityRow,
+  type ParticipantCredential,
+  type ParticipantPrincipal,
+  type ParticipantTokenIssuance,
   type ReadTokenIssuer,
+  type SessionCleanupPort,
   type SessionEntryOptions,
   type SessionRow,
   type TableMember,
@@ -48,5 +67,6 @@ export {
   type TableRecord,
   type TableRepositoryPort,
   type TableServicePort,
+  type TableSessionOutboxPort,
   type TableStateResult,
 } from "./table.types.js";

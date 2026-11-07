@@ -12,6 +12,7 @@ import type {
   ActiveOrderRow,
   BillRow,
   LockedTableRow,
+  MemberIdentityRow,
   MemberRow,
   OrderCounts,
   PresenceRow,
@@ -82,7 +83,7 @@ export class TableRepository implements TableRepositoryPort {
 
   async listMembers(tableId: string): Promise<MemberRow[]> {
     const res = await this.db.query<MemberRow>(
-      `SELECT user_id, name, joined_at
+      `SELECT id, user_id, name, joined_at
          FROM table_members
         WHERE table_id = $1
         ORDER BY joined_at, id`,
@@ -190,40 +191,69 @@ export class TableRepository implements TableRepositoryPort {
     tx: DbTransaction,
     tableId: string,
     member: TableMemberInput | undefined,
-  ): Promise<void> {
+  ): Promise<MemberIdentityRow | null> {
     const userId = member?.user_id?.trim();
-    if (!userId || !member) return;
+    if (!userId || !member) return null;
 
-    await tx.query(MEMBER_UPSERT_SQL, [tableId, userId, member.name]);
+    const res = await tx.query<MemberIdentityRow>(
+      `${MEMBER_UPSERT_SQL}
+       RETURNING id, user_id, name, joined_at`,
+      [tableId, userId, member.name],
+    );
+    return res.rows[0] ?? null;
   }
 
   async upsertMemberBestEffort(
     tableId: string,
     member: TableMemberInput | undefined,
-  ): Promise<void> {
+  ): Promise<MemberIdentityRow | null> {
     const userId = member?.user_id?.trim();
-    if (!userId || !member) return;
+    if (!userId || !member) return null;
 
-    await this.db.query(MEMBER_UPSERT_SQL, [tableId, userId, member.name]);
-  }
-
-  async recordHeartbeat(tableId: string, deviceId: string): Promise<PresenceRow | null> {
-    const res = await this.db.query<PresenceRow>(
-      `INSERT INTO table_device_presence (table_id, device_id, last_seen)
-            VALUES ($1, $2, now())
-       ON CONFLICT (table_id, device_id)
-         DO UPDATE SET last_seen = now()
-       RETURNING device_id, last_seen`,
-      [tableId, deviceId],
+    const res = await this.db.query<MemberIdentityRow>(
+      `${MEMBER_UPSERT_SQL}
+       RETURNING id, user_id, name, joined_at`,
+      [tableId, userId, member.name],
     );
     return res.rows[0] ?? null;
   }
 
-  async removePresence(tableId: string, deviceId: string): Promise<void> {
-    await this.db.query(
-      "DELETE FROM table_device_presence WHERE table_id = $1 AND device_id = $2",
-      [tableId, deviceId],
+  async recordHeartbeat(
+    tableId: string,
+    deviceId: string,
+    participantId: string | null,
+  ): Promise<PresenceRow | null> {
+    /* The conflict update requires the exact authenticated member. A legacy
+       row with no owner never matches an authenticated participant, so one
+       guest can neither refresh nor hijack another guest's device row. Only
+       the no-token compatibility path can update a NULL-owned row. */
+    const res = await this.db.query<PresenceRow>(
+      `INSERT INTO table_device_presence (table_id, device_id, participant_id, last_seen)
+            VALUES ($1, $2, $3, now())
+       ON CONFLICT (table_id, device_id)
+         DO UPDATE SET last_seen = now(), participant_id = EXCLUDED.participant_id
+         WHERE table_device_presence.participant_id
+               IS NOT DISTINCT FROM EXCLUDED.participant_id
+       RETURNING device_id, last_seen`,
+      [tableId, deviceId, participantId],
     );
+    return res.rows[0] ?? null;
+  }
+
+  async removePresence(
+    tableId: string,
+    deviceId: string,
+    participantId: string | null,
+  ): Promise<boolean> {
+    const res = await this.db.query<{ device_id: string }>(
+      `DELETE FROM table_device_presence
+        WHERE table_id = $1
+          AND device_id = $2
+          AND participant_id IS NOT DISTINCT FROM $3::uuid
+        RETURNING device_id`,
+      [tableId, deviceId, participantId],
+    );
+    return (res.rowCount ?? res.rows.length) > 0;
   }
 
   async requestBill(tableId: string): Promise<BillRow | null> {

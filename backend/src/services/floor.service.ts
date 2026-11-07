@@ -1,8 +1,10 @@
-import { pool } from "../db/pool.js";
+import { createLegacyDbPort } from "../db/legacy-db-port.js";
 import { AppError } from "../errors/app-error.js";
 import { buildMeta, iso, type PageMeta } from "../lib/util.js";
 import { clearTableSession, type BillStatus } from "./sessions.service.js";
 import { getDefaultBillingService } from "./billing.service.js";
+
+const db = createLegacyDbPort();
 
 /* Module 4 — E17 GET /api/v1/floor/tables (Floor View summary) and the
    settle action that takes payment and hands the table to auto-release. */
@@ -61,11 +63,11 @@ export async function listFloorTables(params: {
   /* Archived tables (006) are off the floor: nobody can scan them any more,
      so keeping their cards on the board would be noise a server has to learn
      to ignore. */
-  const countRes = await pool.query<{ total: number }>(
+  const countRes = await db.query<{ total: number }>(
     "SELECT count(*)::int AS total FROM restaurant_tables WHERE deleted_at IS NULL",
   );
 
-  const rows = await pool.query<{
+  const rows = await db.query<{
     table_id: string;
     code: string;
     name: string;
@@ -218,7 +220,7 @@ export interface NotifyAdminResult {
 }
 
 export async function notifyAdminForTable(tableId: string): Promise<NotifyAdminResult> {
-  const found = await pool.query<{ bill_unpaid: boolean }>(
+  const found = await db.query<{ bill_unpaid: boolean }>(
     `SELECT (t.bill_status <> 'paid'
              AND t.session_started_at IS NOT NULL
              AND EXISTS (
@@ -246,7 +248,7 @@ export async function notifyAdminForTable(tableId: string): Promise<NotifyAdminR
     );
   }
 
-  const updated = await pool.query<{ clear_requested_at: Date }>(
+  const updated = await db.query<{ clear_requested_at: Date }>(
     `UPDATE restaurant_tables
         SET clear_requested_at = COALESCE(clear_requested_at, now())
       WHERE id = $1
@@ -290,7 +292,7 @@ export async function clearFloorTable(
   }
 
   if (result.outcome === "unpaid") {
-    const alert = await pool.query<{ clear_requested_at: Date }>(
+    const alert = await db.query<{ clear_requested_at: Date }>(
       `UPDATE restaurant_tables
           SET clear_requested_at = COALESCE(clear_requested_at, now())
         WHERE id = $1
@@ -333,7 +335,7 @@ export interface ServeRequestResult {
 
 export async function requestServe(tableId: string, requested: boolean): Promise<ServeRequestResult> {
   if (!requested) {
-    const cleared = await pool.query<{ id: string }>(
+    const cleared = await db.query<{ id: string }>(
       `UPDATE restaurant_tables
           SET serve_requested_at = NULL
         WHERE id = $1 AND deleted_at IS NULL
@@ -348,7 +350,7 @@ export async function requestServe(tableId: string, requested: boolean): Promise
     return { table_id: tableId, requested: false, serve_requested_at: null };
   }
 
-  const found = await pool.query<{ ready: boolean }>(
+  const found = await db.query<{ ready: boolean }>(
     `SELECT EXISTS (
               SELECT 1 FROM orders o
                WHERE o.table_id = t.id AND o.status = 'ready'
@@ -371,7 +373,7 @@ export async function requestServe(tableId: string, requested: boolean): Promise
     );
   }
 
-  const updated = await pool.query<{ serve_requested_at: Date }>(
+  const updated = await db.query<{ serve_requested_at: Date }>(
     `UPDATE restaurant_tables
         SET serve_requested_at = now()
       WHERE id = $1

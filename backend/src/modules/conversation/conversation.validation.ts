@@ -1,27 +1,17 @@
 /* Conversation module — request validation.
 
-   Credentials live in headers, never in a URL, so a table pass cannot end up
-   in access logs or browser history. The table and participant identity are
-   still re-checked against the roster by the service; these schemas only make
-   malformed input cheap to refuse. */
+   Phase 5.2: the only credential is the server-issued participant token in
+   `X-Participant-Token`. It lives in a header, never a URL, and the service
+   validates it transactionally against the roster. */
 
 import { z } from "zod";
-import { tableToken, uuid } from "../../validation/primitives.js";
-
-const participantId = z
-  .string()
-  .trim()
-  .min(1, "participant id is required")
-  .max(120, "participant id must be 120 characters or fewer");
-
-const sessionSecret = z
-  .string()
-  .regex(/^[A-Za-z0-9]{20}$/, "session secret must be the 20-character table pass");
+import { uuid } from "../../validation/primitives.js";
 
 export const conversationCredentialHeadersSchema = z.object({
-  "x-table-token": tableToken,
-  "x-table-secret": sessionSecret,
-  "x-participant-id": participantId,
+  "x-participant-token": z
+    .string()
+    .trim()
+    .regex(/^pc_[A-Za-z0-9_-]{43}$/, "A participant credential is required."),
 });
 
 export const conversationParamsSchema = z.object({

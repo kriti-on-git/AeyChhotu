@@ -8,6 +8,10 @@ import { describe, it } from "node:test";
 import type { DbPort } from "../src/infrastructure/database/DatabaseManager.js";
 import { createConversationModule } from "../src/modules/conversation/conversation.module.js";
 import type { ConversationAiProvider } from "../src/modules/conversation/conversation.types.js";
+import { FakeOutbox, FakeParticipantGuard } from "./helpers/conversation-fakes.js";
+
+const participants = new FakeParticipantGuard();
+const outbox = new FakeOutbox();
 
 function fakeDb(present: boolean) {
   const statements: string[] = [];
@@ -48,7 +52,8 @@ describe("Conversation module lifecycle", () => {
     const { db } = fakeDb(true);
     const module = createConversationModule({
       db,
-      realtime: { toTable: () => ({ room: "table:x", event: "x.y", recipients: 0, skipped: true }) },
+      participants,
+      outbox,
       ...ports,
       aiProvider: provider,
     });
@@ -74,7 +79,7 @@ describe("Conversation module lifecycle", () => {
 
   it("stays healthy without an AI provider but says so", async () => {
     const { db } = fakeDb(true);
-    const module = createConversationModule({ db, realtime: { toTable: () => ({ room: "table:x", event: "x.y", recipients: 0, skipped: true }) }, ...ports });
+    const module = createConversationModule({ db, participants, outbox, ...ports });
 
     const health = await module.health();
     assert.equal(health.state, "HEALTHY");
@@ -89,7 +94,8 @@ describe("Conversation module lifecycle", () => {
     const { db } = fakeDb(false);
     const module = createConversationModule({
       db,
-      realtime: { toTable: () => ({ room: "table:x", event: "x.y", recipients: 0, skipped: true }) },
+      participants,
+      outbox,
       ...ports,
     });
 
@@ -104,7 +110,8 @@ describe("Conversation module lifecycle", () => {
     const { db, statements } = fakeDb(true);
     const module = createConversationModule({
       db,
-      realtime: { toTable: () => ({ room: "table:x", event: "x.y", recipients: 0, skipped: true }) },
+      participants,
+      outbox,
       ...ports,
     });
 
@@ -126,7 +133,8 @@ describe("Conversation module lifecycle", () => {
     } as unknown as DbPort;
     const module = createConversationModule({
       db,
-      realtime: { toTable: () => ({ room: "table:x", event: "x.y", recipients: 0, skipped: true }) },
+      participants,
+      outbox,
       ...ports,
     });
 

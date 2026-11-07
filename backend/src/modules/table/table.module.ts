@@ -17,16 +17,30 @@ import { env } from "../../config/env.js";
 import { createLegacyDbPort } from "../../db/legacy-db-port.js";
 import type { DbPort } from "../../infrastructure/database/DatabaseManager.js";
 import type { TableEventPublisher } from "./table.events.js";
+import {
+  ParticipantTokenStore,
+  type ParticipantTokenStorePort,
+} from "./table.participant-tokens.js";
 import { createReadTokenIssuer } from "./table.read-token.js";
 import { TableRepository } from "./table.repository.js";
 import { TableService } from "./table.service.js";
-import type { ReadTokenIssuer, TableServicePort } from "./table.types.js";
+import type {
+  ReadTokenIssuer,
+  SessionCleanupPort,
+  TableServicePort,
+  TableSessionOutboxPort,
+} from "./table.types.js";
 
 export interface TableModuleOptions {
   readonly db: DbPort;
   readonly events?: TableEventPublisher;
   readonly issueReadToken?: ReadTokenIssuer;
   readonly assistantKey?: string | null;
+  /** Conversation purge invoked inside the clear transaction. */
+  readonly cleanup?: SessionCleanupPort;
+  /** Terminal session outbox write invoked inside the clear transaction. */
+  readonly outbox?: TableSessionOutboxPort;
+  readonly participants?: ParticipantTokenStorePort;
 }
 
 export interface TableModule extends ManagedComponent {
@@ -40,11 +54,15 @@ export interface TableModule extends ManagedComponent {
 
 export function createTableModule(options: TableModuleOptions): TableModule {
   const repository = new TableRepository(options.db);
+  const participants = options.participants ?? new ParticipantTokenStore(options.db);
   const service = new TableService({
     repository,
     events: options.events,
     issueReadToken: options.issueReadToken ?? createReadTokenIssuer(null),
     assistantKey: options.assistantKey ?? null,
+    participants,
+    cleanup: options.cleanup,
+    outbox: options.outbox,
   });
 
   let lastSchema: Awaited<ReturnType<TableRepository["schemaObjects"]>> | null = null;
@@ -113,10 +131,12 @@ let defaultService: TableServicePort | null = null;
     before; production replaces it during composition. */
 export function getDefaultTableService(): TableServicePort {
   if (defaultService === null) {
+    const legacyDb = createLegacyDbPort();
     defaultService = new TableService({
-      repository: new TableRepository(createLegacyDbPort()),
+      repository: new TableRepository(legacyDb),
       issueReadToken: createReadTokenIssuer(env.supabaseJwtSecret),
       assistantKey: env.geminiApiKey,
+      participants: new ParticipantTokenStore(legacyDb),
     });
   }
   return defaultService;

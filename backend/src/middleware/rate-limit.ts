@@ -78,10 +78,15 @@ function tableTokenOf(req: Request): string | null {
   return null;
 }
 
-/** Diner/staff budget identity: bearer token → table token → IP. */
+/** Diner/staff budget identity: bearer token → participant credential →
+    table token → IP. The participant token is per person, so one guest's
+    polling cannot consume a tablemate's budget. */
 function credentialKey(req: Request): string {
   const header = req.header("authorization");
   if (header?.startsWith("Bearer ")) return opaque("token", header.slice(7));
+
+  const participant = req.header("x-participant-token");
+  if (participant) return opaque("participant", participant);
 
   const table = tableTokenOf(req);
   if (table) return opaque("table", table);
@@ -134,6 +139,29 @@ export const staffLoginLimiter = rateLimit({
   legacyHeaders: false,
   skipSuccessfulRequests: true,
   keyGenerator: (req) => `login:${surfaceKey(req)}:${ipPart(req)}`,
+  handler: HANDLER,
+});
+
+/** Session issuance/refresh: one counter per endpoint + client IP. The
+    device reference is never the key, and the response is the generic 429
+    envelope, so it cannot reveal whether a table or token exists. */
+export const sessionEntryLimiter = rateLimit({
+  windowMs: 10 * 60 * 1000,
+  limit: 40,
+  standardHeaders: "draft-8",
+  legacyHeaders: false,
+  keyGenerator: (req) => `session:${req.path.split("/").filter(Boolean)[0] ?? "entry"}:${ipPart(req)}`,
+  handler: HANDLER,
+});
+
+/** A broader per-IP budget across every /sessions route, so rotating table
+    tokens cannot multiply the issuance budget. */
+export const sessionIpLimiter = rateLimit({
+  windowMs: 10 * 60 * 1000,
+  limit: 300,
+  standardHeaders: "draft-8",
+  legacyHeaders: false,
+  keyGenerator: (req) => `session-ip:${ipPart(req)}`,
   handler: HANDLER,
 });
 

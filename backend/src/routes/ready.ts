@@ -1,41 +1,60 @@
 import { Router } from "express";
-import { pool } from "../db/pool.js";
+import type { HealthPort } from "../infrastructure/health/HealthManager.js";
 import { logEvent } from "../observability/logger.js";
 
-/* GET /api/v1/ready — READINESS probe, distinct from /health (liveness).
+/* GET /api/v1/ready — readiness probe, distinct from /health (liveness).
 
-   Liveness ("is the process up?") must never touch dependencies, or a
-   database blip makes the orchestrator restart a perfectly healthy server
-   into the same blip. Readiness ("can we serve real traffic?") is exactly
-   where the database check belongs: a failed probe removes this instance
-   from the load balancer until the database answers again. */
+   Every check reads the actual registered components through HealthManager.
+   PostgreSQL failure makes the database unhealthy and every dependent
+   unhealthy without running dependent hooks; /ready then answers 503. A
+   passing result is cached for a few seconds so a fleet of probes does not
+   become a database load test. Internal errors, credentials and diagnostics
+   never appear in this public response. */
 
-// Cache a passing result for a few seconds so a fleet of probes doesn't
-// turn into a database load test.
 const CACHE_MS = 5_000;
-let lastOkAt = 0;
+const CHECK_TIMEOUT_MS = 3_000;
 
-export const readyRouter = Router();
+export function createReadyRouter(health?: HealthPort): Router {
+  const router = Router();
+  let lastOkAt = 0;
 
-readyRouter.get("/", async (_req, res) => {
-  if (Date.now() - lastOkAt < CACHE_MS) {
-    res.status(200).json({ data: { ready: true, database: "up" } });
-    return;
-  }
+  router.get("/", async (_req, res) => {
+    if (health === undefined) {
+      res.status(503).json({
+        success: false,
+        error: { code: "NOT_READY", message: "Health checks are not initialized." },
+      });
+      return;
+    }
 
-  try {
-    // `SELECT 1` over a pooled connection proves auth, DNS, TLS and the
-    // query path in one round trip.
-    await pool.query("SELECT 1");
-    lastOkAt = Date.now();
-    res.status(200).json({ data: { ready: true, database: "up" } });
-  } catch (err) {
-    logEvent("error", "readiness_failed", {
-      error_message: err instanceof Error ? err.message : String(err),
-    });
-    res.status(503).json({
-      success: false,
-      error: { code: "NOT_READY", message: "Dependency check failed." },
-    });
-  }
-});
+    if (Date.now() - lastOkAt < CACHE_MS) {
+      res.status(200).json({ data: { ready: true, database: "up" } });
+      return;
+    }
+
+    try {
+      await health.checkAll({ timeoutMs: CHECK_TIMEOUT_MS });
+      const readiness = health.readiness();
+      if (!readiness.ready) {
+        res.status(503).json({
+          success: false,
+          error: { code: "NOT_READY", message: "Dependency check failed." },
+        });
+        return;
+      }
+
+      lastOkAt = Date.now();
+      res.status(200).json({ data: { ready: true, database: "up" } });
+    } catch (err) {
+      logEvent("error", "readiness_failed", {
+        error_message: err instanceof Error ? err.message : String(err),
+      });
+      res.status(503).json({
+        success: false,
+        error: { code: "NOT_READY", message: "Dependency check failed." },
+      });
+    }
+  });
+
+  return router;
+}

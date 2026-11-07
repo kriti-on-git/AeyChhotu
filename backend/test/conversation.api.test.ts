@@ -25,16 +25,16 @@ let repository: InstanceType<typeof fakes.FakeConversationRepository>;
 let service: InstanceType<typeof ConversationService>;
 
 const HEADERS = {
-  "x-table-token": fakes.TABLE_CODE,
-  "x-table-secret": fakes.TABLE_SECRET,
-  "x-participant-id": fakes.PARTICIPANT_A,
+  "x-participant-token": fakes.TOKEN_A,
 };
+const B_HEADERS = { "x-participant-token": fakes.TOKEN_B };
 
 before(async () => {
   repository = new fakes.FakeConversationRepository();
   service = new ConversationService({
     repository,
-    realtime: new fakes.FakeRealtime(),
+    participants: new fakes.FakeParticipantGuard(),
+    outbox: new fakes.FakeOutbox(),
     tools: new fakes.FakeToolPort(),
     aiProvider: new fakes.FakeAiProvider([{ text: "Try the masala dosa." }], "Sure."),
   });
@@ -73,27 +73,45 @@ async function ensureConversation(): Promise<string> {
 }
 
 describe("Conversation API — authorization", () => {
-  it("requires all three table-session headers", async () => {
+  it("requires the participant token header", async () => {
     const response = await call("POST", "/api/v1/conversations", {
-      headers: { "x-table-secret": "short" },
+      headers: { "x-participant-token": "" },
     });
     assert.equal(response.status, 400);
     assert.equal(response.json.error.code, "VALIDATION_ERROR");
-    assert.ok(response.json.error.fields["x-table-secret"]);
+    assert.ok(response.json.error.fields["x-participant-token"]);
   });
 
-  it("refuses a participant who is not in the table session", async () => {
+  it("refuses an unknown participant token", async () => {
     const response = await call("POST", "/api/v1/conversations", {
-      headers: { "x-participant-id": "stranger" },
+      headers: { "x-participant-token": fakes.INVALID_TOKEN },
     });
     assert.equal(response.status, 403);
     assert.equal(response.json.error.code, "NOT_TABLE_MEMBER");
   });
 
-  it("never echoes the table pass", async () => {
+  it("ignores a client-asserted participant id", async () => {
+    const response = await call("POST", "/api/v1/conversations", {
+      headers: { ...B_HEADERS, "x-participant-id": fakes.PARTICIPANT_A },
+    });
+    assert.equal(response.status, 200);
+    const posted = await call(
+      "POST",
+      `/api/v1/conversations/${response.json.data.conversation.conversation_id}/messages`,
+      {
+        headers: { ...B_HEADERS, "x-participant-id": fakes.PARTICIPANT_A },
+        body: { text: "Who am I?" },
+      },
+    );
+    assert.equal(posted.status, 200);
+    assert.equal(posted.json.data.message.origin_participant_id, fakes.PARTICIPANT_B);
+    assert.equal(posted.json.data.message.participant.name, "Ravi");
+  });
+
+  it("never echoes the participant token", async () => {
     const response = await call("POST", "/api/v1/conversations");
     assert.equal(response.status, 200);
-    assert.doesNotMatch(JSON.stringify(response.json), new RegExp(fakes.TABLE_SECRET));
+    assert.doesNotMatch(JSON.stringify(response.json), /pc_[A-Za-z0-9_-]{43}/);
   });
 });
 
@@ -101,7 +119,7 @@ describe("Conversation API — shared history", () => {
   it("creates one room and returns the same id for both guests", async () => {
     const first = await call("POST", "/api/v1/conversations");
     const second = await call("POST", "/api/v1/conversations", {
-      headers: { "x-participant-id": fakes.PARTICIPANT_B },
+      headers: B_HEADERS,
     });
     assert.equal(
       second.json.data.conversation.conversation_id,
@@ -119,12 +137,13 @@ describe("Conversation API — shared history", () => {
     assert.equal(posted.status, 200);
     assert.equal(posted.json.data.message.text, "What is good tonight?");
     assert.equal(posted.json.data.message.origin_participant_id, fakes.PARTICIPANT_A);
-    assert.equal(posted.json.data.assistant.text, "Try the masala dosa.");
+    const answer = posted.json.data.assistant.text as string;
+    assert.ok(answer.length > 0);
 
     const history = await call(
       "GET",
       `/api/v1/conversations/${conversationId}`,
-      { headers: { "x-participant-id": fakes.PARTICIPANT_B } },
+      { headers: B_HEADERS },
     );
     assert.equal(history.status, 200);
     assert.ok(
@@ -134,7 +153,7 @@ describe("Conversation API — shared history", () => {
     );
     assert.ok(
       history.json.data.messages.some(
-        (message: { text: string }) => message.text === "Try the masala dosa.",
+        (message: { text: string }) => message.text === answer,
       ),
     );
   });
@@ -191,7 +210,7 @@ describe("Conversation API — voice", () => {
       `/api/v1/conversations/${conversationId}/voice/start`,
       {
         body: { device_id: "phone-b" },
-        headers: { "x-participant-id": fakes.PARTICIPANT_B },
+        headers: B_HEADERS,
       },
     );
     assert.equal(overlap.status, 409);

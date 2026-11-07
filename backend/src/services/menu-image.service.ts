@@ -1,7 +1,9 @@
 import { randomUUID } from "node:crypto";
 import sharp from "sharp";
-import { pool } from "../db/pool.js";
+import { createLegacyDbPort } from "../db/legacy-db-port.js";
 import { AppError } from "../errors/app-error.js";
+
+const db = createLegacyDbPort();
 
 /* Dish photography — processing and storage.
 
@@ -148,7 +150,7 @@ async function putObject(key: string, buffer: Buffer, contentType: string): Prom
     return;
   }
 
-  await pool.query(
+  await db.query(
     `INSERT INTO menu_image_objects (storage_key, content_type, bytes, size_bytes)
           VALUES ($1, $2, $3, $4)
      ON CONFLICT (storage_key) DO UPDATE
@@ -181,7 +183,7 @@ async function deleteObjects(keys: string[]): Promise<void> {
       return;
     }
 
-    await pool.query("DELETE FROM menu_image_objects WHERE storage_key = ANY($1::text[])", [unique]);
+    await db.query("DELETE FROM menu_image_objects WHERE storage_key = ANY($1::text[])", [unique]);
   } catch (err) {
     /* Best effort: an orphaned object wastes bytes but never corrupts the
        menu. The database row is the source of truth for what exists. */
@@ -263,7 +265,7 @@ export async function replaceMenuItemImage(
     invalid("That file type is not supported.");
   }
 
-  const item = await pool.query<{ id: string }>(
+  const item = await db.query<{ id: string }>(
     "SELECT id FROM menu_items WHERE id = $1 AND deleted_at IS NULL",
     [menuItemId],
   );
@@ -279,7 +281,7 @@ export async function replaceMenuItemImage(
     invalid("That photo could not be read. Try another file.");
   }
 
-  const previous = await pool.query<{ original_key: string; small_key: string; tiny_key: string }>(
+  const previous = await db.query<{ original_key: string; small_key: string; tiny_key: string }>(
     "SELECT original_key, small_key, tiny_key FROM menu_item_images WHERE menu_item_id = $1",
     [menuItemId],
   );
@@ -297,7 +299,7 @@ export async function replaceMenuItemImage(
     await putObject(keys.small, derivatives.small, "image/webp");
     await putObject(keys.tiny, derivatives.tiny, "image/webp");
 
-    await pool.query(
+    await db.query(
       `INSERT INTO menu_item_images (
          menu_item_id, storage_driver, original_key, small_key, tiny_key,
          content_type, width, height, size_bytes, blur_data_url, updated_at
@@ -347,7 +349,7 @@ export async function replaceMenuItemImage(
 
 /** DELETE /api/v1/admin/menu/:menu_item_id/image */
 export async function removeMenuItemImage(menuItemId: string): Promise<{ removed: boolean }> {
-  const previous = await pool.query<{
+  const previous = await db.query<{
     original_key: string;
     small_key: string;
     tiny_key: string;
@@ -370,7 +372,7 @@ export async function readMenuItemImage(
   menuItemId: string,
   size: ImageSize,
 ): Promise<{ bytes: Buffer; contentType: string } | null> {
-  const image = await pool.query<{ storage_driver: string; original_key: string; small_key: string; tiny_key: string }>(
+  const image = await db.query<{ storage_driver: string; original_key: string; small_key: string; tiny_key: string }>(
     "SELECT storage_driver, original_key, small_key, tiny_key FROM menu_item_images WHERE menu_item_id = $1",
     [menuItemId],
   );
@@ -382,7 +384,7 @@ export async function readMenuItemImage(
   /* A Supabase-backed row has no bytes here; its URLs point at the bucket. */
   if (row.storage_driver === "supabase") return null;
 
-  const object = await pool.query<{ bytes: Buffer; content_type: string }>(
+  const object = await db.query<{ bytes: Buffer; content_type: string }>(
     "SELECT bytes, content_type FROM menu_image_objects WHERE storage_key = $1",
     [key],
   );

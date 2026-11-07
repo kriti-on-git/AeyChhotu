@@ -1,6 +1,8 @@
-import { pool } from "../db/pool.js";
+import { createLegacyDbPort } from "../db/legacy-db-port.js";
 import { AppError } from "../errors/app-error.js";
 import { iso } from "../lib/util.js";
+
+const db = createLegacyDbPort();
 
 /* Module 6 — the manager console's reporting reads.
  *
@@ -22,6 +24,7 @@ import { iso } from "../lib/util.js";
  * 004 are never in play. */
 
 export interface DailySalesSummary {
+  [key: string]: unknown;
   day: string;
   revenue_today: number;
   orders_today: number;
@@ -34,6 +37,7 @@ export interface DailySalesSummary {
 }
 
 export interface BestSeller {
+  [key: string]: unknown;
   menu_item_id: string;
   name: string;
   category: string;
@@ -42,6 +46,7 @@ export interface BestSeller {
 }
 
 export interface PendingOrder {
+  [key: string]: unknown;
   order_id: string;
   table_name: string;
   table_code: string;
@@ -52,6 +57,7 @@ export interface PendingOrder {
 }
 
 export interface TableOccupancyRow {
+  [key: string]: unknown;
   table_id: string;
   name: string;
   code: string;
@@ -74,6 +80,7 @@ export interface Occupancy {
 export type StockState = "out" | "low" | "ok" | "untracked";
 
 export interface InventoryItem {
+  [key: string]: unknown;
   menu_item_id: string;
   name: string;
   category: string;
@@ -93,6 +100,7 @@ export interface Inventory {
 }
 
 export interface FeedbackRow {
+  [key: string]: unknown;
   feedback_id: string;
   rating: number;
   comment: string;
@@ -108,7 +116,7 @@ const BUSINESS_TODAY = "((now() AT TIME ZONE 'Asia/Kolkata') - interval '5 hours
 
 /** Today (05:00→05:00 IST), yesterday and the last seven business days. */
 export async function dailySalesSummary(): Promise<DailySalesSummary> {
-  const { rows } = await pool.query<DailySalesSummary>(
+  const { rows } = await db.query<DailySalesSummary>(
     `WITH b AS (SELECT ${BUSINESS_TODAY} AS today)
      SELECT to_char((SELECT today FROM b), 'YYYY-MM-DD') AS day,
             COALESCE((SELECT revenue FROM sales_day WHERE day = (SELECT today FROM b)), 0)::float8 AS revenue_today,
@@ -133,7 +141,7 @@ export async function dailySalesSummary(): Promise<DailySalesSummary> {
 
 /** Units and revenue per dish over a window, best first. */
 export async function bestSellingDishes(limit: number, days: number): Promise<BestSeller[]> {
-  const { rows } = await pool.query<BestSeller>(
+  const { rows } = await db.query<BestSeller>(
     `WITH b AS (SELECT ${BUSINESS_TODAY} AS today)
      SELECT mi.id AS menu_item_id,
             mi.name,
@@ -153,7 +161,7 @@ export async function bestSellingDishes(limit: number, days: number): Promise<Be
 
 /** Every ticket the kitchen still owns, oldest first. */
 export async function pendingOrders(): Promise<PendingOrder[]> {
-  const { rows } = await pool.query<PendingOrder>(
+  const { rows } = await db.query<PendingOrder>(
     `SELECT o.id AS order_id,
             t.name AS table_name,
             t.code AS table_code,
@@ -171,7 +179,7 @@ export async function pendingOrders(): Promise<PendingOrder[]> {
 
 /** Seated vs free, with who is at each table right now. */
 export async function tableOccupancy(): Promise<Occupancy> {
-  const { rows } = await pool.query<TableOccupancyRow>(
+  const { rows } = await db.query<TableOccupancyRow>(
     `SELECT t.id AS table_id,
             t.name,
             t.code,
@@ -200,7 +208,7 @@ export async function tableOccupancy(): Promise<Occupancy> {
 
 /** Stock state per live dish. NULL stock is "untracked", never "zero". */
 export async function inventoryStatus(): Promise<Inventory> {
-  const { rows } = await pool.query<InventoryItem>(
+  const { rows } = await db.query<InventoryItem>(
     `SELECT id AS menu_item_id,
             name,
             category,
@@ -235,6 +243,7 @@ export async function inventoryStatus(): Promise<Inventory> {
    can I offer a vegan". Those answers live in the metadata columns added by
    sql/015, not in the sales rollup. Read-only, admin-gated by the router. */
 export interface CatalogItem {
+  [key: string]: unknown;
   menu_item_id: string;
   name: string;
   category: string;
@@ -252,7 +261,7 @@ export interface CatalogItem {
 }
 
 export async function menuCatalog(): Promise<CatalogItem[]> {
-  const { rows } = await pool.query<CatalogItem>(
+  const { rows } = await db.query<CatalogItem>(
     `SELECT id AS menu_item_id,
             name,
             category,
@@ -277,7 +286,7 @@ export async function menuCatalog(): Promise<CatalogItem[]> {
 
 /** The most recent guest ratings. */
 export async function listFeedback(limit: number): Promise<FeedbackRow[]> {
-  const { rows } = await pool.query<FeedbackRow>(
+  const { rows } = await db.query<FeedbackRow>(
     `SELECT f.id AS feedback_id,
             f.rating,
             f.comment,
@@ -301,7 +310,7 @@ export async function recordFeedback(
   tableToken: string,
   input: { rating: number; comment: string },
 ): Promise<{ feedback_id: string; rating: number; created_at: string }> {
-  const table = await pool.query<{ id: string }>(
+  const table = await db.query<{ id: string }>(
     `SELECT id FROM restaurant_tables
       WHERE code = $1 AND deleted_at IS NULL`,
     [tableToken],
@@ -312,7 +321,7 @@ export async function recordFeedback(
     throw new AppError(404, "TABLE_NOT_FOUND", "Invalid table token parsed.");
   }
 
-  const inserted = await pool.query<{ id: string; rating: number; created_at: Date }>(
+  const inserted = await db.query<{ id: string; rating: number; created_at: Date }>(
     `INSERT INTO guest_feedback (table_id, rating, comment)
      VALUES ($1, $2, $3)
      RETURNING id, rating, created_at`,
