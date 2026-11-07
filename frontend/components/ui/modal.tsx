@@ -55,7 +55,11 @@ export function Modal({
         onClose={onClose}
       />
       {children ? (
-        <div className="flex-1 overflow-y-auto px-6 py-5">{children}</div>
+        /* The rigid column contract: header shrink-0, THIS flex-1 min-h-0
+           scroll area, footer shrink-0. min-h-0 is what actually lets a flex
+           child shrink instead of pushing the footer off the sheet, and
+           overscroll-contain stops the scroll chaining into the page behind. */
+        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-6 py-5">{children}</div>
       ) : null}
       {footer ? <OverlayFooter>{footer}</OverlayFooter> : null}
     </Overlay>

@@ -6,15 +6,43 @@
      §5  global 401 guard: wipe token, terminate shift, redirect to /kitchen
      §6  strict 20-second timeout on every outbound operation. */
 
+import { clearAdminToken, getAdminToken } from "./admin-token";
 import { ApiError } from "./errors";
 import type { ApiEnvelope, PageMeta } from "./types";
 import { clearKdsToken, getKdsToken } from "./token";
+import { getParticipantToken } from "../api/session";
 
 /** §6 — hard connection ceiling for every outbound operation. */
 export const REQUEST_TIMEOUT_MS = 20_000;
 
-/** Staff PIN checkpoint page (§5 redirect target). */
+/** Staff PIN checkpoint page (§5 default redirect target). */
 export const KDS_LOGIN_PATH = "/kitchen";
+
+/** Staff gates, one per surface (``). The 401 guard sends the operator back
+    to the wall of the surface they are actually on — bouncing a floor
+    operator to /kitchen left the floor flag "unlocked", so returning to
+    /floor repeated the bounce forever. */
+const STAFF_GATE_PATHS = ["/kitchen", "/floor"] as const;
+const STAFF_UNLOCK_FLAGS = ["aeychhotu.kds.unlocked", "aeychhotu.floor.unlocked"] as const;
+
+function staffGatePath(): string {
+  if (typeof window === "undefined") return KDS_LOGIN_PATH;
+  const path = window.location.pathname;
+  if (path.startsWith("/floor")) return "/floor";
+  if (path.startsWith("/kitchen")) return "/kitchen";
+  return KDS_LOGIN_PATH;
+}
+
+/** Wipe every staff "unlocked" flag. Without this the gate would render its
+    board again on the redirect and immediately 401 a second time. */
+function clearStaffUnlockFlags(): void {
+  if (typeof window === "undefined") return;
+  try {
+    for (const key of STAFF_UNLOCK_FLAGS) window.sessionStorage.removeItem(key);
+  } catch {
+    /* Storage blocked: the hard navigation below still resets the component. */
+  }
+}
 
 /**
  * §1 — Dynamic base URL. Read from the framework's public env surface at
@@ -30,17 +58,80 @@ export function getBaseUrl(): string {
       "API base URL is not configured (NEXT_PUBLIC_API_URL missing).",
     );
   }
-  return raw.replace(/\/+$/, "");
+
+  /* A relative base means "same origin": the Next server proxies /api/* to
+     Express (see next.config.ts), so the browser needs no second host and no
+     CORS allow-list. Used when only the app's own port is reachable. */
+  if (raw === "/" || raw.toLowerCase() === "same-origin") return "";
+
+  return pointLocalApiAtPageHost(raw.replace(/\/+$/, ""));
+}
+
+const LOOPBACK_HOSTS = ["localhost", "127.0.0.1", "[::1]"];
+
+/** Turn an API-relative asset path (a dish photo) into a browser URL.
+    Absolute URLs and data URLs pass through unchanged. */
+export function resolveApiAssetUrl(path: string | null | undefined): string | null {
+  if (!path) return null;
+  if (/^(https?:|data:|blob:)/i.test(path)) return path;
+  try {
+    return `${getBaseUrl()}${path.startsWith("/") ? path : `/${path}`}`;
+  } catch {
+    return path;
+  }
+}
+
+/* One dev-server convenience, no effect on a deployed build.
+
+   A phone opens the dev app at http://192.168.x.x:3000, where "localhost" in
+   NEXT_PUBLIC_API_URL means the PHONE, not the laptop running the API. Every
+   request then times out and the page looks broken. When the configured API
+   host is loopback and the page itself is not, swap the page's hostname in
+   and keep the port: the device talks to whichever machine served the page.
+   A real API URL is left exactly as configured. */
+function pointLocalApiAtPageHost(base: string): string {
+  if (typeof window === "undefined") return base;
+
+  const pageHost = window.location.hostname;
+  if (!pageHost || LOOPBACK_HOSTS.includes(pageHost)) return base;
+
+  try {
+    const url = new URL(base);
+    if (!LOOPBACK_HOSTS.includes(url.hostname)) return base;
+    url.hostname = pageHost;
+    return url.toString().replace(/\/+$/, "");
+  } catch {
+    return base;
+  }
 }
 
 export interface RequestOptions {
   method?: "GET" | "POST" | "PATCH" | "DELETE";
   body?: unknown;
+  /** Send bytes as-is (a dish photo) instead of JSON. */
+  rawBody?: BodyInit;
+  /** MIME type that accompanies rawBody; ignored for JSON requests. */
+  contentType?: string;
   query?: Record<string, string | number | undefined>;
   /** Inject `Authorization: Bearer <shift token>` (back-of-house routes). */
   auth?: boolean;
+  /** Inject `Authorization: Bearer <admin token>` (executive console routes).
+      Separate from `auth` so a shift token can never be sent to /admin and an
+      admin token can never be sent to /kds. */
+  adminAuth?: boolean;
+  /** Inject `X-Participant-Token` from the session layer (session/conversation
+      routes). The token is never added to the URL. */
+  participantAuth?: boolean;
+  /** Additional per-request headers. Applied last, so a caller can add a
+      contract header without changing this function. */
+  headers?: Record<string, string>;
   timeoutMs?: number;
+  /** Keep the request alive across a page unload (presence disconnect). */
+  keepalive?: boolean;
 }
+
+/** Which credential a request carries — decides where a 401 sends the user. */
+type AuthMode = "staff" | "admin";
 
 export interface ApiResult<T> {
   data: T;
@@ -58,15 +149,28 @@ function buildQueryString(query: RequestOptions["query"]): string {
   return encoded ? `?${encoded}` : "";
 }
 
-/** §5 — global guard: wipe the invalid token and terminate the shift
-    workspace by sending the window back to the PIN checkpoint. */
-function handleUnauthorized(): void {
+/* §5 — global guard.
+   Staff: wipe the shift token and terminate the workspace by sending the
+   window back to the PIN checkpoint.
+   Admin: wipe the console token and STAY on /admin. Its page owns the PIN
+   wall, so redirecting a manager to the kitchen (the staff target) would be
+   both wrong and confusing. */
+function handleUnauthorized(mode: AuthMode): void {
+  if (mode === "admin") {
+    clearAdminToken();
+    return;
+  }
+
   clearKdsToken();
-  if (typeof window !== "undefined" && !window.location.pathname.startsWith(KDS_LOGIN_PATH)) {
+  clearStaffUnlockFlags();
+
+  if (typeof window !== "undefined") {
+    const gate = staffGatePath();
     // Hard navigation on purpose: spec §5 requires terminating the whole
     // shift workspace (a client-side route push would keep its state alive).
-    // eslint-disable-next-line @next/next/no-location-assign-relative-destination -- intentional full workspace teardown
-    window.location.assign(KDS_LOGIN_PATH);
+    // It also re-reads the flag just cleared above, so the surface asks for
+    // its own PIN instead of rendering an empty board.
+    window.location.assign(gate);
   }
 }
 
@@ -110,7 +214,7 @@ function defaultMessageForStatus(status: number): string {
 }
 
 /** §4 — structural error-envelope extraction. Throws ApiError. */
-function throwFromResponse(status: number, body: unknown): never {
+function throwFromResponse(status: number, body: unknown, mode: AuthMode): never {
   const envelope =
     body && typeof body === "object"
       ? (body as { error?: Record<string, unknown> }).error
@@ -127,7 +231,7 @@ function throwFromResponse(status: number, body: unknown): never {
 
   // §5 — only a token problem (not a wrong-PIN 401) triggers the guard.
   if (status === 401 && code === "UNAUTHORIZED") {
-    handleUnauthorized();
+    handleUnauthorized(mode);
   }
 
   throw new ApiError(status, code, message, envelope);
@@ -145,16 +249,39 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
   const url = `${getBaseUrl()}${path}${buildQueryString(options.query)}`;
 
   const headers: Record<string, string> = { Accept: "application/json" };
-  if (options.body !== undefined) headers["Content-Type"] = "application/json";
+  if (options.rawBody !== undefined) {
+    headers["Content-Type"] = options.contentType ?? "application/octet-stream";
+  } else if (options.body !== undefined) {
+    headers["Content-Type"] = "application/json";
+  }
 
-  if (options.auth) {
-    const token = getKdsToken();
+  const authMode: AuthMode = options.adminAuth ? "admin" : "staff";
+
+  if (options.auth || options.adminAuth) {
+    const token = options.adminAuth ? getAdminToken() : getKdsToken();
     if (!token) {
       // Fail fast without a round-trip — same outcome as a server 401.
-      handleUnauthorized();
-      throw new ApiError(401, "UNAUTHORIZED", "Missing or invalid kitchen shift token.");
+      handleUnauthorized(authMode);
+      throw new ApiError(
+        401,
+        "UNAUTHORIZED",
+        options.adminAuth
+          ? "Missing or invalid manager session. Enter the manager PIN."
+          : "Missing or invalid kitchen shift token.",
+      );
     }
     headers["Authorization"] = `Bearer ${token}`;
+  }
+
+  if (options.participantAuth) {
+    const participantToken = getParticipantToken();
+    if (participantToken) headers["X-Participant-Token"] = participantToken;
+  }
+
+  if (options.headers) {
+    for (const [key, value] of Object.entries(options.headers)) {
+      headers[key] = value;
+    }
   }
 
   const controller = new AbortController();
@@ -166,9 +293,15 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
     response = await fetch(url, {
       method,
       headers,
-      body: options.body !== undefined ? JSON.stringify(options.body) : undefined,
+      body:
+        options.rawBody !== undefined
+          ? options.rawBody
+          : options.body !== undefined
+            ? JSON.stringify(options.body)
+            : undefined,
       signal: controller.signal,
       cache: "no-store",
+      ...(options.keepalive ? { keepalive: true } : {}),
       // Send/accept the httpOnly kds_token cookie. The default ("same-origin")
       // would silently stop working the moment the API moves to its own
       // host, so the cookie path is exercised in both hosting shapes. The
@@ -196,7 +329,7 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
   }
 
   if (!response.ok) {
-    throwFromResponse(response.status, body);
+    throwFromResponse(response.status, body, authMode);
   }
 
   const envelope = (body ?? {}) as ApiEnvelope<T>;

@@ -1,9 +1,12 @@
 "use client";
 
+import { Loader2 } from "lucide-react";
+import { useEffect, useState } from "react";
 import { Drawer } from "@/components/ui/drawer";
 import { EmptyState } from "@/components/ui/empty-state";
 import type { LiveTableValue } from "@/hooks/use-live-table";
-import { formatIstTime, formatPrice } from "@/lib/format";
+import { getTableBill, type TableBill } from "@/lib/api-client";
+import { formatPrice } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 /** Which slice of the bill the drawer is showing. */
@@ -27,10 +30,19 @@ interface BillLine {
   amount: number;
 }
 
-/* The running bill, opened from the two icons in the nav band. It is one
-   drawer with a scope switch: the whole table's tab, or just this guest's.
-   Fired rounds are grouped by ticket (so the guest sees which round a dish
-   came from), and whatever is still staged sits under its own heading. */
+function ownerName(addedBy: string | null | undefined): string {
+  const name = addedBy?.trim();
+  return name ? name : "Guest";
+}
+
+function initial(name: string): string {
+  return (name.trim().slice(0, 1) || "G").toUpperCase();
+}
+
+/* The running bill. Fired lines and every rupee of arithmetic come from
+   `GET /billing/tables/:id/guest`; the browser only renders the backend's
+   response. Cart lines are shown separately and explicitly labelled as an
+   estimate until they are fired into the bill. */
 export function BillDrawer({
   open,
   onClose,
@@ -39,64 +51,68 @@ export function BillDrawer({
   live,
   displayName,
 }: BillDrawerProps) {
-  const { orders, cart, menuIndex } = live;
+  const { cart, menuIndex, table } = live;
+  const [bill, setBill] = useState<TableBill | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!open || !table) return;
+
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+
+    void getTableBill(table.id)
+      .then((next) => {
+        if (!cancelled) setBill(next);
+      })
+      .catch((err: unknown) => {
+        if (cancelled) return;
+        setError(err instanceof Error ? err.message : "The bill could not be loaded.");
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [open, table, live.billStatus]);
+
   const mineOnly = scope === "mine";
-  const matches = (addedBy: string) => !mineOnly || addedBy === displayName;
+  const matches = (addedBy: string) => !mineOnly || ownerName(addedBy) === displayName;
 
-  const fired = orders
-    .map((order) => ({
-      order,
-      lines: order.items
-        .filter((item) => matches(item.added_by))
-        .map<BillLine>((item) => ({
-          key: item.id,
-          name: item.name,
-          quantity: item.quantity,
-          addedBy: item.added_by,
-          amount: item.price * item.quantity,
-        })),
-    }))
-    .filter((group) => group.lines.length > 0);
-
-  const staged = cart
+  const fired: BillLine[] = (bill?.line_items ?? [])
     .filter((line) => matches(line.added_by))
-    .map<BillLine>((line) => {
+    .map((line) => ({
+      key: `${line.order_id}:${line.menu_item_id}:${line.added_by}`,
+      name: line.name,
+      quantity: line.quantity,
+      addedBy: ownerName(line.added_by),
+      amount: line.line_total_minor / 100,
+    }));
+
+  const staged: BillLine[] = cart
+    .filter((line) => matches(line.added_by))
+    .map((line) => {
       const item = menuIndex.get(line.menu_item_id);
       return {
         key: line.id,
         name: item?.name ?? "Removed item",
         quantity: line.quantity,
-        addedBy: line.added_by,
+        addedBy: ownerName(line.added_by),
         amount: (item?.price ?? 0) * line.quantity,
       };
     });
 
-  const firedTotal = fired.reduce(
-    (sum, group) => sum + group.lines.reduce((lines, line) => lines + line.amount, 0),
-    0,
-  );
-  const stagedTotal = staged.reduce((sum, line) => sum + line.amount, 0);
-  const grandTotal = firedTotal + stagedTotal;
+  /* The only local addition left is the cart estimate. It is never presented
+     as the bill and never includes tax or discounts. */
+  const stagedEstimate = staged.reduce((sum, line) => sum + line.amount, 0);
   const empty = fired.length === 0 && staged.length === 0;
-
-  // Every guest's running total, fired plus staged, made from the unscoped
-  // data so the split always accounts for the whole table.
-  const personTotals = new Map<string, number>();
-  for (const order of orders) {
-    for (const item of order.items) {
-      personTotals.set(
-        item.added_by,
-        (personTotals.get(item.added_by) ?? 0) + item.price * item.quantity,
-      );
-    }
-  }
-  for (const line of cart) {
-    const price = menuIndex.get(line.menu_item_id)?.price ?? 0;
-    personTotals.set(line.added_by, (personTotals.get(line.added_by) ?? 0) + price * line.quantity);
-  }
-  const split = [...personTotals.entries()]
-    .map(([name, total]) => ({ name, total }))
-    .sort((a, b) => b.total - a.total);
+  const allocations = (bill?.allocations ?? []).filter(
+    (allocation) => !mineOnly || allocation.name === displayName,
+  );
 
   return (
     <Drawer
@@ -105,26 +121,45 @@ export function BillDrawer({
       title={mineOnly ? "Your part of the bill" : "Total bill"}
       description={
         mineOnly
-          ? `Only the dishes ${displayName} added, across every round.`
-          : "Everything this table has ordered, plus what is staged now."
+          ? `Only the dishes ${displayName} added. Totals are calculated by the restaurant.`
+          : "Everything this table has ordered. Totals are calculated by the restaurant."
       }
       size="md"
       footer={
         empty ? null : (
-          <>
-            <span className="self-center text-label text-ink-subtle uppercase sm:mr-auto">
-              {mineOnly ? "Your total" : "Table total"}
-            </span>
-            <span className="font-display text-subheading text-ink tabular-nums">
-              {formatPrice(grandTotal)}
-            </span>
-          </>
+          <div className="flex w-full flex-col gap-2">
+            {bill ? (
+              <div className="flex w-full flex-col gap-1.5 text-sm">
+                <Row label="Subtotal" value={formatPrice(bill.totals.subtotal_minor / 100)} />
+                {bill.totals.discount_minor > 0 ? (
+                  <Row
+                    label="Discount"
+                    value={`- ${formatPrice(bill.totals.discount_minor / 100)}`}
+                  />
+                ) : null}
+                {bill.totals.tax_minor > 0 ? (
+                  <Row label="Tax" value={formatPrice(bill.totals.tax_minor / 100)} />
+                ) : null}
+                <div className="flex items-baseline justify-between border-t border-line pt-2">
+                  <span className="text-label text-ink-subtle uppercase">Total</span>
+                  <span className="font-display text-subheading text-ink tabular-nums">
+                    {formatPrice(bill.totals.total_minor / 100)}
+                  </span>
+                </div>
+              </div>
+            ) : null}
+
+            {stagedEstimate > 0 ? (
+              <span className="w-full text-xs text-ink-subtle">
+                + {formatPrice(stagedEstimate)} still in the cart — an estimate, not on the bill
+                yet.
+              </span>
+            ) : null}
+          </div>
         )
       }
     >
       <div className="flex flex-col gap-6">
-        {/* The scope switch lives inside the panel, so a guest who opened the
-            table's tab can narrow it to their own without leaving. */}
         <div
           role="group"
           aria-label="Which bill to show"
@@ -153,6 +188,19 @@ export function BillDrawer({
           ))}
         </div>
 
+        {loading ? (
+          <p className="flex items-center gap-2 text-sm text-ink-muted" role="status">
+            <Loader2 className="size-4 animate-spin text-ember" aria-hidden />
+            Loading the restaurant's bill…
+          </p>
+        ) : null}
+
+        {error ? (
+          <p role="alert" className="rounded-md border border-alert/35 bg-alert-surface px-3 py-2 text-sm text-alert">
+            {error}
+          </p>
+        ) : null}
+
         {empty ? (
           <EmptyState
             title={mineOnly ? "You have not ordered anything yet" : "Nothing on the bill yet"}
@@ -164,53 +212,37 @@ export function BillDrawer({
           />
         ) : (
           <>
-            {fired.map(({ order, lines }) => (
-              <section key={order.id} className="flex flex-col">
+            {fired.length > 0 ? (
+              <section className="flex flex-col">
                 <header className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 border-b border-dashed border-line-strong pb-2">
-                  <span className="text-label text-ink-subtle uppercase">
-                    Order · <span className="capitalize">{order.status}</span>
-                  </span>
-                  <span className="text-xs text-ink-subtle">{formatIstTime(order.created_at)}</span>
+                  <span className="text-label text-ink-subtle uppercase">On the bill</span>
+                  <span className="text-xs text-ink-subtle">Calculated by the restaurant</span>
                 </header>
-                <LineList lines={lines} showOwner={!mineOnly} />
+                <LineList lines={fired} showOwner={!mineOnly} />
               </section>
-            ))}
+            ) : null}
 
             {staged.length > 0 ? (
               <section className="flex flex-col">
                 <header className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 border-b border-dashed border-line-strong pb-2">
                   <span className="text-label text-ember uppercase">Still in the cart</span>
-                  <span className="text-xs text-ink-subtle">Not fired yet</span>
+                  <span className="text-xs text-ink-subtle">Estimate · not on the bill</span>
                 </header>
                 <LineList lines={staged} showOwner={!mineOnly} />
               </section>
             ) : null}
 
-            {fired.length > 0 && staged.length > 0 ? (
-              <p className="text-xs text-ink-subtle">
-                {formatPrice(firedTotal)} ordered · {formatPrice(stagedTotal)} staged
-              </p>
-            ) : null}
-
-            {/* The whole-table view closes with who owes what. It is
-                deliberately hidden in the "your part" view, where every line
-                is already the guest's own. */}
-            {!mineOnly && split.length > 0 ? (
+            {allocations.length > 0 ? (
               <section className="flex flex-col border-t border-line pt-5">
-                <header className="flex items-baseline justify-between gap-3 border-b border-dashed border-line-strong pb-2">
+                <header className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 border-b border-dashed border-line-strong pb-2">
                   <span className="text-label text-ink-subtle uppercase">Split by person</span>
-                  <span className="text-xs text-ink-subtle">
-                    {split.length} {split.length === 1 ? "guest" : "guests"}
-                  </span>
+                  <span className="text-xs text-ink-subtle">Restaurant allocation</span>
                 </header>
                 <ul className="flex flex-col divide-y divide-line/70">
-                  {split.map((person) => {
+                  {allocations.map((person) => {
                     const isYou = person.name === displayName;
                     return (
-                      <li
-                        key={person.name}
-                        className="flex items-center justify-between gap-3 py-3"
-                      >
+                      <li key={person.name} className="flex items-center justify-between gap-3 py-3">
                         <span className="flex min-w-0 items-center gap-2.5">
                           <span
                             aria-hidden
@@ -219,7 +251,7 @@ export function BillDrawer({
                               isYou ? "bg-ember-soft text-ember" : "bg-sand text-ink-muted",
                             )}
                           >
-                            {person.name.slice(0, 1).toUpperCase()}
+                            {initial(person.name)}
                           </span>
                           <span className="truncate text-sm font-medium text-ink">
                             {person.name}
@@ -231,7 +263,7 @@ export function BillDrawer({
                           </span>
                         </span>
                         <span className="shrink-0 text-sm font-semibold text-ink tabular-nums">
-                          {formatPrice(person.total)}
+                          {formatPrice(person.subtotal_minor / 100)}
                         </span>
                       </li>
                     );
@@ -243,6 +275,15 @@ export function BillDrawer({
         )}
       </div>
     </Drawer>
+  );
+}
+
+function Row({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex items-baseline justify-between gap-3">
+      <span className="text-ink-muted">{label}</span>
+      <span className="text-ink tabular-nums">{value}</span>
+    </div>
   );
 }
 

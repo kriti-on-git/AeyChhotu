@@ -8,9 +8,7 @@ import { describe, it } from "node:test";
 
 import { ApiError } from "../lib/api-client/errors.ts";
 import {
-  demoFallbackEnabled,
   isOfflineError,
-  shouldUseDemoFallback,
   toCartLine,
   toFloorSummary,
   toKdsOrder,
@@ -101,6 +99,46 @@ describe("toOrder / toKdsOrder price snapshot", () => {
   });
 });
 
+describe("ticket attribution and denial (sql/011)", () => {
+  const row = {
+    order_id: "o9",
+    table_id: "t1",
+    status: "denied",
+    created_at: "2026-10-28T10:00:00Z",
+    denial_reason: "Item Paneer Tikka went out of stock",
+    items: [
+      {
+        menu_item_id: "m1",
+        name: "Paneer Tikka",
+        quantity: 1,
+        request_note: "",
+        allergy_note: "",
+        added_by: "Amit",
+        unit_price: 210,
+      },
+    ],
+  };
+
+  it("carries added_by onto the ticket so the bill can be split per person", () => {
+    const order = toOrder(row, "k7x2p");
+    assert.equal(order.items[0].added_by, "Amit");
+  });
+
+  it("reads a legacy ticket with no added_by as Guest rather than blank", () => {
+    const legacy = toOrder(
+      { ...row, items: [{ ...row.items[0], added_by: undefined }] },
+      "k7x2p",
+    );
+    assert.equal(legacy.items[0].added_by, "Guest");
+  });
+
+  it("carries the denial reason the tracker renders", () => {
+    const order = toOrder(row, "k7x2p");
+    assert.equal(order.status, "denied");
+    assert.equal(order.denial_reason, "Item Paneer Tikka went out of stock");
+  });
+});
+
 describe("toFloorSummary", () => {
   it("maps a live table row with an active order", () => {
     const ui = toFloorSummary({
@@ -136,41 +174,17 @@ describe("toFloorSummary", () => {
   });
 });
 
-describe("demo-fallback gate", () => {
+describe("offline classification", () => {
   it("flags only status-0 ApiErrors as offline", () => {
     assert.equal(isOfflineError(new ApiError(0, "NETWORK_ERROR", "down")), true);
     assert.equal(isOfflineError(new ApiError(500, "INTERNAL", "boom")), false);
     assert.equal(isOfflineError(new Error("plain")), false);
   });
 
-  it("never enables the demo store in production by default", () => {
-    const oldNodeEnv = process.env.NODE_ENV;
-    try {
-      process.env.NODE_ENV = "production";
-      delete process.env.NEXT_PUBLIC_ENABLE_DEMO_FALLBACK;
-      assert.equal(demoFallbackEnabled(), false);
-      assert.equal(shouldUseDemoFallback(new ApiError(0, "NETWORK_ERROR", "down")), false);
-    } finally {
-      if (oldNodeEnv === undefined) delete process.env.NODE_ENV;
-      else process.env.NODE_ENV = oldNodeEnv;
-    }
-  });
-
-  it("enables it in production only when explicitly opted in", () => {
-    const oldNodeEnv = process.env.NODE_ENV;
-    const oldFlag = process.env.NEXT_PUBLIC_ENABLE_DEMO_FALLBACK;
-    try {
-      process.env.NODE_ENV = "production";
-      process.env.NEXT_PUBLIC_ENABLE_DEMO_FALLBACK = "true";
-      assert.equal(demoFallbackEnabled(), true);
-      assert.equal(shouldUseDemoFallback(new ApiError(0, "NETWORK_ERROR", "down")), true);
-      // But a real HTTP error is never a demo case, flag or no flag.
-      assert.equal(shouldUseDemoFallback(new ApiError(500, "INTERNAL", "boom")), false);
-    } finally {
-      if (oldNodeEnv === undefined) delete process.env.NODE_ENV;
-      else process.env.NODE_ENV = oldNodeEnv;
-      if (oldFlag === undefined) delete process.env.NEXT_PUBLIC_ENABLE_DEMO_FALLBACK;
-      else process.env.NEXT_PUBLIC_ENABLE_DEMO_FALLBACK = oldFlag;
-    }
+  it("no longer exposes a demo-fallback gate", async () => {
+    const normalize = await import("../lib/api-client/normalize.ts");
+    assert.equal("shouldUseDemoFallback" in normalize, false);
+    assert.equal("demoFallbackEnabled" in normalize, false);
+    assert.equal("apiErrorFromServiceFailure" in normalize, false);
   });
 });

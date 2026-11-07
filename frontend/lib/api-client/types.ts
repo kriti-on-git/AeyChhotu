@@ -3,9 +3,15 @@
    Envelope: success { success: true, data, meta? }
              error   { success: false, error: { code, message, ...details } } */
 
-export type OrderStatus = "pending" | "preparing" | "ready" | "served";
-export type ActiveOrderStatus = Exclude<OrderStatus, "served">;
+/** A ticket the kitchen refused (an 86 after firing, or a chef's manual
+    denial). It is CLOSED — not served, not active — and it never appears on
+    the KDS board or in the bill. */
+export type OrderStatus = "pending" | "preparing" | "ready" | "served" | "denied";
+/** The three states that are still being worked on the line. */
+export type ActiveOrderStatus = "pending" | "preparing" | "ready";
 export type TableStatus = "active" | "empty";
+/** Bill lifecycle: a table is only releasable once 'paid'. */
+export type BillStatus = "unrequested" | "requested" | "paid";
 /** Only sequential forward steps are accepted by the KDS status mutator. */
 export type KdsStatusInput = "preparing" | "ready";
 
@@ -37,9 +43,24 @@ export interface MenuItem {
   name: string;
   price: number;
   category: string;
+  /** Catalogue folder the dish lives in (absent on older payloads). */
+  category_id?: string | null;
   is_available: boolean;
   description: string;
   vegetarian: boolean;
+  /** An uploaded photo. Null/absent means the app's curated photography. */
+  image_url?: string | null;
+  image_small_url?: string | null;
+  blur_data_url?: string | null;
+  /** Kitchen-maintained metadata (sql/015). An EMPTY list means "not
+      recorded", never "contains none" — the assistant says so explicitly. */
+  ingredients?: string[];
+  /** 0 mild · 1 medium · 2 hot · 3 very hot. */
+  spice_level?: number;
+  allergens?: string[];
+  /** Best-effort diet tags: jain, vegan, halal, eggitarian. */
+  diet_tags?: string[];
+  portion_description?: string;
 }
 
 /** E4 cart row. */
@@ -67,6 +88,64 @@ export interface TableSession {
   /** E1 Supabase-scoped read token (RLS scope). Absent/null without
       SUPABASE_JWT_SECRET — the app then runs REST-only. */
   realtime_token?: string | null;
+}
+
+/** E1 — a claimed / joined table session. The credentials are the diner's
+    own: they are what `join-pin`, `join-pass` and `reconnect` return, and
+    they are never present in a staff payload. */
+export interface TableSessionGrant {
+  table_id: string;
+  code: string;
+  name: string;
+  status: "active";
+  session_pin: string;
+  session_secret: string;
+  session_started_at: string | null;
+  bill_status: BillStatus;
+  realtime_token: string | null;
+  /** The Chhotu assistant's Gemini key, released WITH the credentials — never
+      in the bundle and never in a pre-join reply. Null when the deployment
+      has no GEMINI_API_KEY, which simply hides the assistant. */
+  gemini_api_key: string | null;
+  /** Phase 5.2 server-issued participant credential. Sent as
+      `X-Participant-Token`, never in a URL. */
+  participant_id: string | null;
+  participant_token: string | null;
+  participant_expires_at: string | null;
+}
+
+/** E1 — the reply to a scan of a table that already has a live session.
+    Deliberately carries no credentials, no read token and no AI key. */
+export interface TableSessionLocked {
+  table_id: string;
+  code: string;
+  name: string;
+  status: "locked";
+  pin_locked: boolean;
+  attempts_remaining: number;
+  realtime_token: null;
+  participant_id: null;
+  participant_token: null;
+  participant_expires_at: null;
+}
+
+/** E1 — the discriminated reply to a scan. */
+export type TableScan = TableSessionGrant | TableSessionLocked;
+
+/** Extra context every session entry point sends.
+
+    `scan_time` is when THIS page was opened. The backend refuses a session
+    whose scan_time predates the table's last clear (STALE_SESSION), which is
+    what stops a long-cached page from joining the previous party's table.
+    `user_id`/`name` register the device in table_members.
+
+    `name` is REQUIRED: the server refuses an unnamed guest, because an
+    unnamed diner becomes an anonymous "Guest" line on the ticket and in the
+    split bill. The gate collects it before any session call. */
+export interface SessionEntryPayload {
+  scan_time?: string;
+  user_id?: string;
+  name: string;
 }
 
 /** E9 anti-duplicate guardrail (discriminated union). */
@@ -114,6 +193,8 @@ export interface OrderItemLine {
   quantity: number;
   request_note: string;
   allergy_note: string;
+  /** Who ordered the line — copied from the cart at fire time (sql/011). */
+  added_by?: string;
   unit_price?: number;
 }
 
@@ -140,6 +221,8 @@ export interface OrderHistoryItem {
   table_id: string;
   status: OrderStatus;
   created_at: string;
+  /** Why the kitchen refused this round ('' unless status = 'denied'). */
+  denial_reason?: string;
   /** Bill frozen at fire time (sql/004_hardening.sql). */
   total?: number;
   items: OrderItemLine[];
@@ -148,7 +231,13 @@ export interface OrderHistoryItem {
 /** E10 — KDS ticket. */
 export interface KdsTicket {
   order_id: string;
-  table: { id: string; code: string; name: string };
+  table: {
+    id: string;
+    code: string;
+    name: string;
+    /** A floor waiter tapped "I'll serve this" and is walking over. */
+    serve_requested_at: string | null;
+  };
   status: ActiveOrderStatus;
   created_at: string;
   items: OrderItemLine[];
@@ -174,10 +263,97 @@ export interface ShiftActivation {
   message: string;
 }
 
-/** E14 response. */
+/** E14 response. `denied_orders` counts the PENDING rounds the 86 stopped. */
 export interface AvailabilityResult {
   menu_item_id: string;
   is_available: boolean;
+  denied_orders?: number;
+}
+
+/** GET /api/v1/admin/insights/menu — one dish with its full metadata. */
+export interface AdminCatalogItem {
+  menu_item_id: string;
+  name: string;
+  category: string;
+  price: number;
+  description: string;
+  vegetarian: boolean;
+  spice_level: number;
+  ingredients: string[];
+  allergens: string[];
+  diet_tags: string[];
+  portion_description: string;
+  is_available: boolean;
+  stock_quantity: number | null;
+  low_stock_threshold: number | null;
+}
+
+/** POST/DELETE /api/v1/floor/tables/:table_id/serve-request — the waiter's
+    "I'll serve this" / Release. */
+export interface ServeRequestResult {
+  table_id: string;
+  requested: boolean;
+  serve_requested_at: string | null;
+}
+
+/** PATCH /api/v1/kds/tickets/:order_id/deny — the chef's refusal. */
+export interface KdsDenyResult {
+  order_id: string;
+  status: "denied";
+  denial_reason: string;
+  table_cleared: boolean;
+}
+
+/** POST /api/v1/orders/:order_id/requeue — "Move to list" / "Retry". */
+export interface RequeuedDeniedOrder {
+  order_id: string;
+  moved: number;
+  /** Dish names the cart could not take because the kitchen has none left. */
+  omitted: string[];
+}
+
+/** POST /api/v1/orders/:order_id/retry — one atomic re-fire of a refused
+    round. The response describes the replacement ticket; `omitted` lists the
+    dishes the kitchen no longer has. */
+export interface RetriedDeniedOrder {
+  order_id: string;
+  table_id: string;
+  status: string;
+  created_at: string;
+  moved: number;
+  omitted: string[];
+}
+
+/** POST /api/v1/orders/:order_id/dismiss — the diner's "Cancel". */
+export interface DismissedDeniedOrder {
+  order_id: string;
+  dismissed: true;
+}
+
+/** GET /api/v1/sessions/:table_token — the diner's own server-side table
+    state. The REST half of the table/bill polling fallback (docs/14 #3,
+    #5): `bill_status` and `status` are the server columns, not a
+    browser-local store. */
+export interface TableState {
+  table_id: string;
+  code: string;
+  name: string;
+  status: TableStatus;
+  bill_status: BillStatus;
+  bill_requested_at: string | null;
+  bill_paid_at: string | null;
+  session_started_at: string | null;
+  /** Devices that beat inside the release window. */
+  active_devices: number;
+  /** pending / preparing / ready tickets on this seating. */
+  active_orders: number;
+}
+
+/** GET /api/v1/sessions/:table_token/members — the real roster. */
+export interface TableMember {
+  participant_id: string;
+  name: string;
+  joined_at: string;
 }
 
 /** E7 response. */
@@ -202,8 +378,170 @@ export interface FloorTable {
   code: string;
   name: string;
   status: TableStatus;
+  bill_status: BillStatus;
+  /** Set when staff tried to clear the table with an unpaid bill. */
+  clear_requested_at: string | null;
+  /** This seating has tickets and the bill is not marked paid. */
+  bill_unpaid: boolean;
   active_order: FloorActiveOrder | null;
   cart_line_count: number;
+  /** Devices that sent a heartbeat in the stale-detection window. */
+  active_devices: number;
+  /** Active session, no connected device, no open order, no bill request. */
+  needs_attention: boolean;
+}
+
+/** PATCH /api/v1/floor/tables/:table_id/clear and the admin override. */
+export interface TableClearResult {
+  table_id: string;
+  cleared: true;
+  bill_status: BillStatus;
+}
+
+/** PATCH /api/v1/floor/tables/:table_id/settle */
+export interface BillSettlement {
+  table_id: string;
+  bill_status: "paid";
+  bill_paid_at: string;
+  /** True when the paid bill was also the last blocker to clearing the table. */
+  released: boolean;
+}
+
+/** POST /api/v1/sessions/:table_token/bill-request */
+export interface BillRequest {
+  table_id: string;
+  bill_status: BillStatus;
+  bill_requested_at: string | null;
+}
+
+// ---- Conversation (Phase 5.4 server-owned transcript) -----------------
+
+export type ConversationRole = "guest" | "assistant" | "system";
+export type ConversationKind = "text" | "voice";
+export type VoiceStatus = "active" | "completed" | "cancelled";
+
+export interface ConversationAction {
+  kind: "cart" | "order" | "bill" | "info";
+  label: string;
+  ok: boolean;
+}
+
+export interface Conversation {
+  conversation_id: string;
+  table_id: string;
+  session_started_at: string;
+  created_at: string;
+}
+
+export interface ConversationMessage {
+  message_id: string;
+  conversation_id: string;
+  role: ConversationRole;
+  kind: ConversationKind;
+  text: string;
+  participant: { participant_id: string; name: string } | null;
+  origin_participant_id: string | null;
+  client_message_id: string | null;
+  reply_to_message_id: string | null;
+  actions: ConversationAction[];
+  voice_playback_device_id: string | null;
+  created_at: string;
+}
+
+export interface ConversationView {
+  conversation: Conversation;
+  messages: ConversationMessage[];
+}
+
+export interface PostConversationMessageInput {
+  text: string;
+  client_message_id?: string;
+  kind?: ConversationKind;
+  voice_interaction_id?: string;
+  device_id?: string;
+}
+
+export interface PostConversationMessageResult {
+  conversation_id: string;
+  message: ConversationMessage;
+  assistant: ConversationMessage | null;
+  duplicate: boolean;
+}
+
+export interface VoiceInteraction {
+  interaction_id: string;
+  conversation_id: string;
+  status: VoiceStatus;
+  initiator_participant_id: string;
+  initiator_device_id: string;
+  playback_device_id: string;
+  playback_participant_id: string;
+  started_at: string;
+  ended_at: string | null;
+}
+
+// ---- Generated bill (backend is the only calculator) ------------------
+
+export interface BillLine {
+  order_id: string;
+  menu_item_id: string;
+  name: string;
+  quantity: number;
+  unit_price: string;
+  unit_price_minor: number;
+  line_total: string;
+  line_total_minor: number;
+  added_by: string;
+  allocated_to: string | null;
+  shared: boolean;
+}
+
+export interface BillAllocation {
+  name: string;
+  shared: boolean;
+  line_count: number;
+  quantity: number;
+  subtotal_minor: number;
+  subtotal: string;
+}
+
+export interface BillTotals {
+  subtotal_minor: number;
+  tax_minor: number;
+  discount_minor: number;
+  total_minor: number;
+  subtotal: string;
+  tax: string;
+  discount: string;
+  total: string;
+}
+
+export interface TableBill {
+  bill_id: string;
+  table_id: string;
+  table: { code: string; name: string };
+  status: BillStatus;
+  session_started_at: string | null;
+  bill_requested_at: string | null;
+  bill_paid_at: string | null;
+  currency: "INR";
+  line_items: BillLine[];
+  allocations: BillAllocation[];
+  totals: BillTotals;
+}
+
+/** POST /api/v1/sessions/:table_token/heartbeat */
+export interface DeviceHeartbeat {
+  table_id: string;
+  device_id: string;
+  last_seen: string;
+}
+
+/** DELETE /api/v1/sessions/:table_token/heartbeat */
+export interface HeartbeatRemoval {
+  table_id: string;
+  device_id: string;
+  released: boolean;
 }
 
 // ---- Request payloads ------------------------------------------------
@@ -249,4 +587,241 @@ export interface MenuQuery extends ListQuery {
 
 export interface KdsTicketsQuery extends ListQuery {
   status?: ActiveOrderStatus;
+}
+
+// ---- Executive admin console -----------------------------------------
+
+/** POST /api/v1/auth/admin-login — the manager session. */
+export interface AdminLogin {
+  token: string;
+  token_type: "Bearer";
+  expires_in: number;
+  role: "admin";
+  message: string;
+}
+
+/** A live table row in the admin grid. `has_session` is whether a PIN/pass is
+    currently issued; `status` is the table's own active/empty state. */
+/** A guest on a table's session roster, recorded when their phone joined. */
+export interface AdminTableMember {
+  user_id: string;
+  name: string;
+  joined_at: string;
+}
+
+export interface AdminTable {
+  table_id: string;
+  code: string;
+  name: string;
+  status: TableStatus;
+  bill_status: BillStatus;
+  /** Manager action required: staff clear was refused for an unpaid bill. */
+  clear_requested_at: string | null;
+  active_order_count: number;
+  cart_line_count: number;
+  /** Phones heartbeating on this table inside the stale window. */
+  active_devices: number;
+  has_session: boolean;
+  session_started_at: string | null;
+  /** The people seated here, oldest first — empty when no one has joined. */
+  members: AdminTableMember[];
+  created_at: string;
+}
+
+/** POST /api/v1/admin/tables/:table_id/regenerate-token */
+export interface AdminTableToken {
+  table_id: string;
+  code: string;
+  name: string;
+}
+
+/** GET /api/v1/admin/menu — includes 86'd dishes, excludes archived ones. */
+export interface AdminMenuItem extends MenuItem {
+  category_id: string | null;
+  image_url: string | null;
+  image_small_url: string | null;
+  blur_data_url: string | null;
+}
+
+export interface CreateAdminMenuItemInput {
+  name: string;
+  price: number;
+  category_id?: string | null;
+  category?: string;
+  description: string;
+  vegetarian: boolean;
+  is_available: boolean;
+  ingredients?: string[];
+  spice_level?: number;
+  allergens?: string[];
+  diet_tags?: string[];
+  portion_description?: string;
+}
+
+export type UpdateAdminMenuItemInput = Partial<CreateAdminMenuItemInput>;
+
+/** The three derivatives the API exposes for one dish photo. */
+export interface MenuImage {
+  image_url: string;
+  image_small_url: string;
+  blur_data_url: string;
+}
+
+/** POST /api/v1/admin/menu/:menu_item_id/image */
+export interface AdminMenuImage extends MenuImage {
+  width: number;
+  height: number;
+  size_bytes: number;
+}
+
+/** One node of the public category tree (GET /api/v1/menu/categories). */
+export interface MenuCategoryNode {
+  category_id: string;
+  name: string;
+  parent_id: string | null;
+  sort_order: number;
+}
+
+/** One folder in the catalogue explorer. */
+export interface AdminCategory {
+  category_id: string;
+  name: string;
+  parent_id: string | null;
+  sort_order: number;
+  item_count: number;
+  thumbnail_menu_item_id: string | null;
+  thumbnail: MenuImage | null;
+}
+
+export interface CreateAdminCategoryInput {
+  name: string;
+  parent_id?: string | null;
+}
+
+export interface UpdateAdminCategoryInput {
+  name?: string;
+  parent_id?: string | null;
+  sort_order?: number;
+  thumbnail_menu_item_id?: string | null;
+}
+
+/** One row of the best-sellers leaderboard. */
+export interface TopSellingItem {
+  menu_item_id: string;
+  name: string;
+  category: string;
+  total_sold: number;
+  total_revenue: number;
+}
+
+/** One hourly bucket of the console's 24-hour trend graph. */
+export interface AdminAnalyticsTrendPoint {
+  hour: string;
+  revenue: number;
+  orders_served: number;
+  /** Average tables open that hour; the current hour is the live count. */
+  active_tables: number;
+}
+
+/** GET /api/v1/admin/analytics/top-selling */
+export interface AdminAnalytics {
+  items: TopSellingItem[];
+  total_revenue: number;
+  total_orders_served: number;
+  active_tables_count: number;
+  /** Last 24 clock hours, oldest first, empty hours included as zeros. */
+  trend: AdminAnalyticsTrendPoint[];
+}
+
+// ---- Admin insights + guest feedback (sql/016) ------------------------
+
+/** GET /api/v1/admin/insights/sales */
+export interface AdminSalesSummary {
+  day: string;
+  revenue_today: number;
+  orders_today: number;
+  items_sold_today: number;
+  average_ticket_today: number;
+  revenue_yesterday: number;
+  orders_yesterday: number;
+  revenue_7d: number;
+  orders_7d: number;
+}
+
+export interface AdminBestSeller {
+  menu_item_id: string;
+  name: string;
+  category: string;
+  units: number;
+  revenue: number;
+}
+
+export interface AdminPendingOrder {
+  order_id: string;
+  table_name: string;
+  table_code: string;
+  status: string;
+  total: number;
+  created_at: string;
+  age_minutes: number;
+}
+
+export interface AdminOccupancyRow {
+  table_id: string;
+  name: string;
+  code: string;
+  status: string;
+  bill_status: string;
+  devices: number;
+  guests: number;
+  /** Roster names captured when each phone joined, oldest first. */
+  member_names: string[];
+  open_orders: number;
+}
+
+/** GET /api/v1/admin/insights/tables */
+export interface AdminOccupancy {
+  total: number;
+  occupied: number;
+  free: number;
+  tables: AdminOccupancyRow[];
+}
+
+export type AdminStockState = "out" | "low" | "ok" | "untracked";
+
+export interface AdminInventoryItem {
+  menu_item_id: string;
+  name: string;
+  category: string;
+  price: number;
+  is_available: boolean;
+  /** NULL means "not tracked" — never read it as zero. */
+  stock_quantity: number | null;
+  low_stock_threshold: number;
+  state: AdminStockState;
+}
+
+/** GET /api/v1/admin/insights/inventory */
+export interface AdminInventory {
+  tracked: number;
+  out: number;
+  low: number;
+  untracked: number;
+  items: AdminInventoryItem[];
+}
+
+export interface AdminFeedback {
+  feedback_id: string;
+  rating: number;
+  comment: string;
+  created_at: string;
+  table_name: string;
+  table_code: string;
+}
+
+/** POST /api/v1/sessions/:table_token/feedback */
+export interface TableFeedbackResult {
+  feedback_id: string;
+  rating: number;
+  created_at: string;
 }

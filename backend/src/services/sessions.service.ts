@@ -1,113 +1,137 @@
-import { pool } from "../db/pool.js";
-import { env } from "../config/env.js";
-import { AppError } from "../errors/app-error.js";
-import { signReadToken } from "../lib/jwt.js";
+/* Transitional facade over the Table module.
 
-/* Module 1 — Session & Access Control. */
+   The Table module is the owner of session/access, roster, presence, bill
+   request and seating release. Several not-yet-migrated services (floor,
+   admin, orders, cart, menu, kds, ownership, realtime auth) still import the
+   historical function names and types from this file. Instead of a flag day,
+   this facade keeps those names and delegates to the single TableService
+   instance composed at boot.
 
-export interface TableRecord {
-  id: string;
-  code: string;
-  name: string;
-  status: string;
+   It holds no logic and no SQL. When the last caller migrates to
+   modules/table, this file is deleted. */
+
+import { getDefaultTableService } from "../modules/table/table.module.js";
+import type {
+  ActiveCheckResult,
+  AutoReleaseResult,
+  BillRequestResult,
+  ClearTableConfig,
+  ClearTableResult,
+  GrantedSession,
+  HeartbeatResult,
+  InitializeResult,
+  SessionEntryOptions,
+  SessionRow,
+  TableMember,
+  TableMemberInput,
+  TableRecord,
+  TableStateResult,
+} from "../modules/table/table.types.js";
+
+export {
+  MAX_PIN_ATTEMPTS,
+  RELEASE_PRESENCE_WINDOW_SECONDS,
+  SCAN_TIME_SKEW_TOLERANCE_MS,
+  SESSION_SECRET_LENGTH,
+} from "../modules/table/table.types.js";
+
+export { generateSessionPin, generateSessionSecret } from "../modules/table/table.service.js";
+
+export type {
+  ActiveCheckResult,
+  AutoReleaseResult,
+  BillRequestResult,
+  BillStatus,
+  ClearTableConfig,
+  ClearTableOutcome,
+  ClearTableResult,
+  GrantedSession,
+  HeartbeatResult,
+  InitializeResult,
+  LockedSession,
+  SessionEntryOptions,
+  SessionRow,
+  TableMember,
+  TableMemberInput,
+  TableRecord,
+  TableStateResult,
+} from "../modules/table/table.types.js";
+
+export function requireTable(tableToken: string): Promise<TableRecord> {
+  return getDefaultTableService().requireTable(tableToken);
 }
 
-/** Resolves a table_token (restaurant_tables.code) or throws 404. */
-export async function requireTable(tableToken: string): Promise<TableRecord> {
-  const res = await pool.query<TableRecord>(
-    "SELECT id, code, name, status FROM restaurant_tables WHERE code = $1",
-    [tableToken],
-  );
-  const row = res.rows[0];
-  if (!row) {
-    throw new AppError(404, "TABLE_NOT_FOUND", "Invalid table token parsed.");
-  }
-  return row;
+export function initializeSession(
+  tableToken: string,
+  options: SessionEntryOptions = {},
+): Promise<InitializeResult> {
+  return getDefaultTableService().initializeSession(tableToken, options);
 }
 
-/* E1 — POST /api/v1/sessions/initialize.
-   Verifies the scanned token and flips the table to 'active' on first scan.
-
-   The response also carries `realtime_token` — a Supabase-scoped READ
-   token whose `table_token` claim is what the RLS policies in
-   sql/001_init.sql match on (diner scope). It is issued only when
-   SUPABASE_JWT_SECRET is configured; without it the client runs REST-only
-   and the field is null. The token grants READ scope and no authority:
-   writes still go through this backend only. */
-
-const READ_TOKEN_TTL_SECONDS = 12 * 60 * 60; // one long dining session
-
-function issueTableReadToken(table: TableRecord): string | null {
-  if (!env.supabaseJwtSecret) return null;
-  const now = Math.floor(Date.now() / 1000);
-  return signReadToken(
-    {
-      sub: table.id,
-      role: "authenticated",
-      table_token: table.code,
-      iat: now,
-      exp: now + READ_TOKEN_TTL_SECONDS,
-    },
-    env.supabaseJwtSecret,
-  );
+export function joinWithPin(
+  input: { table_token: string; pin: string } & SessionEntryOptions,
+): Promise<GrantedSession> {
+  return getDefaultTableService().joinWithPin(input);
 }
 
-export async function initializeSession(tableToken: string) {
-  const table = await requireTable(tableToken);
-  const realtimeToken = issueTableReadToken(table);
-
-  if (table.status !== "active") {
-    const updated = await pool.query<TableRecord>(
-      "UPDATE restaurant_tables SET status = 'active' WHERE id = $1 RETURNING id, code, name, status",
-      [table.id],
-    );
-    const row = updated.rows[0] ?? table;
-    return {
-      table_id: row.id,
-      code: row.code,
-      name: row.name,
-      status: row.status,
-      realtime_token: realtimeToken,
-    };
-  }
-
-  return {
-    table_id: table.id,
-    code: table.code,
-    name: table.name,
-    status: table.status,
-    realtime_token: realtimeToken,
-  };
+export function joinWithPass(
+  input: { table_token: string; secret: string } & SessionEntryOptions,
+): Promise<GrantedSession> {
+  return getDefaultTableService().joinWithPass(input);
 }
 
-export type ActiveCheckResult =
-  | { has_active_order: true; order_id: string; status: string; message: string }
-  | { has_active_order: false; message: string };
-
-/* E9 — GET /api/v1/sessions/:table_token/active-check.
-   Read-only guardrail: never 409s, just reports the processing block. */
-export async function activeCheck(tableToken: string): Promise<ActiveCheckResult> {
-  const table = await requireTable(tableToken);
-
-  const res = await pool.query<{ id: string; status: string }>(
-    `SELECT id, status
-       FROM orders
-      WHERE table_id = $1
-        AND status IN ('pending', 'preparing', 'ready')
-      ORDER BY created_at DESC
-      LIMIT 1`,
-    [table.id],
-  );
-
-  const order = res.rows[0];
-  if (!order) {
-    return { has_active_order: false, message: "Ready for new order round initialization." };
-  }
-
-  return {
-    has_active_order: true,
-    order_id: order.id,
-    status: order.status,
-    message: "Order already sent",
-  };
+export function reconnectSession(
+  input: { table_token: string; secret: string } & SessionEntryOptions,
+): Promise<GrantedSession> {
+  return getDefaultTableService().reconnectSession(input);
 }
+
+export function getTableState(tableToken: string): Promise<TableStateResult> {
+  return getDefaultTableService().getTableState(tableToken);
+}
+
+export function listTableMembers(
+  tableToken: string,
+  participantToken = "",
+): Promise<TableMember[]> {
+  return getDefaultTableService().listTableMembers(tableToken, participantToken);
+}
+
+export function activeCheck(tableToken: string): Promise<ActiveCheckResult> {
+  return getDefaultTableService().activeCheck(tableToken);
+}
+
+export function requestTableBill(tableToken: string): Promise<BillRequestResult> {
+  return getDefaultTableService().requestTableBill(tableToken);
+}
+
+export function recordHeartbeat(
+  tableToken: string,
+  deviceId: string,
+  participantToken = "",
+): Promise<HeartbeatResult> {
+  return getDefaultTableService().recordHeartbeat(tableToken, participantToken, deviceId);
+}
+
+export function removeHeartbeat(
+  tableToken: string,
+  deviceId: string,
+  participantToken = "",
+): Promise<{ table_id: string; device_id: string; released: boolean }> {
+  return getDefaultTableService().removeHeartbeat(tableToken, participantToken, deviceId);
+}
+
+export function checkAndAutoReleaseTable(tableId: string): Promise<AutoReleaseResult> {
+  return getDefaultTableService().checkAndAutoReleaseTable(tableId);
+}
+
+export function clearTableSession(
+  tableId: string,
+  options: ClearTableConfig,
+): Promise<ClearTableResult> {
+  return getDefaultTableService().clearTableSession(tableId, options);
+}
+
+/* Re-exported for callers that only need the row shape (ownership.ts uses
+   TableRecord; no caller constructs a SessionRow). */
+export type { SessionRow as TableSessionRow };

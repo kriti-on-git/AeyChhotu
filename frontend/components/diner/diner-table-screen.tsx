@@ -1,16 +1,19 @@
 "use client";
 
 import { CircleCheckBig } from "lucide-react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
-import { acknowledgeSettlement, requestBill } from "@/lib/api/bill";
+import { useEffect, useRef, useState } from "react";
 import { BillDrawer, type BillScope } from "@/components/diner/bill-drawer";
+import { ChhotuAssistant } from "@/components/diner/chhotu-assistant";
 import { CartModal } from "@/components/diner/cart-modal";
 import { CartStrip } from "@/components/diner/cart-strip";
 import { DinerNavBar } from "@/components/diner/diner-nav-bar";
 import { InactiveTableState } from "@/components/diner/inactive-table-state";
 import { MenuBrowser } from "@/components/diner/menu-browser";
+import { SessionEndedState } from "@/components/diner/session-ended-state";
 import { TableCart } from "@/components/diner/table-cart";
+import { TablePassModal } from "@/components/diner/table-pass-modal";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Container } from "@/components/ui/container";
@@ -18,17 +21,15 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { Skeleton } from "@/components/ui/loading-state";
 import { useToast } from "@/components/ui/toast";
 import { usePresence } from "@/hooks/use-presence";
-import { useBills } from "@/hooks/use-bills";
 import { useLiveTable } from "@/hooks/use-live-table";
-import { getStoredDisplayName, storeDisplayName, storeTableToken } from "@/lib/api/session";
+import { getDeviceId, getStoredDisplayName, storeDisplayName, storeTableToken } from "@/lib/api/session";
+import { clearStoredSession, getGrantedSession } from "@/lib/api/table-session";
+import { removeHeartbeat } from "@/lib/api-client";
 import type { MenuItem } from "@/lib/api/types";
 
 export interface DinerTableScreenProps {
   tableToken: string;
 }
-
-/* How long the diner gets to read the thank-you before the table clears. */
-const SETTLED_THANKS_MS = 3600;
 
 export function DinerTableScreen({ tableToken }: DinerTableScreenProps) {
   const router = useRouter();
@@ -37,42 +38,139 @@ export function DinerTableScreen({ tableToken }: DinerTableScreenProps) {
   const { table, menu, quantities, totals, itemErrors } = live;
 
   const [cartOpen, setCartOpen] = useState(false);
-  // The bill drawer is open whenever a scope is set, so the icon that opened
-  // it also decides which slice shows first.
+  // One bill entry point, two tabs inside: the whole table, or just this guest.
+  // The nav icon opens the table's tab; the switch narrows it from there.
   const [billScope, setBillScope] = useState<BillScope | null>(null);
   const [pendingItemId, setPendingItemId] = useState<string | null>(null);
-  // The value is only ever rendered inside the cart modal, which opens after
-  // hydration, so reading storage in the initialiser cannot mismatch the SSR HTML.
-  const [displayName, setDisplayName] = useState(() => getStoredDisplayName());
+  // The Table Pass sheet: this device's PIN plus the QR that carries the
+  // session secret to a tablemate's camera.
+  const [passOpen, setPassOpen] = useState(false);
+  /* Hydration-safe identity: the server has no localStorage, so the first
+     paint is blank and the confirmed name is synced in the effect below,
+     after mount — the only point where the two trees can never disagree.
+     There is no "Guest" placeholder: the session gate refuses to open this
+     screen without a name, so a blank here lasts one frame at most. */
+  const [displayName, setDisplayName] = useState("");
 
-  const bills = useBills();
-  const settledAt = bills[tableToken]?.settled_at ?? null;
+  useEffect(() => {
+    // Deferred a frame so this never races the first paint (and never
+    // triggers React's "state update during render/hydration" warning).
+    const timer = window.setTimeout(() => setDisplayName(getStoredDisplayName()), 0);
+    return () => window.clearTimeout(timer);
+  }, []);
+
+  /* The bill is SERVER truth now (docs/14 #5): `bill_status` arrives from
+     `GET /sessions/:token` and the table channel, not from a browser-local
+     store, so two phones at the table always agree. */
+  const billRequested = live.billStatus !== "unrequested";
+  /* docs/14 #22 — a pre-pay or a staff settle must not hide food that is
+     still being cooked. The thank-you appears once nothing is in the
+     kitchen; until then the guest keeps the tracker and history. */
+  const paidWhileCooking = live.billStatus === "paid" && live.hasCookingOrders;
+  const settled = live.billStatus === "paid" && !live.hasCookingOrders;
+
+  /* A settled visit closes itself. One minute after the thank-you appears,
+     this device leaves the table (its heartbeat is removed), the release
+     engine clears the table once every phone has gone, and the guest lands
+     back on the home screen — no dead tab left on the table's QR. */
+  const [secondsLeft, setSecondsLeft] = useState(60);
+
+  useEffect(() => {
+    if (!settled) return;
+    const timer = window.setInterval(() => {
+      setSecondsLeft((current) => Math.max(0, current - 1));
+    }, 1_000);
+    return () => window.clearInterval(timer);
+  }, [settled]);
+
+  useEffect(() => {
+    if (!settled || secondsLeft > 0) return;
+    let cancelled = false;
+
+    void removeHeartbeat(tableToken, getDeviceId())
+      .catch(() => undefined)
+      .finally(() => {
+        if (cancelled) return;
+        clearStoredSession(tableToken);
+        router.push("/");
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [settled, secondsLeft, tableToken, router]);
 
   usePresence(tableToken);
+
+  /* In-app notice for a cart change that came from ANOTHER device.
+
+     useLiveTable raises `cartNotice` only for reloads this device did not ask
+     for, so a guest is never told about their own tap — this effect just turns
+     the first sighting of each id into one toast. The ref guard matters because
+     `menuIndex` changes whenever the menu reloads, and a re-run must not
+     announce the same change twice. */
+  const cartNotice = live.cartNotice;
+  const menuIndex = live.menuIndex;
+  const handledNoticeRef = useRef(0);
+
+  useEffect(() => {
+    if (!cartNotice || cartNotice.id === handledNoticeRef.current) return;
+    handledNoticeRef.current = cartNotice.id;
+
+    const dishName = (menuItemId: string) => menuIndex.get(menuItemId)?.name ?? "a dish";
+    const [firstAdded, ...moreAdded] = cartNotice.added;
+
+    if (firstAdded) {
+      toast({
+        title: `${firstAdded.added_by} added ${dishName(firstAdded.menu_item_id)}`,
+        description: moreAdded.length
+          ? `${moreAdded.length + 1} dishes are now in the table's cart.`
+          : "It's in the table's shared cart for everyone.",
+      });
+      return;
+    }
+
+    const bumped = cartNotice.increased[0];
+    if (bumped) {
+      toast({
+        title: `${dishName(bumped.line.menu_item_id)} × ${bumped.line.quantity}`,
+        description: `Someone at the table added ${bumped.delta} more.`,
+      });
+      return;
+    }
+
+    const takenOff = cartNotice.removed[0];
+    if (takenOff) {
+      toast({
+        title: "The table's cart changed",
+        description: `${dishName(takenOff.menu_item_id)} was taken off by someone at the table.`,
+      });
+    }
+  }, [cartNotice, menuIndex, toast]);
 
   useEffect(() => {
     storeTableToken(tableToken);
   }, [tableToken]);
 
-  /* The server settled the bill: hold the thank-you for a beat, then drop the
-     event so nothing lingers for the next guests. The clear itself happens in
-     useLiveTable and in the shared demo store. */
-  useEffect(() => {
-    if (!settledAt) return;
-    const timer = window.setTimeout(() => acknowledgeSettlement(tableToken), SETTLED_THANKS_MS);
-    return () => window.clearTimeout(timer);
-  }, [settledAt, tableToken]);
-
   function handleDisplayNameChange(name: string) {
+    /* A blank edit keeps the current name: attribution is never optional. */
+    if (!name.trim()) return;
     setDisplayName(name);
     storeDisplayName(name);
   }
 
-  function handleRequestBill() {
-    if (bills[tableToken]) return;
-    requestBill(tableToken);
+  async function handleRequestBill() {
+    if (billRequested) return;
+
+    const result = await live.requestBill();
     // Asking for the bill closes the editor behind it: the table is done.
     setCartOpen(false);
+
+    if (!result.ok) {
+      toast({ title: result.message ?? "Could not request the bill.", tone: "error" });
+      return;
+    }
+
     toast({
       title: "Bill requested",
       description: "We've asked the server to bring your bill.",
@@ -82,7 +180,9 @@ export function DinerTableScreen({ tableToken }: DinerTableScreenProps) {
   async function handleAdd(item: MenuItem) {
     setPendingItemId(item.id);
 
-    const result = await live.addToCart(item, displayName);
+    /* The stored name, not a placeholder: hydration may still be a frame
+       behind on the very first tap. */
+    const result = await live.addToCart(item, displayName || getStoredDisplayName());
 
     setPendingItemId(null);
 
@@ -103,6 +203,15 @@ export function DinerTableScreen({ tableToken }: DinerTableScreenProps) {
   // ---- State matrix: error (specific message + Retry Connection) ---------
   if (live.phase === "error") {
     if (live.error?.error === "TABLE_NOT_FOUND") return <InactiveTableState />;
+
+    /* The server settled this table while the tab was open (or the session
+       secret rotated). Say so cleanly and drop the dead credentials — a
+       "lost connection" screen would suggest retrying something that can
+       never succeed. */
+    if (live.error?.error === "SESSION_ENDED") {
+      clearStoredSession(tableToken);
+      return <SessionEndedState />;
+    }
 
     return (
       <main id="main" className="min-h-dvh">
@@ -125,6 +234,9 @@ export function DinerTableScreen({ tableToken }: DinerTableScreenProps) {
 
   if (!table) return <InactiveTableState />;
 
+  // Present whenever the gate granted a session; absent in the offline demo.
+  const session = getGrantedSession(tableToken);
+
   return (
     <main id="main" className="min-h-dvh pb-32">
       {/* The diner's one band of chrome: identity and the three reach-for
@@ -134,7 +246,9 @@ export function DinerTableScreen({ tableToken }: DinerTableScreenProps) {
         live={live}
         displayName={displayName}
         onDisplayNameChange={handleDisplayNameChange}
-        onOpenBill={(scope) => setBillScope(scope)}
+        onOpenBill={() => setBillScope("total")}
+        onOpenPass={session ? () => setPassOpen(true) : undefined}
+        onRefresh={() => void live.refresh()}
       />
 
       {/* The heading block is gone on purpose: "Ready to order?" now lives on
@@ -150,12 +264,7 @@ export function DinerTableScreen({ tableToken }: DinerTableScreenProps) {
           <EmptyState
             titleAs="h2"
             title="The menu is being stocked"
-            description="No dishes are showing right now. Refresh and the kitchen's list appears the moment it lands."
-            action={
-              <Button variant="soft" size="md" onClick={() => void live.refresh()}>
-                Refresh menu
-              </Button>
-            }
+            description="No dishes are showing right now."
           />
         ) : (
           <MenuBrowser
@@ -164,8 +273,6 @@ export function DinerTableScreen({ tableToken }: DinerTableScreenProps) {
             pendingItemId={pendingItemId}
             itemErrors={itemErrors}
             onAdd={(item) => void handleAdd(item)}
-            onReview={() => setCartOpen(true)}
-            cartItemCount={totals.itemCount}
             stickyTopClass="top-[var(--diner-nav-h,3.75rem)]"
           />
         )}
@@ -176,8 +283,8 @@ export function DinerTableScreen({ tableToken }: DinerTableScreenProps) {
           <TableCart
             live={live}
             onReview={() => setCartOpen(true)}
-            onRequestBill={handleRequestBill}
-            billRequested={Boolean(bills[tableToken])}
+            onRequestBill={() => void handleRequestBill()}
+            billRequested={billRequested}
           />
         </aside>
       </Container>
@@ -186,13 +293,23 @@ export function DinerTableScreen({ tableToken }: DinerTableScreenProps) {
         itemCount={totals.itemCount}
         total={totals.total}
         onView={() => setCartOpen(true)}
+        billRequested={billRequested}
+        onRequestBill={() => void handleRequestBill()}
+        syncing={live.syncing}
+      />
+
+      <ChhotuAssistant
+        tableToken={tableToken}
+        live={live}
+        displayName={displayName}
+        className="bottom-24 lg:bottom-6"
       />
 
       <BillDrawer
         open={billScope !== null}
         onClose={() => setBillScope(null)}
         scope={billScope ?? "total"}
-        onScopeChange={(scope) => setBillScope(scope)}
+        onScopeChange={setBillScope}
         live={live}
         displayName={displayName}
       />
@@ -215,8 +332,39 @@ export function DinerTableScreen({ tableToken }: DinerTableScreenProps) {
         }}
       />
 
+      {session ? (
+        <TablePassModal
+          open={passOpen}
+          onClose={() => setPassOpen(false)}
+          tableToken={tableToken}
+          tableName={session.name || session.code}
+          pin={session.session_pin}
+          secret={session.session_secret}
+          live={live}
+          displayName={displayName}
+        />
+      ) : null}
+
+      {/* Paid, but the kitchen still has a ticket. Keep the visit alive and
+          say so plainly instead of replacing the screen (docs/14 #22). */}
+      {paidWhileCooking ? (
+        <div
+          role="status"
+          aria-live="polite"
+          className="fixed inset-x-0 bottom-24 z-30 mx-auto w-fit max-w-[calc(100vw-2rem)] rounded-pill border border-ready/40 bg-ready-surface px-4 py-2 text-center text-sm font-medium text-ink shadow-sm lg:bottom-6"
+        >
+          Bill paid — your remaining dishes are still cooking.{" "}
+          <Link
+            href={`/table/${tableToken}/tracker`}
+            className="font-semibold text-ready underline underline-offset-2"
+          >
+            Follow the tracker
+          </Link>
+        </div>
+      ) : null}
+
       {/* Last in the DOM so it sits above the cart, the strip and the nav. */}
-      {settledAt ? (
+      {settled ? (
         <div
           role="status"
           aria-live="polite"
@@ -230,8 +378,18 @@ export function DinerTableScreen({ tableToken }: DinerTableScreenProps) {
           </span>
           <h2 className="font-display text-title font-semibold text-ink">Thank you!</h2>
           <p className="max-w-md text-lead text-ink-muted">
-            Your bill is settled. This table has been cleared and is ready for its next guests.
+            Your bill is settled. Thank you for dining with us.
           </p>
+          <p className="max-w-md text-sm text-ink-subtle">
+            Taking you home in {secondsLeft}s — this phone is leaving the table, so it can be
+            cleared for the next guests.
+          </p>
+          <Link
+            href="/"
+            className="text-sm font-semibold text-ember underline underline-offset-4"
+          >
+            Go home now
+          </Link>
         </div>
       ) : null}
     </main>

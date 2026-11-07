@@ -1,13 +1,12 @@
 "use client";
 
-import { Activity, Pencil, Receipt, UserRound, Wallet } from "lucide-react";
+import { Activity, Pencil, QrCode, Receipt, RefreshCw, UserRound } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
-import type { BillScope } from "@/components/diner/bill-drawer";
 import { Container } from "@/components/ui/container";
 import { Tooltip } from "@/components/ui/tooltip";
 import type { LiveTableValue } from "@/hooks/use-live-table";
-import { formatPrice } from "@/lib/format";
+import { getStoredDisplayName } from "@/lib/api/session";
 import { cn } from "@/lib/utils";
 
 export interface DinerNavBarProps {
@@ -15,37 +14,73 @@ export interface DinerNavBarProps {
   live: LiveTableValue;
   displayName: string;
   onDisplayNameChange: (name: string) => void;
-  /** Opens the bill breakdown panel on the requested slice. */
-  onOpenBill: (scope: BillScope) => void;
+  /** Opens the bill panel: the table's total and each guest's share, in one. */
+  onOpenBill: () => void;
+  /** Opens this table's PIN + QR pass. Absent in the offline demo, where
+      there is no real session to hand out. */
+  onOpenPass?: () => void;
+  /** Re-reads menu, cart and orders on demand — the manual backup for when a
+      realtime socket goes quiet. */
+  onRefresh: () => void;
 }
 
 /* The charcoal band is this surface's whole navigation. Who you are sits on
    the left — editable, because the table reads that name beside every line
-   you add — and the three things a guest reaches for sit on the right: the
-   live tracker and the two running bills. Amounts stay in tooltips so the
-   band reads as three quiet icons rather than a dashboard. Its colours are
-   the marketing header's own, so the two navbars read as one product. */
+   you add — and what a guest reaches for sits on the right: the live tracker
+   and the one bill (its total and this guest's share are the same panel, so
+   there is one icon, not two). Amounts stay in the tooltip so the band reads
+   as quiet icons rather than a dashboard. Its colours are the marketing
+   header's own, so the two navbars read as one product. */
 export function DinerNavBar({
   tableToken,
   live,
   displayName,
   onDisplayNameChange,
   onOpenBill,
+  onOpenPass,
+  onRefresh,
 }: DinerNavBarProps) {
-  const { menuIndex, orders, cart, activeOrder } = live;
+  const { activeOrder, refreshing } = live;
   const headerRef = useRef<HTMLElement>(null);
+
+  /* The band starts blank and only then adopts the stored name: a name read
+     during render would be present on the client and absent in the server
+     HTML, which is exactly the mismatch React reports. The gate has already
+     confirmed a name before this screen mounts, so the blank is one frame. */
+  const [hydratedName, setHydratedName] = useState("");
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => setHydratedName(getStoredDisplayName()), 0);
+    return () => window.clearTimeout(timer);
+  }, []);
+
+  /* The prop wins the moment the parent syncs (or the guest edits); until
+     then the locally hydrated name is the better answer. */
+  const name = displayName || hydratedName;
 
   /* Matches the landing page's navbar exactly: transparent and lineless at
      the top of the scroll, then a blurred canvas wash once content passes
-     underneath it. */
+     underneath it.
+
+     Read from BOTH scrollers: globals.css locks html/body to 100dvh with
+     `overflow-x: hidden`, which makes <body> the element that actually
+     scrolls. `window.scrollY` therefore stays 0 for the whole page, a
+     window-only listener never fires, and the band keeps NO background while
+     the menu scrolls visibly behind "Ordering as". Scroll events do not
+     bubble, so document needs the capture flag. */
   const [scrolled, setScrolled] = useState(false);
 
   useEffect(() => {
-    const onScroll = () => setScrolled(window.scrollY > 16);
-    onScroll();
+    const read = () => setScrolled((window.scrollY || document.body.scrollTop || 0) > 16);
 
-    window.addEventListener("scroll", onScroll, { passive: true });
-    return () => window.removeEventListener("scroll", onScroll);
+    read();
+    document.addEventListener("scroll", read, { capture: true, passive: true });
+    window.addEventListener("scroll", read, { passive: true });
+
+    return () => {
+      document.removeEventListener("scroll", read, true);
+      window.removeEventListener("scroll", read);
+    };
   }, []);
 
   /* Publish the band's height so the sticky menu search can dock beneath it
@@ -63,44 +98,28 @@ export function DinerNavBar({
     return () => observer.disconnect();
   }, []);
 
-  // Everything the table has already fired, plus whatever is staged now.
-  const firedTotal = orders.reduce(
-    (sum, order) => sum + order.items.reduce((line, item) => line + item.price * item.quantity, 0),
-    0,
-  );
-  const stagedTotal = cart.reduce(
-    (sum, line) => sum + (menuIndex.get(line.menu_item_id)?.price ?? 0) * line.quantity,
-    0,
-  );
-  const totalBill = firedTotal + stagedTotal;
-
-  // Just this guest's share: the lines they added, fired or still staged.
-  const firedMine = orders.reduce(
-    (sum, order) =>
-      sum +
-      order.items
-        .filter((item) => item.added_by === displayName)
-        .reduce((line, item) => line + item.price * item.quantity, 0),
-    0,
-  );
-  const stagedMine = cart
-    .filter((line) => line.added_by === displayName)
-    .reduce((sum, line) => sum + (menuIndex.get(line.menu_item_id)?.price ?? 0) * line.quantity, 0);
-  const myBill = firedMine + stagedMine;
-
+  /* No money arithmetic here: the pill opens the backend-generated bill.
+     The drawer is the only surface that prints totals, tax and allocations. */
   return (
     <header
       ref={headerRef}
       className={cn(
-        "sticky top-0 z-40 w-full border-b text-ink transition-colors duration-[var(--duration-base)] ease-gentle",
+        // sticky + safe-top: the band clears a notch without the guest having
+        // to scroll the menu out from under it.
+        "sticky top-0 z-40 w-full border-b pt-[env(safe-area-inset-top)] text-ink transition-colors duration-[var(--duration-base)] ease-gentle",
         scrolled ? "border-line bg-canvas/85 backdrop-blur-md" : "border-transparent",
       )}
     >
-      <Container className="flex flex-wrap items-center gap-x-4 gap-y-3 py-3">
-        <DinerIdentity displayName={displayName} onChange={onDisplayNameChange} />
+      {/* NOWRAP on purpose: at 320px the identity and four icon actions used
+          to wrap onto a second line, which re-flowed the whole menu under a
+          band that had just changed height. The name truncates instead. */}
+      <Container className="flex flex-nowrap items-center gap-2 py-2.5">
+        <div className="min-w-0 flex-1">
+          <DinerIdentity displayName={name} onChange={onDisplayNameChange} />
+        </div>
 
-        <div className="ml-auto flex items-center gap-1.5">
-          <Tooltip label="Would you like to open live tracker?" side="bottom">
+        <div className="flex shrink-0 items-center gap-0.5 sm:gap-1">
+          <Tooltip label="Live tracker" side="bottom">
             <Link
               href={`/table/${tableToken}/tracker`}
               aria-label="Open live tracker"
@@ -116,25 +135,49 @@ export function DinerNavBar({
             </Link>
           </Tooltip>
 
-          <Tooltip label={`Total bill · ${formatPrice(totalBill)}`} side="bottom">
+          {/* The pill opens the server-calculated bill. It deliberately carries
+              no amount: a number here would be a second, browser-side total
+              that could disagree with the drawer. */}
+          <Tooltip label="Open the bill" side="bottom">
             <button
               type="button"
-              onClick={() => onOpenBill("total")}
-              aria-label={`Open the total bill breakdown: ${formatPrice(totalBill)}`}
-              className={actionClass}
+              onClick={onOpenBill}
+              aria-label="Open the bill"
+              className="inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded-pill border border-ink/12 bg-sand/70 px-2.5 text-ink transition-colors duration-[var(--duration-fast)] ease-gentle hover:border-ink/20 hover:bg-sand focus-visible:border-ink/25 focus-visible:bg-sand focus-visible:outline-none sm:h-10 sm:px-3.5"
             >
-              <Receipt className="size-5" aria-hidden />
+              <Receipt className="size-5 shrink-0" aria-hidden />
+              <span className="hidden text-sm font-semibold sm:inline">Bill</span>
             </button>
           </Tooltip>
 
-          <Tooltip label={`Your part · ${formatPrice(myBill)}`} side="bottom">
+          {onOpenPass ? (
+            <Tooltip label="Table pass" side="bottom">
+              <button
+                type="button"
+                onClick={onOpenPass}
+                aria-label="Show the table pass"
+                className={actionClass}
+              >
+                <QrCode className="size-5" aria-hidden />
+              </button>
+            </Tooltip>
+          ) : null}
+
+          {/* Deliberately last of the five: it is the utility, not the job.
+              Realtime normally keeps this table current on its own; this is
+              the tap that proves the app right when it does not. */}
+          <Tooltip label={refreshing ? "Refreshing…" : "Refresh menu and cart"} side="bottom">
             <button
               type="button"
-              onClick={() => onOpenBill("mine")}
-              aria-label={`Open your part of the bill: ${formatPrice(myBill)}`}
-              className={actionClass}
+              onClick={onRefresh}
+              disabled={refreshing}
+              aria-label={refreshing ? "Refreshing menu and cart" : "Refresh menu and cart"}
+              aria-busy={refreshing || undefined}
+              className={cn(actionClass, "disabled:pointer-events-none disabled:opacity-50")}
             >
-              <Wallet className="size-5" aria-hidden />
+              {/* docs/14 #1 — a refresh is SOFT: the menu stays mounted and
+                  only this glyph shows the re-read. */}
+              <RefreshCw className={cn("size-5", refreshing && "animate-spin")} aria-hidden />
             </button>
           </Tooltip>
         </div>
@@ -143,8 +186,11 @@ export function DinerNavBar({
   );
 }
 
+/* 36px on the narrowest phones, 40px from `sm` up: four 40px targets plus a
+   name do not fit a 320px viewport, and shrinking the row is better than
+   wrapping it. */
 const actionClass =
-  "inline-flex size-10 items-center justify-center rounded-md text-ink-muted transition-colors duration-[var(--duration-fast)] ease-gentle hover:bg-sand hover:text-ink focus-visible:bg-sand focus-visible:text-ink focus-visible:outline-none";
+  "inline-flex size-9 items-center justify-center rounded-md text-ink-muted transition-colors duration-[var(--duration-fast)] ease-gentle hover:bg-sand hover:text-ink focus-visible:bg-sand focus-visible:text-ink focus-visible:outline-none sm:size-10";
 
 /* The guest's own name, editable in place. Committing it updates the shared
    display name, so the next dish they add carries it and every other phone at
@@ -176,7 +222,9 @@ function DinerIdentity({
 
   function commit() {
     const next = draft.trim();
-    onChange(next || "Guest");
+    /* A blank edit keeps the current name — every cart line needs one. */
+    if (next) onChange(next);
+    else setDraft(displayName);
     setEditing(false);
   }
 
@@ -184,7 +232,7 @@ function DinerIdentity({
     <div className="flex min-w-0 items-center gap-2.5">
       <span
         aria-hidden
-        className="flex size-10 shrink-0 items-center justify-center rounded-md bg-sand text-ink-muted"
+        className="hidden size-10 shrink-0 items-center justify-center rounded-md bg-sand text-ink-muted sm:flex"
       >
         <UserRound className="size-5" />
       </span>
@@ -214,7 +262,7 @@ function DinerIdentity({
             type="button"
             onClick={startEditing}
             aria-label={`Edit your name (currently ${displayName})`}
-            className="group flex max-w-40 cursor-pointer items-center gap-1.5 rounded-sm text-left"
+            className="group flex min-w-0 max-w-40 cursor-pointer items-center gap-1.5 rounded-sm text-left"
           >
             <span className="truncate font-display text-base font-semibold text-ink">
               {displayName}

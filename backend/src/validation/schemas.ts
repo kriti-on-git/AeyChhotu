@@ -1,119 +1,64 @@
 import { z } from "zod";
-import { AppError } from "../errors/app-error.js";
+import { note, pagination, tableToken, uuid } from "./primitives.js";
 
 /* Zod schemas for every endpoint (docs/7 §1.7 validation rules).
    Unknown keys are stripped (never rejected) per §1.7. */
 
-const TABLE_TOKEN_RE = /^[a-z0-9]{4,16}$/;
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-const tableToken = z.string().regex(TABLE_TOKEN_RE, "Must be a 4-16 character lowercase table token.");
-const uuid = (label: string) => z.string().regex(UUID_RE, `Must be a valid ${label} UUID.`);
-
-/** §1.5 pagination — shared by every list endpoint. */
-const pagination = {
-  page: z.coerce.number().int().min(1, "page must be an integer >= 1.").default(1),
-  limit: z.coerce.number().int().min(1, "limit must be between 1 and 100.").max(100, "limit must be between 1 and 100.").default(20),
-};
-
-const note = z.string().max(500, "Notes must be 500 characters or fewer.");
 
 // ---- Module 1: Session & Access -------------------------------------
 
-/** E1 POST /api/v1/sessions/initialize */
-export const initializeSchema = z.object({ table_token: tableToken });
+/* Owned by the Table module; re-exported here so existing importers keep one
+   validation entry point and the contract has a single definition site. */
+export {
+  activeCheckParamsSchema,
+  heartbeatSchema,
+  initializeSchema,
+  joinPassSchema,
+  joinPinSchema,
+  reconnectSchema,
+  sessionTableParamsSchema,
+} from "../modules/table/table.validation.js";
 
-/** E2 POST /api/v1/auth/kds-login */
-export const kdsLoginSchema = z.object({
-  pin: z.string().regex(/^\d{4,6}$/, "PIN must be 4 to 6 digits."),
-});
-
-/** E9 GET /api/v1/sessions/:table_token/active-check */
-export const activeCheckParamsSchema = z.object({ table_token: tableToken });
+/* Login schemas are owned by the Staff module; re-exported here so existing
+   importers keep one validation entry point and the contract has a single
+   definition site. `surface` stays rate-limiter metadata only. */
+export {
+  adminLoginSchema,
+  kdsLoginSchema,
+} from "../modules/staff/staff.validation.js";
 
 // ---- Module 2: Menu & Cart ------------------------------------------
 
 /** E3 GET /api/v1/menu */
-export const menuQuerySchema = z.object({
-  table_token: tableToken,
-  category: z.string().max(80, "Category filter must be 80 characters or fewer.").optional(),
-  q: z.string().max(50, "Search query must be 50 characters or fewer.").optional(),
-  ...pagination,
-});
+export { menuQuerySchema } from "../modules/menu/menu.validation.js";
 
-/** E4 GET /api/v1/cart/items */
-export const cartListQuerySchema = z.object({ table_token: tableToken, ...pagination });
+/* Cart schemas are owned by the Cart module; re-exported here so existing
+   importers keep one validation entry point. */
+export {
+  cartAddSchema,
+  cartDeleteSchema,
+  cartItemParamsSchema,
+  cartListQuerySchema,
+  cartUpdateSchema,
+} from "../modules/cart/cart.validation.js";
 
-/** E5 POST /api/v1/cart/items */
-export const cartAddSchema = z.object({
-  table_token: tableToken,
-  menu_item_id: uuid("menu_item_id"),
-  quantity: z.coerce.number().int("quantity must be an integer between 1 and 99.").min(1, "quantity must be an integer between 1 and 99.").max(99, "quantity must be an integer between 1 and 99.").default(1),
-  allergy_note: note.optional(),
-  request_note: note.optional(),
-  added_by: z.string().max(40, "added_by must be 40 characters or fewer.").optional(),
-});
+/* Orders schemas are owned by the Orders module; re-exported here so existing
+   importers keep one validation entry point. */
+export {
+  fireSchema,
+  ordersListQuerySchema,
+  orderStatusParamsSchema,
+  orderStatusQuerySchema,
+} from "../modules/orders/orders.validation.js";
 
-/** E6 PATCH /api/v1/cart/items/:cart_item_id */
-export const cartUpdateSchema = z
-  .object({
-    table_token: tableToken,
-    // Absolute "set to N" (last write wins) — kept for contract compat.
-    quantity: z.coerce.number().int("quantity must be an integer between 1 and 99.").min(1, "quantity must be an integer between 1 and 99; use DELETE to remove a line.").max(99, "quantity must be an integer between 1 and 99.").optional(),
-    // +/- steppers send a DELTA instead: the server applies it atomically
-    // (quantity = quantity + delta), so two phones tapping at once can no
-    // longer overwrite each other with stale absolute values.
-    quantity_delta: z.coerce
-      .number()
-      .int("quantity_delta must be a whole number between -99 and 99.")
-      .min(-99, "quantity_delta must be between -99 and 99.")
-      .max(99, "quantity_delta must be between -99 and 99.")
-      .refine((value) => value !== 0, {
-        message: "quantity_delta must not be 0; use DELETE to remove a line.",
-      })
-      .optional(),
-    request_note: note.optional(),
-    allergy_note: note.optional(),
-  })
-  .refine(
-    (body) =>
-      body.quantity !== undefined ||
-      body.quantity_delta !== undefined ||
-      body.request_note !== undefined ||
-      body.allergy_note !== undefined,
-    { message: "Provide at least one of quantity, quantity_delta, request_note, allergy_note." },
-  );
-
-/** E6 path params */
-export const cartItemParamsSchema = z.object({ cart_item_id: uuid("cart_item_id") });
-
-/** E7 DELETE /api/v1/cart/items */
-export const cartDeleteSchema = z.object({
-  table_token: tableToken,
-  cart_item_id: uuid("cart_item_id"),
-});
-
-/** E8 POST /api/v1/orders/fire */
-export const fireSchema = z.object({ table_token: tableToken });
-
-/** E16 GET /api/v1/orders */
-export const ordersListQuerySchema = z.object({ table_token: tableToken, ...pagination });
-
-// ---- Module 3: KDS ---------------------------------------------------
-
-/** E10 GET /api/v1/kds/tickets */
-export const kdsTicketsQuerySchema = z.object({
-  status: z.enum(["pending", "preparing", "ready"]).optional(),
-  ...pagination,
-});
-
-/** E11 / E12 path params */
-export const orderParamsSchema = z.object({ order_id: uuid("order_id") });
-
-/** E11 PATCH /api/v1/kds/tickets/:order_id/status */
-export const orderStatusSchema = z.object({
-  status: z.enum(["preparing", "ready"]),
-});
+/* KDS ticket schemas are owned by the Tickets module; re-exported here so
+   existing importers keep one validation entry point. */
+export {
+  denyTicketSchema,
+  kdsTicketsQuerySchema,
+  orderParamsSchema,
+  orderStatusSchema,
+} from "../modules/tickets/tickets.validation.js";
 
 /** E13 POST /api/v1/kds/shift/activate */
 export const shiftActivateSchema = z.object({
@@ -123,26 +68,66 @@ export const shiftActivateSchema = z.object({
 // ---- Module 4: Floor & availability ----------------------------------
 
 /** E14 PATCH /api/v1/menu/items/:menu_item_id/availability */
-export const menuItemParamsSchema = z.object({ menu_item_id: uuid("menu_item_id") });
-export const availabilitySchema = z.object({ is_available: z.boolean() });
-
-/** E15 GET /api/v1/orders/:order_id/status — the table_token query is the
-    scope check: an order id alone must not be a universal reader. */
-export const orderStatusParamsSchema = z.object({ order_id: uuid("order_id") });
-export const orderStatusQuerySchema = z.object({ table_token: tableToken });
+export {
+  availabilitySchema,
+  menuImageParamsSchema,
+  menuItemParamsSchema,
+} from "../modules/menu/menu.validation.js";
 
 /** E17 GET /api/v1/floor/tables */
 export const floorQuerySchema = z.object({ ...pagination });
 
-/* Validates a request slice and converts failures into the contract's
-   400 VALIDATION_ERROR envelope with per-field messages (docs/7 §1.1). */
-export function parseOrThrow<T>(schema: z.ZodType<T>, value: unknown): T {
-  const result = schema.safeParse(value);
-  if (result.success) return result.data;
+/** PATCH /api/v1/floor/tables/:table_id/settle */
+export const floorTableParamsSchema = z.object({ table_id: uuid("table_id") });
 
-  const fields: Record<string, string> = {};
-  for (const issue of result.error.issues) {
-    fields[issue.path.length > 0 ? issue.path.join(".") : "body"] = issue.message;
-  }
-  throw new AppError(400, "VALIDATION_ERROR", "Request payload failed validation.", { fields });
-}
+/** PATCH /api/v1/floor/tables/:table_id/clear — `force` cancels an open ticket
+    so staff can clear an occupied table without serving food nobody got. */
+export const floorClearSchema = z.object({ force: z.boolean().optional().default(false) });
+
+// ---- Module 5: Executive admin console --------------------------------
+
+/** POST /api/v1/admin/tables */
+export const adminCreateTableSchema = z.object({
+  name: z
+    .string()
+    .trim()
+    .min(1, "Give the table a name.")
+    .max(60, "Table names must be 60 characters or fewer."),
+});
+
+/** PATCH /api/v1/admin/tables/:table_id */
+export const adminUpdateTableSchema = z.object({
+  name: z
+    .string()
+    .trim()
+    .min(1, "The table name cannot be empty.")
+    .max(60, "Table names must be 60 characters or fewer.")
+    .optional(),
+});
+
+/** PATCH /api/v1/admin/tables/:table_id/code — repair a table's printed QR
+    code. Uppercase is accepted and folded down by the service; the shape is
+    the same 5–8 character alphabet every generated code uses. */
+export const adminUpdateTableCodeSchema = z.object({
+  code: z
+    .string()
+    .trim()
+    .regex(/^[A-Za-z0-9]{5,8}$/, "Use 5–8 letters or digits, e.g. k7x2p16."),
+});
+
+/** Shared path params for the admin table sub-routes. */
+export const adminTableParamsSchema = z.object({ table_id: uuid("table_id") });
+
+export {
+  adminCategoryParamsSchema,
+  adminCreateCategorySchema,
+  adminCreateMenuItemSchema,
+  adminMenuItemParamsSchema,
+  adminUpdateCategorySchema,
+  adminUpdateMenuItemSchema,
+} from "../modules/menu/menu.validation.js";
+
+/* Validates a request slice and converts failures into the contract's
+   400 VALIDATION_ERROR envelope with per-field messages (docs/7 §1.1).
+   Kept re-exported so every existing route import is unchanged. */
+export { parseOrThrow } from "./parse.js";

@@ -1,20 +1,20 @@
 import { Pool } from "pg";
 import { env } from "../config/env.js";
 
-/* Single shared connection pool built from the DATABASE_URL env var
-   (validated loudly in config/env.ts). Lazy by design: pg connects on the
-   first query. No business code lives here yet. */
+/* The process's single physical connection pool.
+
+   DatabaseManager adopts this object through createDbPoolAdapter(); it owns
+   health, diagnostics, transactions and shutdown. There is no second pool and
+   no separate close path. Tests that need a different database construct a
+   DatabaseManager with their own factory and never touch this module. */
 
 export const pool = new Pool({
   connectionString: env.databaseUrl,
   max: 10,
   idleTimeoutMillis: 30_000,
   connectionTimeoutMillis: 10_000,
+  statement_timeout: 15_000,
 });
 
-/* An idle-client error means the database connection is broken — fail loudly
-   instead of silently serving degraded responses. */
-pool.on("error", (err: Error) => {
-  console.error(`[db] FATAL: postgres pool error — ${err.message}`);
-  process.exit(1);
-});
+/* Idle-client errors are handled by DatabaseManager's fatal policy; do not
+   install a second process.exit() here. */

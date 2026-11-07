@@ -1,7 +1,6 @@
 "use client";
 
-import { Flame, Pencil, Receipt } from "lucide-react";
-import { useState } from "react";
+import { Flame, Loader2, Pencil, Receipt } from "lucide-react";
 import { QuantityStepper } from "@/components/diner/quantity-stepper";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -35,19 +34,16 @@ export function TableCart({
   billRequested = false,
   className,
 }: TableCartProps) {
-  const { cart, menuIndex, totals, soldOutInCart, updateLine, removeLine } = live;
-  const [busyLineId, setBusyLineId] = useState<string | null>(null);
+  const { cart, menuIndex, totals, soldOutInCart, syncing, updateLine, removeLine } = live;
 
-  async function changeQuantity(cartItemId: string, nextQuantity: number, delta: number) {
-    setBusyLineId(cartItemId);
-
+  function changeQuantity(cartItemId: string, nextQuantity: number, delta: number) {
+    /* Optimistic (#4): the hook paints the new quantity immediately, so there
+       is no per-line spinner blocking the next tap. */
     if (nextQuantity < 1) {
-      await removeLine(cartItemId);
+      void removeLine(cartItemId);
     } else if (delta !== 0) {
-      await updateLine(cartItemId, { quantity_delta: delta });
+      void updateLine(cartItemId, { quantity_delta: delta });
     }
-
-    setBusyLineId(null);
   }
 
   return (
@@ -59,8 +55,20 @@ export function TableCart({
             {formatPrice(totals.total)}
           </p>
         </div>
-        <span className="shrink-0 rounded-pill bg-sand px-3 py-1.5 text-xs font-semibold text-ink-muted tabular-nums">
-          {totals.itemCount} {totals.itemCount === 1 ? "item" : "items"}
+        {/* The count is the one place the cart admits to a write still in
+            flight: an add paints instantly, and until the server has been read
+            back this pill says "Syncing" instead of a number that may change. */}
+        <span
+          aria-live="polite"
+          className={cn(
+            "inline-flex shrink-0 items-center gap-1.5 rounded-pill px-3 py-1.5 text-xs font-semibold tabular-nums transition-colors duration-[var(--duration-fast)]",
+            syncing ? "bg-ember-soft text-ember" : "bg-sand text-ink-muted",
+          )}
+        >
+          {syncing ? <Loader2 className="size-3.5 animate-spin" aria-hidden /> : null}
+          {syncing
+            ? "Syncing"
+            : `${totals.itemCount} ${totals.itemCount === 1 ? "item" : "items"}`}
         </span>
       </div>
 
@@ -74,7 +82,7 @@ export function TableCart({
         <div className="mt-5 rounded-lg border border-dashed border-line-strong bg-canvas px-5 py-9 text-center">
           <p className="font-display text-subheading text-ink">Your table is waiting.</p>
           <p className="mt-2 text-sm leading-relaxed text-ink-muted">
-            Swipe right on something delicious — it lands here for everyone at the table.
+            Cart is empty. Add dishes to begin.
           </p>
         </div>
       ) : (
@@ -120,9 +128,8 @@ export function TableCart({
                   <QuantityStepper
                     quantity={line.quantity}
                     label={item?.name ?? "this item"}
-                    busy={busyLineId === line.id}
                     onChange={(nextQuantity) =>
-                      void changeQuantity(line.id, nextQuantity, nextQuantity - line.quantity)
+                      changeQuantity(line.id, nextQuantity, nextQuantity - line.quantity)
                     }
                     className="shrink-0"
                   />

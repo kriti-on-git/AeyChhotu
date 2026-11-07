@@ -22,6 +22,8 @@
    The service_role key must never appear here. */
 
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import { io } from "socket.io-client";
+import { getBaseUrl } from "./apiClient";
 import { getLiveOrderStatus } from "./endpoints";
 import { getRealtimeAuth, onRealtimeAuthChange } from "./realtime-auth";
 import type { CartLine, LiveOrderStatus, OrderStatus } from "./types";
@@ -104,6 +106,90 @@ export function subscribeTableCart(
           table_token: tableToken,
           line: event === "DELETE" ? null : (payload.new as unknown as CartLine),
           previous: (payload.old as unknown as Partial<CartLine> | null) ?? null,
+        });
+      },
+    )
+    .subscribe();
+
+  return () => {
+    void client.removeChannel(channel);
+  };
+}
+
+// ---- Catalog & floor updates (admin console / floor board) ------------
+
+/** menu_items AND menu_item_images INSERT/UPDATE/DELETE.
+
+    Both tables are watched on ONE channel because an 86 writes menu_items
+    while a replaced dish photo writes menu_item_images: a diner's open menu
+    has to react to either without a refresh. sql/011 publishes
+    menu_item_images and grants read on its non-secret columns for exactly
+    this. */
+export function subscribeMenuUpdates(onUpdate: () => void): Detach {
+  const client = getSupabase();
+  if (!client) return NOOP_DETACH;
+
+  const channel = client
+    .channel("menu_updates")
+    .on(
+      "postgres_changes",
+      { event: "*", schema: "public", table: "menu_items" },
+      () => {
+        onUpdate();
+      },
+    )
+    .on(
+      "postgres_changes",
+      { event: "*", schema: "public", table: "menu_item_images" },
+      () => {
+        onUpdate();
+      },
+    )
+    .subscribe();
+
+  return () => {
+    void client.removeChannel(channel);
+  };
+}
+
+/** What changed on a table row. `status` and `bill_status` are the two facts
+    diner screens act on: 'empty' means the session was terminated, 'paid'
+    means the bill was settled from another device. */
+export interface TableUpdateEvent {
+  event: "INSERT" | "UPDATE" | "DELETE";
+  table_id: string | null;
+  code: string | null;
+  status: string | null;
+  bill_status: string | null;
+}
+
+export function subscribeTableUpdates(
+  onChange: (event: TableUpdateEvent) => void,
+): Detach {
+  const client = getSupabase();
+  if (!client) return NOOP_DETACH;
+
+  const channel = client
+    .channel("table_updates")
+    .on(
+      "postgres_changes",
+      { event: "*", schema: "public", table: "restaurant_tables" },
+      (payload) => {
+        /* REPLICA IDENTITY FULL (sql/008, sql/011) means a DELETE also carries
+           the old row, so an archived/removed table is detectable. */
+        const row =
+          (payload.new as unknown as Record<string, unknown> | null) ??
+          (payload.old as unknown as Record<string, unknown> | null) ??
+          {};
+
+        const str = (value: unknown) => (typeof value === "string" ? value : null);
+
+        onChange({
+          event: payload.eventType as TableUpdateEvent["event"],
+          table_id: str(row.id),
+          code: str(row.code),
+          status: str(row.status),
+          bill_status: str(row.bill_status),
         });
       },
     )
@@ -251,6 +337,89 @@ export function trackTablePresence(
 
   return () => {
     void client.removeChannel(channel);
+  };
+}
+
+// ---- E. Backend conversation/session events (Phase 5.4) ----------------
+
+export interface ConversationRealtimeEvent {
+  event: string;
+  payload: Record<string, unknown>;
+}
+
+export interface ConversationRealtimeStatus {
+  state: "connecting" | "connected" | "reconnecting" | "error";
+  message?: string;
+}
+
+interface RealtimeEnvelope {
+  readonly event: string;
+  readonly room: string;
+  readonly data: unknown;
+}
+
+/** One Socket.IO connection for the seating. The participant token is sent in
+    the handshake, never in a URL. Socket.IO is the authoritative transport for
+    conversation and session-lifecycle events; the caller keeps REST as its
+    bootstrap/fallback. */
+export function subscribeConversation(
+  tableId: string,
+  participantToken: string,
+  onEvent: (event: ConversationRealtimeEvent) => void,
+  onStatus?: (status: ConversationRealtimeStatus) => void,
+): Detach {
+  if (typeof window === "undefined" || !participantToken) return NOOP_DETACH;
+
+  let socket: ReturnType<typeof io> | null = null;
+  try {
+    const base = getBaseUrl();
+    socket = io(base || undefined, {
+      path: "/socket.io",
+      transports: ["websocket", "polling"],
+      withCredentials: true,
+      reconnection: true,
+      reconnectionAttempts: Infinity,
+      reconnectionDelayMax: 10_000,
+      auth: { kind: "guest", participant_token: participantToken },
+    });
+  } catch (err) {
+    onStatus?.({
+      state: "error",
+      message: err instanceof Error ? err.message : "Realtime is unavailable.",
+    });
+    return NOOP_DETACH;
+  }
+
+  const room = `table:${tableId}`;
+  socket.on("connect", () => onStatus?.({ state: "connected" }));
+  socket.on("disconnect", (reason) => {
+    onStatus?.({ state: reason === "io client disconnect" ? "error" : "reconnecting" });
+  });
+  socket.on("connect_error", (err) => {
+    onStatus?.({ state: "error", message: err.message });
+  });
+  socket.on("realtime:error", (err: { message?: string }) => {
+    onStatus?.({ state: "error", message: err.message ?? "Realtime authorization failed." });
+  });
+  socket.on("realtime:event", (envelope: RealtimeEnvelope) => {
+    if (!envelope || envelope.room !== room || typeof envelope.event !== "string") return;
+    if (
+      envelope.event !== "table.session.ended" &&
+      !envelope.event.startsWith("conversation.")
+    ) {
+      return;
+    }
+    const payload =
+      envelope.data && typeof envelope.data === "object"
+        ? (envelope.data as Record<string, unknown>)
+        : {};
+    onEvent({ event: envelope.event, payload });
+  });
+
+  return () => {
+    socket?.removeAllListeners();
+    socket?.disconnect();
+    socket = null;
   };
 }
 

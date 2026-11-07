@@ -9,25 +9,36 @@ import {
   CircleCheck,
   Clock,
   Flame,
+  ListPlus,
+  RefreshCw,
+  RotateCcw,
+  ShieldX,
   ShoppingBasket,
   Timer,
   TriangleAlert,
+  X,
   type LucideIcon,
 } from "lucide-react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { ActiveDinersBadge } from "@/components/diner/active-diners-badge";
+import { ChhotuAssistant } from "@/components/diner/chhotu-assistant";
 import { InactiveTableState } from "@/components/diner/inactive-table-state";
+import { SessionEndedState } from "@/components/diner/session-ended-state";
 import { LogoMark } from "@/components/brand/logo";
 import { Button, buttonStyles } from "@/components/ui/button";
 import { Container } from "@/components/ui/container";
 import { EmptyState, ErrorState } from "@/components/ui/empty-state";
 import { Skeleton } from "@/components/ui/loading-state";
+import { Modal } from "@/components/ui/modal";
+import { useToast } from "@/components/ui/toast";
 import { useNow } from "@/hooks/use-now";
 import { usePresence } from "@/hooks/use-presence";
-import { useLiveTable } from "@/hooks/use-live-table";
+import { useLiveTable, type LiveTableValue } from "@/hooks/use-live-table";
+import { clearStoredSession } from "@/lib/api/table-session";
 import type { Order, OrderStatus } from "@/lib/api/types";
-import { ACTIVITY_LINES, FOODIE_JOKES, estimateArrival } from "@/lib/diner/tracker";
+import { ACTIVITY_LINES, estimateArrival } from "@/lib/diner/tracker";
 import { formatElapsed, formatIstTime } from "@/lib/format";
 import { transitionBase } from "@/lib/motion";
 import { cn } from "@/lib/utils";
@@ -70,6 +81,12 @@ const statusMeta: Record<OrderStatus, StatusMeta> = {
     emblem: "border-ready/45 bg-ready-surface text-ready",
     halo: "border-ready/30",
   },
+  denied: {
+    label: "Not available",
+    Icon: ShieldX,
+    emblem: "border-alert/45 bg-alert-surface text-alert",
+    halo: "border-transparent",
+  },
 };
 
 const steps: { status: OrderStatus; label: string }[] = [
@@ -83,6 +100,8 @@ const stepIndex: Record<OrderStatus, number> = {
   preparing: 1,
   ready: 2,
   served: 3,
+  // Never rendered: a denied round has its own screen, not the journey.
+  denied: -1,
 };
 
 export interface LiveTrackerProps {
@@ -124,6 +143,13 @@ export function LiveTracker({ tableToken }: LiveTrackerProps) {
 
   // ---- State matrix: error (specific API message + Retry Connection) -----
   if (live.phase === "error") {
+    // Settled mid-view: the tracker's whole subject is gone, so drop the dead
+    // credentials and show the end state rather than a retry that cannot work.
+    if (live.error?.error === "SESSION_ENDED") {
+      clearStoredSession(tableToken);
+      return <SessionEndedState />;
+    }
+
     return (
       <main id="main" className="min-h-dvh">
         <Container size="narrow" className="py-16">
@@ -144,8 +170,11 @@ export function LiveTracker({ tableToken }: LiveTrackerProps) {
 
   if (!table) return <InactiveTableState />;
 
+  /* The assistant rides with the header so it is present on every success
+     state — live order, empty, and denied — without a second data hook. */
   const header = (
-    <div className="sticky top-0 z-30 border-b border-line bg-canvas/88 backdrop-blur-md">
+    <>
+    <div className="sticky top-0 z-30 border-b border-line bg-canvas/88 pt-[env(safe-area-inset-top)] backdrop-blur-md">
       <Container className="flex flex-wrap items-center justify-between gap-3 py-3.5">
         <div className="flex items-center gap-3">
           <LogoMark className="size-8" />
@@ -153,7 +182,21 @@ export function LiveTracker({ tableToken }: LiveTrackerProps) {
         </div>
 
         <div className="flex items-center gap-3">
-          <ActiveDinersBadge tableToken={table.code} />
+          <ActiveDinersBadge tableToken={table.code} serverCount={live.activeDevices} />
+
+          {/* Backup refresh — the same quiet icon treatment as the link below.
+              Channel C streams the status flips; this is for the socket that
+              stops streaming and says nothing about it. */}
+          <button
+            type="button"
+            onClick={() => void live.refresh()}
+            aria-label="Refresh order status"
+            title="Refresh order status"
+            className="inline-flex size-9 items-center justify-center rounded-md text-ink-muted transition-colors duration-[var(--duration-fast)] ease-gentle hover:bg-sand hover:text-ink"
+          >
+            <RefreshCw className="size-4" aria-hidden />
+          </button>
+
           {/* Minimal icon rather than a labelled button: the guest is one tap
               from the menu, and the screen stays quiet. */}
           <Link
@@ -167,6 +210,9 @@ export function LiveTracker({ tableToken }: LiveTrackerProps) {
         </div>
       </Container>
     </div>
+
+    <ChhotuAssistant tableToken={tableToken} live={live} className="bottom-6" />
+    </>
   );
 
   // ---- State matrix: empty (nothing fired yet) --------------------------
@@ -192,6 +238,22 @@ export function LiveTracker({ tableToken }: LiveTrackerProps) {
               </Link>
             }
           />
+        </Container>
+      </main>
+    );
+  }
+
+  /* ---- State matrix: denied (the kitchen refused this round) ---------
+     A refused round is not an error page and not a dead end: the diner is
+     told exactly why, sees which dishes are gone, and chooses one of the
+     three documented ways forward. Every one of them calls the API, so two
+     phones at the table cannot disagree about what happened. */
+  if (order.status === "denied") {
+    return (
+      <main id="main" className="relative isolate min-h-dvh bg-canvas">
+        {header}
+        <Container size="narrow" className="py-12 sm:py-16">
+          <DeniedOrderPanel live={live} order={order} />
         </Container>
       </main>
     );
@@ -235,8 +297,7 @@ export function LiveTracker({ tableToken }: LiveTrackerProps) {
         {cart.length > 0 && order.status !== "served" ? (
           <p className="flex items-center gap-2 text-xs text-ink-subtle">
             <ShoppingBasket className="size-3.5 shrink-0" aria-hidden />
-            {totals.itemCount} {totals.itemCount === 1 ? "item" : "items"} staged for the next
-            round — a second fire unlocks once this one leaves the table.
+            {totals.itemCount} {totals.itemCount === 1 ? "item" : "items"} staged for next round.
           </p>
         ) : null}
 
@@ -250,8 +311,6 @@ export function LiveTracker({ tableToken }: LiveTrackerProps) {
             Start a new round
           </Link>
         ) : null}
-
-        <JokeLine />
       </Container>
     </main>
   );
@@ -314,9 +373,10 @@ function ProgressJourney({ status }: { status: OrderStatus }) {
             key={step.status}
             className={cn("flex items-start", index < steps.length - 1 && "flex-1")}
           >
-            {/* Equal-width stages keep the middle node exactly centred, so
-                the three connectors read as one straight line. */}
-            <span className="flex w-20 shrink-0 flex-col items-center gap-2.5 sm:w-24">
+            {/* Elastic stages: each one may grow to 90px but no wider, so
+                three of them plus their connectors still fit a 320px screen
+                without the last label clipping off the edge. */}
+            <span className="flex w-full max-w-[90px] flex-1 flex-col items-center gap-2.5">
               <span
                 aria-hidden
                 className={cn(
@@ -351,7 +411,7 @@ function ProgressJourney({ status }: { status: OrderStatus }) {
               <span
                 aria-hidden
                 className={cn(
-                  "mx-2 mt-4 h-px flex-1 transition-colors duration-[var(--duration-slow)] ease-gentle",
+                  "mx-1.5 mt-4 h-px flex-1 transition-colors duration-[var(--duration-slow)] ease-gentle",
                   segmentReached ? "bg-ember/45" : "bg-line-strong",
                 )}
               />
@@ -375,7 +435,7 @@ function ArrivalEstimateModule({
   const arriving = status === "ready" || status === "served";
 
   return (
-    <div className="flex flex-wrap items-center justify-center gap-x-3.5 gap-y-1 rounded-pill border border-line bg-surface/70 px-5 py-2">
+    <div className="flex max-w-full flex-wrap items-center justify-center gap-x-3.5 gap-y-1 rounded-pill border border-line bg-surface/70 px-4 py-2 sm:px-5">
       <span className="flex items-center gap-2 text-label text-ink-subtle uppercase">
         <Timer className="size-3.5" aria-hidden />
         {arriving ? "Arriving now" : "Estimated arrival"}
@@ -388,11 +448,7 @@ function ArrivalEstimateModule({
       )}
 
       <span className="text-xs text-ink-subtle">
-        {arriving
-          ? "Waiting for a runner."
-          : `Based on ${estimate.tickets} active kitchen ${
-              estimate.tickets === 1 ? "ticket" : "tickets"
-            }`}
+        {arriving ? "Waiting for a runner." : "Est. arrival"}
       </span>
     </div>
   );
@@ -493,34 +549,244 @@ function ActivityLine({ status }: { status: OrderStatus }) {
   );
 }
 
-/* The easter egg: understated, italic, and never part of the status story. */
-function JokeLine() {
-  const [index, setIndex] = useState(0);
-  const reduceMotion = useReducedMotion();
+/* The refused-round screen.
 
-  useEffect(() => {
-    const timer = window.setInterval(
-      () => setIndex((current) => (current + 1) % FOODIE_JOKES.length),
-      7000,
-    );
-    return () => window.clearInterval(timer);
-  }, []);
+   Three outcomes, and they are genuinely different things:
+
+     Retry         preview the re-fire, then send the still-available lines
+     Move to list  put those lines back in the cart and go edit them there
+     Cancel        discard the refused round entirely
+
+   The preview exists because Retry is destructive in a subtle way: a dish
+   that is still 86'd cannot come back, so the diner must SEE that it is
+   being left out before confirming, not discover it on the next ticket. */
+function DeniedOrderPanel({ live, order }: { live: LiveTableValue; order: Order }) {
+  const router = useRouter();
+  const { toast } = useToast();
+  const plan = live.deniedRetryPlan;
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [busy, setBusy] = useState<"retry" | "move" | "cancel" | null>(null);
+
+  const reason =
+    order.denial_reason?.trim() ||
+    plan?.reason ||
+    "The kitchen could not prepare this round.";
+  const keep = plan?.keep ?? [];
+  const omitted = plan?.omitted ?? [];
+  const itemCount = keep.reduce((total, line) => total + line.quantity, 0);
+
+  async function handleRetry() {
+    if (busy) return;
+    setBusy("retry");
+
+    const result = await live.retryDenied();
+    setBusy(null);
+
+    if (!result.ok) {
+      toast({
+        title: result.message ?? "The round could not be re-fired.",
+        tone: "error",
+      });
+      return;
+    }
+
+    setPreviewOpen(false);
+    toast({
+      title: "Round re-fired",
+      description: result.omitted?.length
+        ? `${result.omitted.join(", ")} left out — still out of stock.`
+        : "The kitchen has the new ticket.",
+      tone: "success",
+    });
+  }
+
+  async function handleMoveToCart() {
+    if (busy) return;
+    setBusy("move");
+
+    const result = await live.moveDeniedToCart();
+    setBusy(null);
+
+    if (!result.ok) {
+      toast({
+        title: result.message ?? "Those items could not be moved back.",
+        tone: "error",
+      });
+      return;
+    }
+
+    toast({
+      title: "Back in the cart",
+      description: result.omitted?.length
+        ? `${result.omitted.join(", ")} stayed out — out of stock. Edit and fire when ready.`
+        : "Edit the lines and fire when ready.",
+      tone: "success",
+    });
+    router.push(`/table/${order.table_code}`);
+  }
+
+  async function handleCancel() {
+    if (busy) return;
+    setBusy("cancel");
+
+    const result = await live.dismissDenied();
+    setBusy(null);
+
+    if (!result.ok) {
+      toast({ title: result.message ?? "That order could not be cancelled.", tone: "error" });
+      return;
+    }
+
+    toast({ title: "Order cancelled", description: "Nothing was charged." });
+  }
 
   return (
-    <div className="flex w-full max-w-xl flex-col items-center gap-2 text-center">
-      <span className="text-label text-ink-subtle uppercase">Kitchen wisdom</span>
-      <AnimatePresence mode="wait" initial={false}>
-        <motion.p
-          key={index}
-          initial={reduceMotion ? { opacity: 0 } : { opacity: 0, y: 6 }}
-          animate={{ opacity: 1, y: 0 }}
-          exit={reduceMotion ? { opacity: 0 } : { opacity: 0, y: -6 }}
-          transition={transitionBase}
-          className="text-sm text-ink-subtle italic"
+    <div className="flex flex-col items-center gap-8 text-center">
+      <span className="flex size-24 items-center justify-center rounded-pill border border-alert/40 bg-alert-surface text-alert sm:size-28">
+        <ShieldX className="size-10 sm:size-11" aria-hidden />
+      </span>
+
+      <div className="flex flex-col gap-3">
+        <span className="text-label text-ink-subtle uppercase">Live order</span>
+        <h1 className="font-display text-title font-semibold text-ink">
+          This round was not cooked
+        </h1>
+        <p className="max-w-md text-lead text-ink-muted">
+          The kitchen could not take it. Nothing on it has been charged.
+        </p>
+      </div>
+
+      <div
+        role="status"
+        className="w-full rounded-lg border-2 border-alert/35 bg-alert-surface px-5 py-4 text-left"
+      >
+        <span className="text-label text-alert uppercase">Kitchen said</span>
+        <p className="mt-1.5 text-base leading-relaxed font-medium text-ink">{reason}</p>
+      </div>
+
+      {omitted.length > 0 ? (
+        <section
+          aria-label="Out of stock items"
+          className="w-full rounded-lg border border-line bg-surface p-5 text-left"
         >
-          {FOODIE_JOKES[index]}
-        </motion.p>
-      </AnimatePresence>
+          <span className="text-label text-ink-subtle uppercase">Out of stock</span>
+          <ul className="mt-2 flex flex-col gap-1.5">
+            {omitted.map((line) => (
+              <li key={line.name} className="flex items-baseline gap-2 text-sm text-ink-muted">
+                <span className="font-display font-semibold text-ink-subtle tabular-nums">
+                  {line.quantity}×
+                </span>
+                <span className="line-through decoration-ink-subtle/60">{line.name}</span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
+
+      <div className="flex w-full max-w-sm flex-col gap-3">
+        <Button
+          variant="ember"
+          size="lg"
+          fullWidth
+          disabled={busy !== null || keep.length === 0}
+          loading={busy === "retry"}
+          onClick={() => setPreviewOpen(true)}
+          leftIcon={<RotateCcw className="size-4" aria-hidden />}
+        >
+          Retry order
+        </Button>
+
+        <Button
+          variant="soft"
+          size="lg"
+          fullWidth
+          disabled={busy !== null}
+          loading={busy === "move"}
+          onClick={() => void handleMoveToCart()}
+          leftIcon={<ListPlus className="size-4" aria-hidden />}
+        >
+          Move to list
+        </Button>
+
+        <Button
+          variant="ghost"
+          size="lg"
+          fullWidth
+          disabled={busy !== null}
+          loading={busy === "cancel"}
+          onClick={() => void handleCancel()}
+          leftIcon={<X className="size-4" aria-hidden />}
+        >
+          Cancel
+        </Button>
+
+        {keep.length === 0 ? (
+          <p className="text-xs leading-snug text-ink-subtle">
+            Every dish on this round is out of stock right now — cancel it or pick something else
+            from the menu.
+          </p>
+        ) : null}
+      </div>
+
+      {/* ---- Retry preview: what will be re-fired, what will be left out ---- */}
+      <Modal
+        open={previewOpen}
+        onClose={() => setPreviewOpen(false)}
+        size="sm"
+        title="Re-fire this round?"
+        description="Check what goes back to the kitchen before you confirm."
+        footer={
+          <>
+            <Button
+              variant="ember"
+              size="md"
+              disabled={busy !== null || itemCount === 0}
+              loading={busy === "retry"}
+              onClick={() => void handleRetry()}
+              leftIcon={<Flame className="size-4" aria-hidden />}
+            >
+              Re-fire {itemCount} {itemCount === 1 ? "item" : "items"}
+            </Button>
+            <Button variant="ghost" size="md" onClick={() => setPreviewOpen(false)}>
+              Back
+            </Button>
+          </>
+        }
+      >
+        <div className="flex flex-col gap-5 text-left">
+          <section className="flex flex-col">
+            <span className="text-label text-ink-subtle uppercase">Going back in</span>
+            <ul className="mt-2 flex flex-col divide-y divide-line/70">
+              {keep.map((line) => (
+                <li key={line.name} className="flex items-baseline justify-between gap-3 py-2.5">
+                  <span className="flex items-baseline gap-2 text-sm text-ink">
+                    <span className="font-display font-semibold tabular-nums">{line.quantity}×</span>
+                    {line.name}
+                  </span>
+                  <Check className="size-4 shrink-0 text-ready" aria-hidden />
+                </li>
+              ))}
+            </ul>
+          </section>
+
+          {omitted.length > 0 ? (
+            <section className="flex flex-col rounded-md border border-alert/30 bg-alert-surface p-3">
+              <span className="text-label text-alert uppercase">Left out — out of stock</span>
+              <ul className="mt-2 flex flex-col gap-1.5">
+                {omitted.map((line) => (
+                  <li
+                    key={line.name}
+                    className="flex items-baseline gap-2 text-sm text-ink-muted line-through decoration-alert/50"
+                  >
+                    <span className="font-display font-semibold tabular-nums">{line.quantity}×</span>
+                    {line.name}
+                  </li>
+                ))}
+              </ul>
+            </section>
+          ) : null}
+        </div>
+      </Modal>
     </div>
   );
 }

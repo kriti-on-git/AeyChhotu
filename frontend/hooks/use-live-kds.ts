@@ -2,31 +2,33 @@
 
 /* useLiveKds — the Kitchen Display data runtime.
 
-   LIVE WITH MOCK FALLBACK (gated — see shouldUseDemoFallback()):
+   LIVE ONLY:
    - reads:  GET /api/v1/kds/tickets (bearer injected by the api-client)
    - writes: PATCH status / prune, with a per-ticket busy map that is the
      frontend double-tap guardrail for one-tap state modifications.
    - realtime: `kds_orders` INSERT channel → instant refetch so new tickets
-     pop into Pending without a page refresh; mock store subscription keeps
-     the offline demo cross-tab live (development only). */
+     pop into Pending without a page refresh.
+
+   If the API is unreachable the board shows the error state and a Retry
+   button. It never prints a seeded ticket: a cook acting on a demo order
+   would be serving food nobody ordered. */
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ApiError,
   fetchAllPages,
+  denyKdsTicket as apiDenyKdsTicket,
   getKdsTickets as apiGetKdsTickets,
   pruneKdsTicket as apiPruneKdsTicket,
-  shouldUseDemoFallback,
   subscribeKdsOrders,
+  subscribeOrdersFeed,
+  subscribeTableUpdates,
   toKdsOrder,
   updateKdsStatus as apiUpdateKdsStatus,
 } from "@/lib/api-client";
 import type { Order, OrderStatus } from "@/lib/api/types";
-import * as mock from "@/lib/api";
-import { subscribe as subscribeMockStore } from "@/lib/api/store";
 
 export type KdsPhase = "loading" | "error" | "success";
-export type KdsSource = "live" | "demo";
 
 export interface KdsAdvanceResult {
   ok: boolean;
@@ -36,13 +38,14 @@ export interface KdsAdvanceResult {
 export interface LiveKdsValue {
   phase: KdsPhase;
   error: ApiError | null;
-  source: KdsSource;
   tickets: Order[];
   /** order_id → mutation in flight (one-tap guardrail). */
   busy: Record<string, boolean>;
   retry: () => void;
   refresh: () => Promise<void>;
   advance: (order: Order, next: OrderStatus) => Promise<KdsAdvanceResult>;
+  /** Refuse an active ticket with a reason the diner will read. */
+  deny: (order: Order, reason: string) => Promise<KdsAdvanceResult>;
 }
 
 const LIST_LIMIT = 100;
@@ -50,14 +53,15 @@ const LIST_LIMIT = 100;
 export function useLiveKds(): LiveKdsValue {
   const [phase, setPhase] = useState<KdsPhase>("loading");
   const [error, setError] = useState<ApiError | null>(null);
-  const [source, setSource] = useState<KdsSource>("live");
   const [tickets, setTickets] = useState<Order[]>([]);
   const [busy, setBusy] = useState<Record<string, boolean>>({});
   const [reloadKey, setReloadKey] = useState(0);
 
-  const sourceRef = useRef<KdsSource>("live");
   const mountedRef = useRef(true);
   const busyRef = useRef<Record<string, boolean>>({});
+  /** The board has rendered real data at least once. A later failed poll
+      must keep it on screen instead of replacing it with the error page. */
+  const hasDataRef = useRef(false);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -66,36 +70,32 @@ export function useLiveKds(): LiveKdsValue {
     };
   }, []);
 
-  const loadTickets = useCallback(async (): Promise<{ list: Order[]; source: KdsSource }> => {
-    try {
-      // The board must show EVERY active ticket: walk all pages so ticket
-      // 101 can never be invisible to the kitchen (server caps limit at
-      // 100 per request — page 1 alone was a silent truncation).
-      const rows = await fetchAllPages((page) => apiGetKdsTickets({ page, limit: LIST_LIMIT }));
-      return { list: rows.map(toKdsOrder), source: "live" };
-    } catch (err) {
-      if (shouldUseDemoFallback(err)) {
-        // Backend unreachable → offline demo board from the seeded store.
-        return { list: mock.getKdsTickets(), source: "demo" };
-      }
-      throw err;
-    }
+  const loadTickets = useCallback(async (): Promise<Order[]> => {
+    // The board must show EVERY active ticket: walk all pages so ticket 101
+    // can never be invisible to the kitchen (the server caps a page at 100).
+    const rows = await fetchAllPages((page) => apiGetKdsTickets({ page, limit: LIST_LIMIT }));
+    return rows.map(toKdsOrder);
   }, []);
 
   const refresh = useCallback(async () => {
     try {
-      const { list, source: nextSource } = await loadTickets();
-      sourceRef.current = nextSource;
+      const list = await loadTickets();
       if (!mountedRef.current) return;
-      setSource(nextSource);
-      setTickets(list);
+      hasDataRef.current = true;
+      /* Only hand React a new array when the content actually differs: the
+         15 s safety poll must not re-render every card on an idle board. */
+      setTickets((current) =>
+        JSON.stringify(current) === JSON.stringify(list) ? current : list,
+      );
       if (phase === "error") setPhase("success");
     } catch (err) {
       if (!mountedRef.current) return;
-      if (err instanceof ApiError) {
-        setError(err);
-        setPhase("error");
-      }
+      // A dropped background read keeps the board as it is.
+      if (hasDataRef.current) return;
+      setError(
+        err instanceof ApiError ? err : new ApiError(0, "INTERNAL_ERROR", "Could not load the board."),
+      );
+      setPhase("error");
     }
   }, [loadTickets, phase]);
 
@@ -107,15 +107,16 @@ export function useLiveKds(): LiveKdsValue {
 
     (async () => {
       try {
-        const { list, source: nextSource } = await loadTickets();
+        const list = await loadTickets();
         if (cancelled) return;
-        sourceRef.current = nextSource;
-        setSource(nextSource);
+        hasDataRef.current = true;
         setTickets(list);
         setPhase("success");
       } catch (err) {
         if (cancelled) return;
-        setError(err instanceof ApiError ? err : new ApiError(0, "INTERNAL_ERROR", "Could not load the board."));
+        setError(
+          err instanceof ApiError ? err : new ApiError(0, "INTERNAL_ERROR", "Could not load the board."),
+        );
         setPhase("error");
       }
     })();
@@ -131,19 +132,56 @@ export function useLiveKds(): LiveKdsValue {
     setReloadKey((key) => key + 1);
   }, []);
 
-  // ---- Realtime B: kds_orders intake / mock store (demo) ----------------
+  // ---- Self-healing error state ----------------------------------------
+  // A board that lost the API (server restart, laptop sleep, Wi-Fi blip)
+  // must recover on its own: there is no Check-again button by design.
+  // Each attempt reuses `refresh`, which flips the phase back to success
+  // the moment the server answers.
+  useEffect(() => {
+    if (phase !== "error") return;
+
+    const timer = setInterval(() => {
+      void refresh();
+    }, 5_000);
+
+    return () => clearInterval(timer);
+  }, [phase, refresh]);
+
+  // ---- Realtime B: kds_orders intake + the staff-wide order feed --------
+  // kds_orders is the fast INSERT path (new ticket). orders_feed carries the
+  // UPDATE/DELETE side too, so a ticket moved or pruned on another terminal
+  // leaves this board without anyone pressing anything.
   useEffect(() => {
     if (phase !== "success") return;
 
-    if (sourceRef.current === "live") {
-      return subscribeKdsOrders(() => {
-        void refresh();
-      });
-    }
-
-    return subscribeMockStore(() => {
-      if (mountedRef.current) setTickets(mock.getKdsTickets());
+    const detachIntake = subscribeKdsOrders(() => {
+      void refresh();
     });
+    const detachFeed = subscribeOrdersFeed(() => {
+      void refresh();
+    });
+
+    /* A waiter's "I'll serve this" writes restaurant_tables, not orders, so
+       without this the "waiter coming" ping only appeared on the 15 s poll.
+       Watching the table row makes it land the moment the floor taps. */
+    const detachTables = subscribeTableUpdates(() => {
+      void refresh();
+    });
+
+    /* docs/14 #10 — the board must not freeze when Realtime is unavailable.
+       Subscriptions are NO-OPs without Supabase (and silent when RLS matches
+       nothing), so a slow poll underneath keeps the kitchen truthful. 15 s
+       matches the floor board and costs one request per terminal. */
+    const poll = setInterval(() => {
+      void refresh();
+    }, 15_000);
+
+    return () => {
+      clearInterval(poll);
+      detachIntake();
+      detachFeed();
+      detachTables();
+    };
   }, [phase, refresh]);
 
   // ---- One-tap state machine with per-ticket busy guardrail -------------
@@ -159,26 +197,29 @@ export function useLiveKds(): LiveKdsValue {
       try {
         if (next === "served") {
           await apiPruneKdsTicket(order.id);
+          // The ticket leaves the board in this frame; the refetch reconciles.
+          setTickets((current) => current.filter((ticket) => ticket.id !== order.id));
         } else {
           await apiUpdateKdsStatus(order.id, next as "preparing" | "ready");
+          setTickets((current) =>
+            current.map((ticket) =>
+              ticket.id === order.id ? { ...ticket, status: next } : ticket,
+            ),
+          );
         }
         await refresh();
         return { ok: true };
       } catch (err) {
-        if (shouldUseDemoFallback(err)) {
-          sourceRef.current = "demo";
-          setSource("demo");
-          const result = await mock.updateTicketStatus(order.id, next);
-          if (result.ok) {
-            setTickets(mock.getKdsTickets());
-            return { ok: true };
-          }
-          return { ok: false, message: result.message };
-        }
         if (err instanceof ApiError) {
+          // A lost connection is a board-level problem, not a ticket-level
+          // one: fail the screen so the operator sees the Retry button.
+          if (err.status === 0) {
+            setError(err);
+            setPhase("error");
+          }
           return { ok: false, message: err.message };
         }
-        throw err;
+        return { ok: false, message: "Could not update that ticket." };
       } finally {
         busyRef.current = { ...busyRef.current, [order.id]: false };
         if (mountedRef.current) setBusy(busyRef.current);
@@ -187,5 +228,41 @@ export function useLiveKds(): LiveKdsValue {
     [refresh],
   );
 
-  return { phase, error, source, tickets, busy, retry, refresh, advance };
+  /* ---- Manual denial (kitchen refusal) ----------------------------------
+     Same per-ticket busy guard as advance, so a double-tap cannot submit two
+     denial reasons for one ticket. A ticket can be denied from pending,
+     preparing OR ready — a dish can run out at any point before it reaches
+     the table — and the reason is required by the server. */
+  const deny = useCallback(
+    async (order: Order, reason: string): Promise<KdsAdvanceResult> => {
+      if (busyRef.current[order.id]) {
+        return { ok: false, message: "That ticket is already updating." };
+      }
+      busyRef.current = { ...busyRef.current, [order.id]: true };
+      setBusy(busyRef.current);
+
+      try {
+        await apiDenyKdsTicket(order.id, reason);
+        // A refused ticket is no longer an active board card.
+        setTickets((current) => current.filter((ticket) => ticket.id !== order.id));
+        await refresh();
+        return { ok: true };
+      } catch (err) {
+        if (err instanceof ApiError) {
+          if (err.status === 0) {
+            setError(err);
+            setPhase("error");
+          }
+          return { ok: false, message: err.message };
+        }
+        return { ok: false, message: "Could not deny that ticket." };
+      } finally {
+        busyRef.current = { ...busyRef.current, [order.id]: false };
+        if (mountedRef.current) setBusy(busyRef.current);
+      }
+    },
+    [refresh],
+  );
+
+  return { phase, error, tickets, busy, retry, refresh, advance, deny };
 }

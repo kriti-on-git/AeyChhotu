@@ -10,10 +10,17 @@ declare module "express-serve-static-core" {
   }
 }
 
-const UNAUTHORIZED_MESSAGE = "Missing or invalid kitchen shift token.";
+const UNAUTHORIZED_MESSAGE = "Missing or invalid shift or admin session token.";
 
-/* Accepts `Authorization: Bearer <jwt>` first, then the httpOnly
-   `kds_token` cookie set by kds-login (same-origin browser terminals). */
+/* Cookie names this API issues. Both are httpOnly and same-site.
+     kds_token    — E2 kitchen/floor shift
+     admin_token  — the executive console's owner session
+   They are distinct names so a shift token can never be silently promoted to
+   admin access, and signing out of one never touches the other. */
+const COOKIE_NAMES = ["kds_token", "admin_token"] as const;
+
+/* Accepts `Authorization: Bearer <jwt>` first, then either httpOnly cookie
+   (same-origin browser terminals). */
 function extractToken(req: Request): { token: string; source: "header" | "cookie" } | null {
   const header = req.headers.authorization;
   if (header?.startsWith("Bearer ")) {
@@ -25,7 +32,7 @@ function extractToken(req: Request): { token: string; source: "header" | "cookie
   if (cookieHeader) {
     for (const part of cookieHeader.split(";")) {
       const [name, ...rest] = part.trim().split("=");
-      if (name === "kds_token") {
+      if (name && (COOKIE_NAMES as readonly string[]).includes(name)) {
         const token = decodeURIComponent(rest.join("="));
         if (token) return { token, source: "cookie" };
       }
@@ -56,12 +63,18 @@ export function requireAuth(req: Request, _res: Response, next: NextFunction): v
   next();
 }
 
-/* requireRole — access policy for administrative / kitchen layout
-   changes (status tags, 86ing, …). A valid token whose role claim is not
-   the required role is blocked with 403 FORBIDDEN. */
-export function requireRole(role: string) {
+/* requireRole — access policy for administrative / kitchen layout changes
+   (status tags, 86ing, …) and for the floor's own actions.
+
+   Accepts MORE than one allowed role. The floor and the kitchen are two
+   shifts, not two ranks: a waiter taking payment for a flagged table is
+   exactly as legitimate as a cook doing it, so the floor routes pass
+   `requireRole("kitchen", "floor")` instead of forcing every server to hold
+   the kitchen PIN. A valid token with none of the listed roles is still 403. */
+export function requireRole(...roles: string[]) {
   return (req: Request, _res: Response, next: NextFunction): void => {
-    if (req.shift?.role !== role) {
+    const role = req.shift?.role;
+    if (!role || !roles.includes(role)) {
       next(
         new AppError(403, "FORBIDDEN", "This session role is not permitted to perform this action."),
       );

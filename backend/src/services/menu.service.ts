@@ -1,88 +1,66 @@
-import { pool } from "../db/pool.js";
-import { AppError } from "../errors/app-error.js";
-import { buildMeta, type PageMeta } from "../lib/util.js";
-import { requireTable } from "./sessions.service.js";
+/* Transitional facade over the Menu module.
 
-/* Module 2 — Live Menu Browsing (E3) + Module 4 — 86ing (E14). */
+   The module owns the catalogue. This file keeps the historical function
+   names working for routes/admin.ts and the still-unmigrated admin service,
+   and is the single place where the module's ports are bound to the legacy
+   pool, the Table service and order denial. It holds no SQL and no rules. */
 
-export interface MenuListParams {
-  table_token: string;
-  page: number;
-  limit: number;
-  category?: string;
-  q?: string;
+import { createLegacyDbPort } from "../db/legacy-db-port.js";
+import { MenuRepository } from "../modules/menu/menu.repository.js";
+import { MenuService } from "../modules/menu/menu.service.js";
+import type {
+  MenuItemDto,
+  MenuListParams,
+  MenuServicePort,
+} from "../modules/menu/menu.types.js";
+import { getDefaultTableService } from "../modules/table/index.js";
+import { imageDtoFromRow } from "./menu-image.service.js";
+import { denyPendingOrdersForItem } from "./orders.service.js";
+
+export type {
+  AdminMenuItem,
+  AvailabilityResult,
+  CategoryAssignment,
+  CategoryDto,
+  CategoryPatch,
+  CategoryWriteInput,
+  CreateMenuItemInput,
+  MenuItemDto,
+  MenuItemWriteInput,
+  MenuListParams,
+  MenuServicePort,
+  PublicCategoryDto,
+  UpdateMenuItemInput,
+} from "../modules/menu/index.js";
+
+let defaultService: MenuServicePort | null = null;
+
+/** The single service used by services/catalog.service.ts,
+    services/admin.service.ts and the default createApp() path. Production
+    replaces it during composition with the module instance. */
+export function getDefaultMenuService(): MenuServicePort {
+  if (defaultService === null) {
+    defaultService = new MenuService({
+      repository: new MenuRepository(createLegacyDbPort()),
+      tables: getDefaultTableService(),
+      orders: { denyPendingOrdersForItem },
+      images: { toDto: imageDtoFromRow },
+    });
+  }
+  return defaultService;
 }
 
-export interface MenuItemDto {
-  menu_item_id: string;
-  name: string;
-  price: number;
-  category: string;
-  is_available: boolean;
-  description: string;
-  vegetarian: boolean;
+/** Called once by the composition root before any request is served. */
+export function configureMenuService(service: MenuServicePort): void {
+  defaultService = service;
 }
 
-/* E3 — GET /api/v1/menu.
-   Unavailable items are returned with is_available:false (clients grey
-   them out; they are never hidden from the catalog). */
-export async function listMenu(params: MenuListParams): Promise<{
-  data: MenuItemDto[];
-  meta: PageMeta;
-}> {
-  await requireTable(params.table_token);
-
-  const args: unknown[] = [];
-  const where: string[] = [];
-  if (params.category) {
-    args.push(params.category);
-    where.push(`category = $${args.length}`);
-  }
-  if (params.q) {
-    args.push(`%${params.q}%`);
-    where.push(`name ILIKE $${args.length}`);
-  }
-  const whereSql = where.length > 0 ? `WHERE ${where.join(" AND ")}` : "";
-
-  const countRes = await pool.query<{ total: number }>(
-    `SELECT count(*)::int AS total FROM menu_items ${whereSql}`,
-    args,
-  );
-
-  args.push(params.limit, (params.page - 1) * params.limit);
-  const rows = await pool.query(
-    `SELECT id, name, price::float8 AS price, category, is_available, description, vegetarian
-       FROM menu_items
-       ${whereSql}
-      ORDER BY category, name
-      LIMIT $${args.length - 1} OFFSET $${args.length}`,
-    args,
-  );
-
-  const data: MenuItemDto[] = rows.rows.map((row) => ({
-    menu_item_id: row.id,
-    name: row.name,
-    price: Number(row.price),
-    category: row.category,
-    is_available: row.is_available,
-    description: row.description,
-    vegetarian: row.vegetarian,
-  }));
-
-  return { data, meta: buildMeta(params.page, params.limit, countRes.rows[0]?.total ?? 0) };
+export function listMenu(
+  params: MenuListParams,
+): Promise<{ data: MenuItemDto[]; meta: import("../lib/util.js").PageMeta }> {
+  return getDefaultMenuService().listMenu(params);
 }
 
-/* E14 — PATCH /api/v1/menu/items/:menu_item_id/availability (86ing). */
-export async function setAvailability(menuItemId: string, isAvailable: boolean) {
-  const res = await pool.query<{ id: string; is_available: boolean }>(
-    "UPDATE menu_items SET is_available = $2 WHERE id = $1 RETURNING id, is_available",
-    [menuItemId, isAvailable],
-  );
-
-  const row = res.rows[0];
-  if (!row) {
-    throw new AppError(404, "MENU_ITEM_NOT_FOUND", "Unknown menu item.");
-  }
-
-  return { menu_item_id: row.id, is_available: row.is_available };
+export function setAvailability(menuItemId: string, isAvailable: boolean) {
+  return getDefaultMenuService().setAvailability(menuItemId, isAvailable);
 }

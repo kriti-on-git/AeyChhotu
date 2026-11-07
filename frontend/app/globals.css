@@ -91,17 +91,20 @@
   --font-display: var(--font-fraunces), ui-serif, Georgia, serif;
 
   /* --- Type scale --- */
-  --text-display: clamp(2.6rem, 6.5vw, 4.75rem);
+  --text-display: clamp(1.95rem, 6.5vw, 4.75rem);
   --text-display--line-height: 1.02;
   --text-display--letter-spacing: -0.035em;
   --text-display--font-weight: 600;
 
-  --text-title: clamp(2rem, 4.5vw, 3.25rem);
+  --text-title: clamp(1.5rem, 4.5vw, 3.25rem);
   --text-title--line-height: 1.08;
   --text-title--letter-spacing: -0.03em;
   --text-title--font-weight: 600;
 
-  --text-heading: clamp(1.5rem, 2.6vw, 2.125rem);
+  /* The floor of this clamp is what keeps a heading from being clipped at
+     320px: 1.35rem still fits a long word on one line with the page gutter,
+     and text-balance does the wrapping. */
+  --text-heading: clamp(1.35rem, 4.2vw, 2rem);
   --text-heading--line-height: 1.15;
   --text-heading--letter-spacing: -0.025em;
   --text-heading--font-weight: 600;
@@ -148,6 +151,22 @@
   --animate-pulse-soft: pulse-soft 2.4s var(--ease-gentle) infinite;
   --animate-flash-ready: flash-ready 1.4s var(--ease-gentle) 3;
   --animate-float: float 5.2s ease-in-out infinite;
+  /* The voice line's own meter. The bars scale on the compositor (no layout),
+     stagger via animation-delay, and shorten their duration with the guest's
+     loudness — so the icon is alive in silence and leans in when someone
+     speaks. Under reduced motion it settles at full height, still readable. */
+  --animate-mic-live: mic-live 900ms var(--ease-gentle) infinite;
+
+  @keyframes mic-live {
+    0%,
+    100% {
+      transform: scaleY(0.35);
+    }
+
+    50% {
+      transform: scaleY(1);
+    }
+  }
 
   @keyframes pulse-soft {
     0%,
@@ -179,6 +198,22 @@
     }
     50% {
       transform: translateY(-7px);
+    }
+  }
+
+  /* The scanner's sweeping line. It travels inside the viewfinder on
+     `top`, because the element is absolutely positioned inside it. */
+  --animate-laser: laser 2.4s var(--ease-gentle) infinite;
+
+  @keyframes laser {
+    0%,
+    100% {
+      top: 6%;
+      opacity: 0.35;
+    }
+    50% {
+      top: 94%;
+      opacity: 1;
     }
   }
 
@@ -221,6 +256,67 @@
   --duration-slower: 900ms;
 }
 
+/* ------------------------------------------------------------
+   SCROLLBARS — hidden globally.
+
+   This app is a hand-held surface, not a document: a permanent 15px scroll
+   gutter on Windows/Chrome shifts every centered layout and reads as browser
+   chrome bleeding into the design. Scrolling itself is untouched (wheel,
+   touch, keyboard, scrollbar-width only hides the indicator). Both the
+   standard and the WebKit properties are set because no single one is
+   honoured everywhere, and `!important` is deliberate: a stray
+   `overflow-y: auto` on a nested panel must not reintroduce a bar.
+   ------------------------------------------------------------ */
+* {
+  scrollbar-width: none !important;
+  -ms-overflow-style: none !important;
+}
+
+*::-webkit-scrollbar {
+  display: none !important;
+  width: 0 !important;
+  height: 0 !important;
+}
+
+/* HTML/BODY LOCKDOWN.
+   The document is the app frame: it is exactly one dynamic viewport tall, it
+   never scrolls sideways, and it never rubber-bands into a refresh gesture.
+   100dvh tracks the browser bar collapsing; 100svh is the max so the shell
+   cannot grow taller than the smallest viewport a phone reports. `overflow-y`
+   stays visible on purpose — long pages (the story, the showcase) still
+   scroll; only the horizontal axis and the bounce are removed. */
+html,
+body {
+  height: 100dvh;
+  max-height: 100svh;
+  overflow-x: hidden;
+  overscroll-behavior: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Soft section snapping — opted into per page by <SoftSnap />.
+
+   The root is the scroller (see the lockdown above), so the snap container
+   has to be `html`. `proximity` is deliberate: a section only settles when
+   the reader already stopped near its edge, which never fights a long hero
+   or a paragraph being read halfway. The scroll padding clears the sticky
+   header so a snapped section starts below it, not under it. */
+html.soft-snap {
+  scroll-snap-type: y proximity;
+  scroll-padding-top: 4.5rem;
+}
+
+html.soft-snap main > section {
+  scroll-snap-align: start;
+  scroll-snap-stop: normal;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html.soft-snap {
+    scroll-snap-type: none;
+  }
+}
+
 @layer base {
   *,
   *::before,
@@ -241,6 +337,44 @@
     text-rendering: optimizeLegibility;
   }
 
+  /* ---- Native-feel lockdown ------------------------------------------
+     Chrome and controls must not behave like a web document: no text
+     selection handles, no long-press callout, no dragged-image ghost.
+     Prose (dish descriptions, notes) is deliberately NOT in this list —
+     a guest copying an allergy note is a legitimate thing to do. */
+  button,
+  a,
+  label,
+  summary,
+  nav,
+  header,
+  [role="button"],
+  [role="tab"],
+  [role="dialog"],
+  [data-chrome] {
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-touch-callout: none;
+  }
+
+  /* Long-pressing the hero photograph must not open the iOS share sheet. */
+  img,
+  svg,
+  video,
+  canvas {
+    -webkit-touch-callout: none;
+    -webkit-user-drag: none;
+  }
+
+  /* iOS Safari zooms the page when a focused control's font is under 16px.
+     The viewport lock cannot prevent that, so the controls themselves are
+     pinned at 16px and scaled with padding/line-height instead. */
+  input,
+  textarea,
+  select {
+    font-size: max(16px, 1rem);
+  }
+
   ::selection {
     background-color: var(--color-ember);
     color: var(--color-on-ember);
@@ -258,7 +392,10 @@
   h3,
   h4 {
     font-family: var(--font-display);
+    /* `balance` wraps long headings instead of letting a fixed-width
+       container clip them, at every size — including the 320px floor. */
     text-wrap: balance;
+    overflow-wrap: break-word;
   }
 
   p {
@@ -282,6 +419,35 @@
   }
 }
 
+/* Print: only the explicitly marked block survives. Used by the admin
+   console's QR sheet, where everything except the code is noise on paper. */
+@media print {
+  body * {
+    visibility: hidden;
+  }
+
+  .admin-print-area,
+  .admin-print-area * {
+    visibility: visible;
+  }
+
+  .admin-print-area {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 2rem;
+    background: #fff;
+  }
+
+  .admin-print-area svg {
+    width: 18rem;
+    height: 18rem;
+  }
+}
+
 /* Fine hairline grid used behind hero and dark sections. */
 @utility hairline-grid {
   background-image:
@@ -296,6 +462,23 @@
   &::-webkit-scrollbar {
     display: none;
   }
+}
+
+/* Safe-area paddings, so sticky chrome clears the notch and the home
+   indicator. `env()` resolves to 0 on devices without insets. */
+@utility safe-top {
+  padding-top: env(safe-area-inset-top);
+}
+
+@utility safe-bottom {
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+/* A bottom sheet / fullscreen surface sized against the DYNAMIC viewport:
+   100dvh tracks the browser chrome collapsing, 100vh does not, which is
+   what leaves a sheet's last row hidden behind Safari's toolbar. */
+@utility sheet-h {
+  max-height: calc(100dvh - 1rem);
 }
 
 /* ============================================================
@@ -320,7 +503,10 @@
 .hero-visual-wrapper {
   position: relative;
   width: 100%;
-  max-width: 21rem;
+  /* Never wider than the viewport minus the page gutter: the two status
+     pills are pinned to this box's edges, so keeping the box on screen is
+     what keeps them on screen. */
+  max-width: min(21rem, calc(100vw - 2rem));
   margin-inline: auto;
   /* the silhouette's own box, not the canvas's */
   aspect-ratio: 681 / 941;

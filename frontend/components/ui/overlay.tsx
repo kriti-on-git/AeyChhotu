@@ -54,6 +54,18 @@ export function Overlay({
   const panelRef = useRef<HTMLDivElement>(null);
   const restoreFocusRef = useRef<HTMLElement | null>(null);
 
+  /* The latest onClose, held in a ref so the focus effect below can stay keyed
+     to `open` alone. Callers pass an inline arrow (`onClose={() => setOpen(false)}`),
+     which gets a NEW identity on every render — with `onClose` in the deps,
+     every keystroke in a field inside the dialog re-ran the effect, and its
+     cleanup/`panelRef.focus()` pair pulled focus back out of that field after
+     the first character. That is the "I can type one letter and then the box
+     stops accepting input" bug. */
+  const onCloseRef = useRef(onClose);
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  }, [onClose]);
+
   useBodyScrollLock(open);
 
   useEffect(() => {
@@ -63,7 +75,7 @@ export function Overlay({
     panelRef.current?.focus();
 
     const onKeyDown = (event: globalThis.KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
+      if (event.key === "Escape") onCloseRef.current();
     };
 
     window.addEventListener("keydown", onKeyDown);
@@ -71,7 +83,7 @@ export function Overlay({
       window.removeEventListener("keydown", onKeyDown);
       restoreFocusRef.current?.focus();
     };
-  }, [open, onClose]);
+  }, [open]);
 
   function handleTab(event: KeyboardEvent<HTMLDivElement>) {
     if (event.key !== "Tab") return;
@@ -139,9 +151,15 @@ export function Overlay({
                   : { opacity: 0, x: 40 }
               }
               transition={transitionBase}
+              /* A centre sheet is capped against the DYNAMIC viewport, not
+                 the panel's containing block: on a phone the sheet is a
+                 bottom sheet, and its last row has to stay above Safari's
+                 collapsing toolbar. 85vh is the desktop cap it replaces. */
               className={cn(
-                "pointer-events-auto relative flex max-h-full w-full flex-col overflow-hidden border border-line-strong bg-surface shadow-lg outline-none",
-                position === "center" ? "rounded-t-2xl sm:rounded-xl" : "h-full rounded-none",
+                "pointer-events-auto relative flex w-full flex-col overflow-hidden border border-line-strong bg-surface shadow-lg outline-none",
+                position === "center"
+                  ? "max-h-[calc(100dvh-2rem)] rounded-t-2xl sm:max-h-[85vh] sm:rounded-xl"
+                  : "h-full max-h-full rounded-none",
                 className,
               )}
             >
@@ -174,7 +192,9 @@ export function OverlayHeader({
   return (
     <header
       className={cn(
-        "flex items-start justify-between gap-4 border-b border-line bg-surface-sunken/60 px-6 py-5",
+        /* shrink-0: the header is a fixed band. Without it a long body pushed
+           the title row up and out of the rounded corner. */
+        "flex shrink-0 items-start justify-between gap-4 border-b border-line bg-surface-sunken/60 px-6 py-5",
         className,
       )}
     >
@@ -199,7 +219,14 @@ export function OverlayFooter({ className, ...props }: HTMLAttributes<HTMLDivEle
   return (
     <div
       className={cn(
-        "flex flex-col gap-3 border-t border-line bg-surface-sunken/60 px-6 py-5 [&>*]:w-full sm:flex-row sm:justify-end sm:[&>*]:w-auto",
+        /* shrink-0: the footer must never be squeezed out by a tall body —
+           that was the "buttons clipped below the fold" bug. The bottom pad
+           resolves the home indicator and still keeps a 1rem minimum, so a
+           device without insets does not lose the gutter. Only BUTTONS
+           stretch on a phone; `[&>*]` used to widen every child, so a
+           price/total span became a full-width block and its text drifted
+           away from the action it described. */
+        "flex shrink-0 flex-col gap-3 border-t border-line bg-surface px-6 pt-4 pb-[max(1rem,env(safe-area-inset-bottom))] [&>button]:w-full sm:flex-row sm:justify-end sm:[&>button]:w-auto",
         className,
       )}
       {...props}
