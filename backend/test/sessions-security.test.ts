@@ -68,6 +68,17 @@ async function claim() {
   return result;
 }
 
+async function claimWithParticipant() {
+  const result = await sessions.initializeSession(TEST_CODE, {
+    member: { user_id: "device-alpha", name: "Asha" },
+  });
+  if (result.status !== "active") {
+    assert.fail(`expected the scan to claim the table, got ${result.status}`);
+  }
+  assert.ok(result.participant_token, "a named member must receive a participant token");
+  return result;
+}
+
 async function scanLocked() {
   const result = await sessions.initializeSession(TEST_CODE);
   if (result.status !== "locked") {
@@ -484,10 +495,10 @@ describe("table session lifecycle", { skip: hasDatabase ? false : "DATABASE_URL 
 
   it("does not release a paid, empty table while a device heartbeat is fresh", async () => {
     await resetTable();
-    const granted = await claim();
+    const granted = await claimWithParticipant();
     const tableId = await testTableId();
 
-    await sessions.recordHeartbeat(TEST_CODE, "device-alpha");
+    await sessions.recordHeartbeat(TEST_CODE, "device-alpha", granted.participant_token!);
 
     const settled = await settleTableBill(tableId);
     assert.equal(settled.bill_status, "paid");
@@ -504,17 +515,21 @@ describe("table session lifecycle", { skip: hasDatabase ? false : "DATABASE_URL 
 
   it("auto-releases a paid table when orders are 0 and presence drops to 0", async () => {
     await resetTable();
-    const granted = await claim();
+    const granted = await claimWithParticipant();
     const tableId = await testTableId();
 
-    await sessions.recordHeartbeat(TEST_CODE, "device-alpha");
+    await sessions.recordHeartbeat(TEST_CODE, "device-alpha", granted.participant_token!);
     const settled = await settleTableBill(tableId);
     assert.equal(settled.bill_status, "paid");
     assert.equal(settled.released, false);
 
     // The last device closes its tab: removing the heartbeat runs the same
     // three-condition check and this time all three agree.
-    const dropped = await sessions.removeHeartbeat(TEST_CODE, "device-alpha");
+    const dropped = await sessions.removeHeartbeat(
+      TEST_CODE,
+      "device-alpha",
+      granted.participant_token!,
+    );
     assert.equal(dropped.released, true);
 
     const row = await readRow();

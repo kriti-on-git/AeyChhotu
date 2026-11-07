@@ -12,38 +12,30 @@ import {
   postConversationMessageSchema,
   startVoiceSchema,
 } from "../src/modules/conversation/conversation.validation.js";
-import {
-  TABLE_CODE,
-  TABLE_SECRET,
-  PARTICIPANT_A,
-  CONVERSATION_ID,
-} from "./helpers/conversation-fakes.js";
+import { TOKEN_A, CONVERSATION_ID } from "./helpers/conversation-fakes.js";
 
-const headers = {
-  "x-table-token": TABLE_CODE,
-  "x-table-secret": TABLE_SECRET,
-  "x-participant-id": PARTICIPANT_A,
-};
+const headers = { "x-participant-token": TOKEN_A };
 
 describe("conversation credential headers", () => {
-  it("accepts a table token, 20-character pass and participant id", () => {
+  it("accepts only the server-issued participant token", () => {
     assert.deepEqual(conversationCredentialHeadersSchema.parse(headers), headers);
+    assert.equal(
+      conversationCredentialHeadersSchema.safeParse({
+        "x-table-token": "t4b2",
+        "x-table-secret": "abcdefghijklmnopqrst",
+        "x-participant-id": "guest-a",
+      }).success,
+      false,
+    );
   });
 
-  it("rejects malformed tokens, short passes and empty participant ids", () => {
+  it("rejects malformed or empty participant tokens", () => {
     assert.equal(
-      conversationCredentialHeadersSchema.safeParse({ ...headers, "x-table-token": "BAD" })
-        .success,
+      conversationCredentialHeadersSchema.safeParse({ "x-participant-token": "BAD" }).success,
       false,
     );
     assert.equal(
-      conversationCredentialHeadersSchema.safeParse({ ...headers, "x-table-secret": "short" })
-        .success,
-      false,
-    );
-    assert.equal(
-      conversationCredentialHeadersSchema.safeParse({ ...headers, "x-participant-id": "  " })
-        .success,
+      conversationCredentialHeadersSchema.safeParse({ "x-participant-token": "  " }).success,
       false,
     );
   });
